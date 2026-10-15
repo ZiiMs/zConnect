@@ -7,6 +7,7 @@
     "packages/*"
   ],
   "scripts": {
+    "dev": "bun run --parallel --filter '*' dev",
     "dev:backend": "bun run --cwd packages/backend dev",
     "dev:frontend": "bun run --cwd packages/frontend dev",
     "test": "bun run --cwd packages/backend test && bun run --cwd packages/frontend test",
