@@ -107,7 +107,7 @@ function queryList(getAll: (name: string) => string[], name: string): string[] {
     .flatMap((v) => v.split(","))
     .map((s) => s.trim())
     .filter((s) => s.length > 0)
-  }
+}
 
 function isConflict(error: unknown) {
   return (
@@ -635,7 +635,10 @@ export function createWorkspacesApp({ store, getSession }: WorkspacesDeps) {
     }
     try {
       const updated = await store.updateIssue(issue.id, parsed.data)
-      return c.json({ ...updated, warnings: await completionWarnings(updated, parsed.data.statusId) })
+      return c.json({
+        ...updated,
+        warnings: await completionWarnings(updated, parsed.data.statusId),
+      })
     } catch (error) {
       if (isInvalid(error))
         return c.json({ error: (error as Error).message }, 400)
@@ -662,7 +665,8 @@ export function createWorkspacesApp({ store, getSession }: WorkspacesDeps) {
       (await store.listStatuses(updated.projectId)).map((s) => [s.id, s])
     )
     const open = children.filter(
-      (child) => !child.archived && byId.get(child.statusId)?.category !== "Done"
+      (child) =>
+        !child.archived && byId.get(child.statusId)?.category !== "Done"
     )
     if (open.length === 0) return []
     const noun = open.length === 1 ? "subtask" : "subtasks"

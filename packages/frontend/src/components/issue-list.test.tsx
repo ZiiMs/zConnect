@@ -19,6 +19,13 @@ const statuses: Status[] = [
     category: "Done",
     position: 1,
   },
+  {
+    id: "st-3",
+    projectId: "pr-1",
+    name: "In Review",
+    category: "In Progress",
+    position: 2,
+  },
 ]
 
 const issues: Issue[] = [
@@ -51,6 +58,21 @@ const issues: Issue[] = [
     dueDate: null,
     archived: false,
     labels: ["feature"],
+  },
+  {
+    id: "is-3",
+    projectId: "pr-1",
+    number: 3,
+    keyPrefix: "WEB",
+    identifier: "WEB-3",
+    title: "Review API",
+    description: null,
+    statusId: "st-3",
+    priority: "Medium",
+    assigneeId: null,
+    dueDate: null,
+    archived: false,
+    labels: [],
   },
 ]
 
@@ -147,9 +169,7 @@ describe("issue list", () => {
       />
     )
 
-    await user.click(
-      screen.getByRole("button", { name: "Archive WEB-1" })
-    )
+    await user.click(screen.getByRole("button", { name: "Archive WEB-1" }))
     expect(onArchive).toHaveBeenCalledWith("WEB-1")
   })
 
@@ -165,5 +185,79 @@ describe("issue list", () => {
     expect(
       screen.queryByRole("button", { name: /archive/i })
     ).not.toBeInTheDocument()
+  })
+
+  test("groups issues under Todo / In Progress / Done headings", () => {
+    render(
+      <IssueList
+        issues={issues}
+        statuses={statuses}
+        canEdit={true}
+        onStatusChange={() => {}}
+      />
+    )
+
+    expect(screen.getByRole("heading", { name: "Todo" })).toBeInTheDocument()
+    expect(
+      screen.getByRole("heading", { name: "In Progress" })
+    ).toBeInTheDocument()
+    expect(screen.getByRole("heading", { name: "Done" })).toBeInTheDocument()
+
+    const todo = screen.getByTestId("issue-WEB-1").closest("section")
+    const progress = screen.getByTestId("issue-WEB-3").closest("section")
+    const done = screen.getByTestId("issue-WEB-2").closest("section")
+    expect(
+      within(todo as HTMLElement).getByRole("heading", { name: "Todo" })
+    ).toBeInTheDocument()
+    expect(
+      within(progress as HTMLElement).getByRole("heading", {
+        name: "In Progress",
+      })
+    ).toBeInTheDocument()
+    expect(
+      within(done as HTMLElement).getByRole("heading", { name: "Done" })
+    ).toBeInTheDocument()
+  })
+
+  test("filtered-out issues take their empty groups with them", () => {
+    render(
+      <IssueList
+        issues={[issues[0]]}
+        statuses={statuses}
+        canEdit={true}
+        onStatusChange={() => {}}
+      />
+    )
+
+    expect(screen.getByRole("heading", { name: "Todo" })).toBeInTheDocument()
+    expect(
+      screen.queryByRole("heading", { name: "In Progress" })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole("heading", { name: "Done" })
+    ).not.toBeInTheDocument()
+  })
+
+  test("renders the registry color as a swatch on label chips", () => {
+    render(
+      <IssueList
+        issues={issues}
+        statuses={statuses}
+        labels={[
+          {
+            id: "lb-1",
+            workspaceId: "ws-1",
+            name: "feature",
+            color: "#22c55e",
+          },
+        ]}
+        canEdit={true}
+        onStatusChange={() => {}}
+      />
+    )
+    const row = screen.getByTestId("issue-WEB-2")
+    const swatch = within(row).getByTestId("label-dot-feature")
+    expect(swatch).toBeInTheDocument()
+    expect(swatch).toHaveStyle({ backgroundColor: "#22c55e" })
   })
 })

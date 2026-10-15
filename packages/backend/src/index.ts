@@ -2,7 +2,7 @@ import { Hono } from "hono"
 import { cors } from "hono/cors"
 import { getDb } from "./db/index.js"
 import { createDrizzleGitHubStore } from "./github/drizzle-store.js"
-import type { GitHubWebhookJob } from "./github/job.js"
+import type { GitHubWebhookPayload } from "./github/job.js"
 import { createGitHubApp } from "./github/routes.js"
 import { createDrizzleTokenStore } from "./mcp/drizzle-tokens.js"
 import { createMcpApp } from "./mcp/routes.js"
@@ -55,7 +55,7 @@ app.route(
       return { user: { id: session.user.id, email: session.user.email } }
     },
     webhookSecret: process.env.GITHUB_WEBHOOK_SECRET,
-    enqueue: async (job: GitHubWebhookJob) => {
+    enqueue: async (job: GitHubWebhookPayload) => {
       const { queues, QUEUES } = await import("./lib/queue.js")
       await queues[QUEUES.githubWebhook].add("github-webhook", job, {
         jobId: job.deliveryId,

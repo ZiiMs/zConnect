@@ -297,10 +297,7 @@ export const api = {
   },
 
   getIssue(ref: string): Promise<Issue> {
-    return request(
-      `/api/issues/${encodeURIComponent(ref)}`,
-      issueSchema
-    )
+    return request(`/api/issues/${encodeURIComponent(ref)}`, issueSchema)
   },
 
   updateIssue(ref: string, input: UpdateIssueInput): Promise<Issue> {

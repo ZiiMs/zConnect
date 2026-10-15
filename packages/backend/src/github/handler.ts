@@ -28,6 +28,18 @@ export interface PullRequestResult {
   linked: string[]
 }
 
+export interface PushCommit {
+  sha: string
+  message: string
+  url: string
+}
+
+export interface PushEvent {
+  deliveryId: string
+  repoFullName: string
+  commits: PushCommit[]
+}
+
 export interface HandlerDeps {
   workspaces: WorkspaceStore
   github: GitHubStore
@@ -66,7 +78,10 @@ export async function handlePullRequestEvent(
   const install = await github.findInstallByRepo(event.repoFullName)
   if (!install) return { skipped: false, linked: [] }
 
-  const refs = extractIssueRefs(`${event.branch} ${event.body}`)
+  // The spec parser line covers "branch name and PR body" extraction for PR
+  // events; the PR title joins the extractor input as a superset because
+  // titles routinely carry the KEY-N when the body does not.
+  const refs = extractIssueRefs(`${event.branch} ${event.title} ${event.body}`)
   const state = stateFor(event)
   const linked: string[] = []
 
@@ -81,6 +96,10 @@ export async function handlePullRequestEvent(
     )
     const created = !existing
     if (created) {
+      // kind=pr is correct here: the event IS a pull_request delivery, so the
+      // auto-created External Link is the PR itself. branch/commit kinds stay
+      // on the manual-paste path (T6 parseExternalUrl) plus the push path
+      // below, which is the only genuine event source for commit links.
       await github.createExternalLink(issue.id, {
         provider: "github",
         kind: "pr",
@@ -103,6 +122,61 @@ export async function handlePullRequestEvent(
       )
     }
     linked.push(ref)
+  }
+
+  return { skipped: false, linked }
+}
+
+/**
+ * Push-event auto-link (T6 follow-up to story 23 "auto-link when branch/PR
+ * text contains WEB-123"). Creates kind=commit External Links for pushed
+ * commits whose message contains KEY-N. Mirrors the PR path's T6 patterns:
+ * delivery-id idempotency first, install scoping by repo, URL dedupe so
+ * redelivery never duplicates, and badge-only behavior (commits carry no
+ * open/merged state and never move Issue Status).
+ */
+export async function handlePushEvent(
+  { workspaces, github }: HandlerDeps,
+  event: PushEvent
+): Promise<PullRequestResult> {
+  if (await github.hasProcessedDelivery(event.deliveryId)) {
+    return { skipped: true, linked: [] }
+  }
+  await github.markDeliveryProcessed(event.deliveryId)
+
+  const install = await github.findInstallByRepo(event.repoFullName)
+  if (!install) return { skipped: false, linked: [] }
+
+  const linked: string[] = []
+
+  for (const commit of event.commits) {
+    const refs = extractIssueRefs(commit.message)
+    for (const ref of refs) {
+      const issue = await workspaces.getIssue(ref)
+      if (!issue) continue
+      const project = await workspaces.getProject(issue.projectId)
+      if (!project || project.workspaceId !== install.workspaceId) continue
+
+      const existing = (await github.listExternalLinks(issue.id)).find(
+        (link) => link.url === commit.url
+      )
+      if (!existing) {
+        const title = commit.message.split("\n")[0].trim().slice(0, 120)
+        await github.createExternalLink(issue.id, {
+          provider: "github",
+          kind: "commit",
+          url: commit.url,
+          title: title === "" ? commit.sha : title,
+          state: null,
+        })
+        await github.appendTimelineEvent(
+          issue.id,
+          "link.opened",
+          `Commit ${commit.sha.slice(0, 7)} pushed`
+        )
+      }
+      if (!linked.includes(ref)) linked.push(ref)
+    }
   }
 
   return { skipped: false, linked }

@@ -184,6 +184,12 @@ describe("label filters", () => {
     expect(
       screen.getByRole("checkbox", { name: "feature" })
     ).toBeInTheDocument()
+    expect(screen.getByTestId("label-dot-bug")).toHaveStyle({
+      backgroundColor: "#ef4444",
+    })
+    expect(screen.getByTestId("label-dot-feature")).toHaveStyle({
+      backgroundColor: "#22c55e",
+    })
   })
 
   test("toggling a label notifies with the narrowed value", async () => {

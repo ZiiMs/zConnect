@@ -31,8 +31,11 @@ import type {
   WorkspaceStore,
   WorkspaceWithRole,
 } from "./store.js"
-import { DEFAULT_LABEL_COLOR, isValidLabelColor } from "./store.js"
-import { normalizeLabelNames } from "./store.js"
+import {
+  DEFAULT_LABEL_COLOR,
+  isValidLabelColor,
+  normalizeLabelNames,
+} from "./store.js"
 
 type Db = ReturnType<typeof getDb>
 
@@ -72,10 +75,7 @@ async function resolveParentRow(
   selfId: string | null,
   parentId: string
 ): Promise<string> {
-  const parentRows = await db
-    .select()
-    .from(issue)
-    .where(eq(issue.id, parentId))
+  const parentRows = await db.select().from(issue).where(eq(issue.id, parentId))
   const parentRow = parentRows[0]
   if (!parentRow) throw invalid("Parent issue not found")
   if (parentRow.projectId !== projectId) {
@@ -512,9 +512,7 @@ export function createDrizzleWorkspaceStore(
       const labelNames = normalizeLabelNames(input.labels ?? [])
       const labelRows: { id: string }[] = []
       for (const name of labelNames) {
-        labelRows.push(
-          await ensureLabelRow(db, projectRow.workspaceId, name)
-        )
+        labelRows.push(await ensureLabelRow(db, projectRow.workspaceId, name))
       }
       const [row] = await db
         .insert(issue)
@@ -580,8 +578,7 @@ export function createDrizzleWorkspaceStore(
         .map(toIssue)
         .filter(
           (item) =>
-            !labels ||
-            [...labels].every((label) => item.labels.includes(label))
+            !labels || [...labels].every((label) => item.labels.includes(label))
         )
         .filter(
           (item) =>
@@ -593,7 +590,11 @@ export function createDrizzleWorkspaceStore(
 
     async getIssue(ref: string): Promise<Issue | null> {
       const db = resolveDb()
-      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ref)) {
+      if (
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+          ref
+        )
+      ) {
         const byId = await db.select().from(issue).where(eq(issue.id, ref))
         if (byId[0]) return toIssue(byId[0])
       }
@@ -604,15 +605,15 @@ export function createDrizzleWorkspaceStore(
       return byKey[0] ? toIssue(byKey[0]) : null
     },
 
-    async updateIssue(
-      ref: string,
-      input: UpdateIssueInput
-    ): Promise<Issue> {
+    async updateIssue(ref: string, input: UpdateIssueInput): Promise<Issue> {
       const db = resolveDb()
       const current = await this.getIssue(ref)
       if (!current) throw notFound("Issue not found")
       let projectId = current.projectId
-      if (input.projectId !== undefined && input.projectId !== current.projectId) {
+      if (
+        input.projectId !== undefined &&
+        input.projectId !== current.projectId
+      ) {
         const targets = await db
           .select()
           .from(project)
@@ -695,9 +696,7 @@ export function createDrizzleWorkspaceStore(
         labelNames = normalizeLabelNames(input.labels)
         labelRows = []
         for (const name of labelNames) {
-          labelRows.push(
-            await ensureLabelRow(db, projectRow.workspaceId, name)
-          )
+          labelRows.push(await ensureLabelRow(db, projectRow.workspaceId, name))
         }
       }
       let parentTouched = false

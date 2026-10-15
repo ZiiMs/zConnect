@@ -9,9 +9,9 @@ import {
   saveIssueFilters,
 } from "@/components/issue-filter-bar"
 import { IssueList } from "@/components/issue-list"
-import { SubtaskList } from "@/components/subtask-list"
 import { IssueTable } from "@/components/issue-table"
 import { KanbanBoard } from "@/components/kanban-board"
+import { SubtaskList } from "@/components/subtask-list"
 import { useIssueSubscription } from "@/hooks/use-issue-subscription"
 import {
   api,
@@ -258,6 +258,7 @@ export function ProjectIssues({
         <IssueList
           issues={issues}
           statuses={statuses}
+          labels={labels}
           canEdit={canWrite}
           onStatusChange={(issue, statusId) =>
             void handleStatusChange(issue, statusId)
@@ -297,6 +298,7 @@ export function ProjectIssues({
           issues={issues}
           statuses={statuses}
           members={members}
+          labels={labels}
           canEdit={canWrite}
           onUpdate={(issue, input) => void handleUpdate(issue, input)}
         />
@@ -305,6 +307,7 @@ export function ProjectIssues({
         <KanbanBoard
           issues={issues}
           statuses={statuses}
+          labels={labels}
           canEdit={canWrite}
           onMove={(issue, statusId) => void handleMove(issue, statusId)}
         />

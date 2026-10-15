@@ -1,8 +1,8 @@
 import { Worker } from "bullmq"
 import { getDb } from "./db/index.js"
 import { createDrizzleGitHubStore } from "./github/drizzle-store.js"
-import { handlePullRequestEvent } from "./github/handler.js"
-import type { GitHubWebhookJob } from "./github/job.js"
+import { handlePullRequestEvent, handlePushEvent } from "./github/handler.js"
+import type { GitHubWebhookPayload } from "./github/job.js"
 import { type JobPayloads, QUEUES } from "./lib/queue.js"
 import { createWorkerConnection } from "./lib/redis.js"
 import { createDrizzleWorkspaceStore } from "./workspaces/drizzle-store.js"
@@ -36,17 +36,18 @@ console.log(`[worker] listening on queue "${QUEUES.default}"`)
  * delegates to the idempotent handler, which dedupes by delivery id so
  * redelivered webhooks never duplicate links or timeline events.
  */
-const githubWorker = new Worker<GitHubWebhookJob>(
+const githubWorker = new Worker<GitHubWebhookPayload>(
   QUEUES.githubWebhook,
   async (job) => {
     const db = () => getDb()
-    const result = await handlePullRequestEvent(
-      {
-        workspaces: createDrizzleWorkspaceStore(db),
-        github: createDrizzleGitHubStore(db),
-      },
-      job.data
-    )
+    const deps = {
+      workspaces: createDrizzleWorkspaceStore(db),
+      github: createDrizzleGitHubStore(db),
+    }
+    const result =
+      job.data.kind === "push"
+        ? await handlePushEvent(deps, job.data)
+        : await handlePullRequestEvent(deps, job.data)
     console.log(
       `[worker] github-webhook ${job.data.deliveryId}: linked ${result.linked.join(", ") || "none"}`
     )

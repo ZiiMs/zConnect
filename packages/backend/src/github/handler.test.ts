@@ -3,7 +3,11 @@ import {
   createMemoryWorkspaceStore,
   type WorkspaceStore,
 } from "../workspaces/store.js"
-import { handlePullRequestEvent, type PullRequestEvent } from "./handler.js"
+import {
+  handlePullRequestEvent,
+  handlePushEvent,
+  type PullRequestEvent,
+} from "./handler.js"
 import { createMemoryGitHubStore, type GitHubStore } from "./store.js"
 
 const owner = { id: "user-owner", email: "owner@example.com" }
@@ -134,5 +138,91 @@ describe("pull request webhook handler", () => {
     )
     expect(unknown.linked).toEqual([])
     expect(await github.listExternalLinks(issueId)).toHaveLength(0)
+  })
+
+  test("PR title refs auto-link even when branch and body lack them", async () => {
+    const result = await handlePullRequestEvent(
+      { workspaces, github },
+      openedEvent({
+        branch: "fix-login",
+        title: "Fix login WEB-1",
+        body: "No refs here",
+      })
+    )
+    expect(result.linked).toEqual(["WEB-1"])
+    const links = await github.listExternalLinks(issueId)
+    expect(links).toHaveLength(1)
+    expect(links[0]).toMatchObject({
+      provider: "github",
+      kind: "pr",
+      url: "https://github.com/acme/web/pull/7",
+    })
+  })
+
+  test("push commits with KEY-N create kind=commit links plus timeline events", async () => {
+    const result = await handlePushEvent(
+      { workspaces, github },
+      {
+        deliveryId: "push-1",
+        repoFullName: "acme/web",
+        commits: [
+          {
+            sha: "abc123def456",
+            message: "Fix WEB-1 login redirect",
+            url: "https://github.com/acme/web/commit/abc123def456",
+          },
+        ],
+      }
+    )
+    expect(result).toEqual({ skipped: false, linked: ["WEB-1"] })
+    const links = await github.listExternalLinks(issueId)
+    expect(links).toHaveLength(1)
+    expect(links[0]).toMatchObject({
+      provider: "github",
+      kind: "commit",
+      url: "https://github.com/acme/web/commit/abc123def456",
+    })
+    const events = await github.listTimelineEvents(issueId)
+    expect(events.map((e) => e.kind)).toEqual(["link.opened"])
+  })
+
+  test("push redelivery is idempotent and unknown repos link nothing", async () => {
+    const event = {
+      deliveryId: "push-2",
+      repoFullName: "acme/web",
+      commits: [
+        {
+          sha: "abc123def456",
+          message: "Fix WEB-1 login redirect",
+          url: "https://github.com/acme/web/commit/abc123def456",
+        },
+      ],
+    }
+    await handlePushEvent({ workspaces, github }, event)
+    const redelivery = await handlePushEvent({ workspaces, github }, event)
+    expect(redelivery.skipped).toBe(true)
+    expect(await github.listExternalLinks(issueId)).toHaveLength(1)
+    expect(await github.listTimelineEvents(issueId)).toHaveLength(1)
+
+    const foreign = await handlePushEvent(
+      { workspaces, github },
+      { ...event, deliveryId: "push-3", repoFullName: "acme/other" }
+    )
+    expect(foreign.linked).toEqual([])
+    const unknown = await handlePushEvent(
+      { workspaces, github },
+      {
+        deliveryId: "push-4",
+        repoFullName: "acme/web",
+        commits: [
+          {
+            sha: "deadbeef",
+            message: "Unrelated change",
+            url: "https://github.com/acme/web/commit/deadbeef",
+          },
+        ],
+      }
+    )
+    expect(unknown.linked).toEqual([])
   })
 })
