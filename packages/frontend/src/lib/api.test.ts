@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, test, vi } from "vitest"
-import { ApiError, api } from "./api.js"
+import {
+  ApiError,
+  api,
+  issueProgress,
+  isTerminalCategory,
+  type Status,
+  statusCategorySchema,
+} from "./api.js"
 
 function mockFetchOnce(payload: unknown, init?: { status?: number }) {
   const fetchMock = vi.fn().mockResolvedValue(
@@ -125,14 +132,14 @@ describe("project api client", () => {
         id: "st-1",
         projectId: "pr-1",
         name: "Backlog",
-        category: "Todo",
+        category: "Backlog",
         position: 0,
       },
       {
         id: "st-2",
         projectId: "pr-1",
         name: "Shipped",
-        category: "Done",
+        category: "Completed",
         position: 1,
       },
     ])
@@ -144,14 +151,14 @@ describe("project api client", () => {
         id: "st-1",
         projectId: "pr-1",
         name: "Backlog",
-        category: "Todo",
+        category: "Backlog",
         position: 0,
       },
       {
         id: "st-2",
         projectId: "pr-1",
         name: "Shipped",
-        category: "Done",
+        category: "Completed",
         position: 1,
       },
     ])
@@ -162,18 +169,18 @@ describe("project api client", () => {
       id: "st-1",
       projectId: "pr-1",
       name: "Backlog",
-      category: "Todo",
+      category: "Backlog",
       position: 0,
     })
 
-    await api.createStatus("pr-1", { name: "Backlog", category: "Todo" })
+    await api.createStatus("pr-1", { name: "Backlog", category: "Backlog" })
 
     const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
     expect(url).toContain("/api/projects/pr-1/statuses")
     expect(options.method).toBe("POST")
     expect(JSON.parse(options.body as string)).toEqual({
       name: "Backlog",
-      category: "Todo",
+      category: "Backlog",
     })
   })
 
@@ -203,6 +210,107 @@ describe("project api client", () => {
     expect(failure).toBeInstanceOf(ApiError)
     expect((failure as ApiError).status).toBe(409)
     expect((failure as Error).message).toMatch(/holds issues/i)
+  })
+})
+
+describe("status category domain (ADR-0001)", () => {
+  test("exposes the six categories in roster order", () => {
+    expect(statusCategorySchema.options).toEqual([
+      "Backlog",
+      "Unstarted",
+      "In Progress",
+      "Completed",
+      "Canceled",
+      "Duplicate",
+    ])
+  })
+
+  test("parses every category and rejects anything else", () => {
+    for (const category of statusCategorySchema.options) {
+      expect(statusCategorySchema.parse(category)).toBe(category)
+    }
+    expect(statusCategorySchema.safeParse("Todo").success).toBe(false)
+    expect(statusCategorySchema.safeParse("Done").success).toBe(false)
+  })
+
+  test("only Completed, Canceled and Duplicate are terminal", () => {
+    expect(statusCategorySchema.options.filter(isTerminalCategory)).toEqual([
+      "Completed",
+      "Canceled",
+      "Duplicate",
+    ])
+  })
+
+  test("progress counts the terminal three as done, not the open three", () => {
+    const statuses: Status[] = [
+      {
+        id: "st-backlog",
+        projectId: "pr-1",
+        name: "Backlog",
+        category: "Backlog",
+        position: 0,
+      },
+      {
+        id: "st-todo",
+        projectId: "pr-1",
+        name: "Todo",
+        category: "Unstarted",
+        position: 1,
+      },
+      {
+        id: "st-progress",
+        projectId: "pr-1",
+        name: "In Progress",
+        category: "In Progress",
+        position: 2,
+      },
+      {
+        id: "st-completed",
+        projectId: "pr-1",
+        name: "Done",
+        category: "Completed",
+        position: 3,
+      },
+      {
+        id: "st-canceled",
+        projectId: "pr-1",
+        name: "Canceled",
+        category: "Canceled",
+        position: 4,
+      },
+      {
+        id: "st-duplicate",
+        projectId: "pr-1",
+        name: "Duplicate",
+        category: "Duplicate",
+        position: 5,
+      },
+    ]
+    const issues = [
+      "st-backlog",
+      "st-todo",
+      "st-progress",
+      "st-completed",
+      "st-canceled",
+      "st-duplicate",
+      "st-unknown",
+    ].map((statusId, index) => ({
+      id: `is-${index}`,
+      projectId: "pr-1",
+      number: index + 1,
+      keyPrefix: "WEB",
+      identifier: `WEB-${index + 1}`,
+      title: "Issue",
+      description: null,
+      statusId,
+      priority: "None" as const,
+      assigneeId: null,
+      dueDate: null,
+      archived: false,
+      labels: [],
+    }))
+
+    expect(issueProgress(issues, statuses)).toEqual({ total: 7, done: 3 })
   })
 })
 

@@ -1,20 +1,25 @@
 import type { ReactNode } from "react"
-import type { Issue, Label, Status, StatusCategory } from "@/lib/api"
+import {
+  type Issue,
+  type Label,
+  STATUS_CATEGORIES,
+  type Status,
+  type StatusCategory,
+} from "@/lib/api"
 
-const CATEGORY_ORDER: StatusCategory[] = ["Todo", "In Progress", "Done"]
+const CATEGORY_ORDER: StatusCategory[] = [...STATUS_CATEGORIES]
 
 /**
  * List view: the same filtered Issue query the Table and Kanban views
- * share, grouped by Status Category (spec ziim/zConnect#1: story 15 "List
- * grouped compactly" + Workflow decision "List grouping is by Category").
- * Groups with no issues render nothing, so the shared filter bar narrows
- * the list by removing groups as well as rows. Status changes go through
- * `onStatusChange` so the container can run the lifecycle mutation (Todo
- * through Done). Per-row `actions` (T5 archive/subtask controls) render
- * after the status control when provided. Label chips take their swatch
- * color from the T5 workspace registry when `labels` is provided (story 14
- * "workspace-shared Labels with color"); names without a registry entry
- * render as plain text.
+ * share, grouped by Status Category (ADR-0001: grouping order is the
+ * six-category roster, Backlog through Duplicate). Groups with no issues
+ * render nothing, so the shared filter bar narrows the list by removing
+ * groups as well as rows. Status changes go through `onStatusChange` so the
+ * container can run the lifecycle mutation. Per-row `actions` (T5
+ * archive/subtask controls) render after the status control when provided.
+ * Label chips take their swatch color from the T5 workspace registry when
+ * `labels` is provided (story 14 "workspace-shared Labels with color");
+ * names without a registry entry render as plain text.
  *
  * Dense Issues1 rows: one single-line row per issue with a sticky
  * category subheader carrying the per-group count.

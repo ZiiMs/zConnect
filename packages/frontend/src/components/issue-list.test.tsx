@@ -9,14 +9,14 @@ const statuses: Status[] = [
     id: "st-1",
     projectId: "pr-1",
     name: "Backlog",
-    category: "Todo",
+    category: "Backlog",
     position: 0,
   },
   {
     id: "st-2",
     projectId: "pr-1",
     name: "Shipped",
-    category: "Done",
+    category: "Completed",
     position: 1,
   },
   {
@@ -136,7 +136,9 @@ describe("issue list", () => {
       />
     )
     expect(screen.queryByLabelText(/status for WEB-1/i)).not.toBeInTheDocument()
-    expect(screen.getByText("Backlog")).toBeInTheDocument()
+    expect(
+      within(screen.getByTestId("issue-WEB-1")).getByText("Backlog")
+    ).toBeInTheDocument()
   })
 
   test("renders label names on the row", () => {
@@ -187,35 +189,63 @@ describe("issue list", () => {
     ).not.toBeInTheDocument()
   })
 
-  test("groups issues under Todo / In Progress / Done headings", () => {
+  test("renders all six category groups in roster order", () => {
+    const sixStatuses: Status[] = [
+      "Backlog",
+      "Unstarted",
+      "In Progress",
+      "Completed",
+      "Canceled",
+      "Duplicate",
+    ].map((category, index) => ({
+      id: `six-${index}`,
+      projectId: "pr-1",
+      name: category,
+      category: category as Status["category"],
+      position: index,
+    }))
+    // Deliberately out of roster order: grouping, not input order, sets the
+    // heading order.
+    const sixIssues: Issue[] = [...sixStatuses].reverse().map((status, i) => ({
+      id: `six-issue-${i}`,
+      projectId: "pr-1",
+      number: i + 1,
+      keyPrefix: "WEB",
+      identifier: `WEB-6${i}`,
+      title: `Issue in ${status.category}`,
+      description: null,
+      statusId: status.id,
+      priority: "None",
+      assigneeId: null,
+      dueDate: null,
+      archived: false,
+      labels: [],
+    }))
+
     render(
       <IssueList
-        issues={issues}
-        statuses={statuses}
-        canEdit={true}
+        issues={sixIssues}
+        statuses={sixStatuses}
+        canEdit={false}
         onStatusChange={() => {}}
       />
     )
 
-    expect(screen.getByRole("heading", { name: "Todo" })).toBeInTheDocument()
-    expect(
-      screen.getByRole("heading", { name: "In Progress" })
-    ).toBeInTheDocument()
-    expect(screen.getByRole("heading", { name: "Done" })).toBeInTheDocument()
+    const headings = screen.getAllByRole("heading").map((el) => el.textContent)
+    expect(headings).toEqual([
+      "Backlog",
+      "Unstarted",
+      "In Progress",
+      "Completed",
+      "Canceled",
+      "Duplicate",
+    ])
 
-    const todo = screen.getByTestId("issue-WEB-1").closest("section")
-    const progress = screen.getByTestId("issue-WEB-3").closest("section")
-    const done = screen.getByTestId("issue-WEB-2").closest("section")
+    const duplicate = screen.getByTestId("issue-WEB-60").closest("section")
     expect(
-      within(todo as HTMLElement).getByRole("heading", { name: "Todo" })
-    ).toBeInTheDocument()
-    expect(
-      within(progress as HTMLElement).getByRole("heading", {
-        name: "In Progress",
+      within(duplicate as HTMLElement).getByRole("heading", {
+        name: "Duplicate",
       })
-    ).toBeInTheDocument()
-    expect(
-      within(done as HTMLElement).getByRole("heading", { name: "Done" })
     ).toBeInTheDocument()
   })
 
@@ -229,12 +259,12 @@ describe("issue list", () => {
       />
     )
 
-    expect(screen.getByRole("heading", { name: "Todo" })).toBeInTheDocument()
+    expect(screen.getByRole("heading", { name: "Backlog" })).toBeInTheDocument()
     expect(
       screen.queryByRole("heading", { name: "In Progress" })
     ).not.toBeInTheDocument()
     expect(
-      screen.queryByRole("heading", { name: "Done" })
+      screen.queryByRole("heading", { name: "Completed" })
     ).not.toBeInTheDocument()
   })
 

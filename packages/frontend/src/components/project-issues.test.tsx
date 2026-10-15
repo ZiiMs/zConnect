@@ -4,18 +4,22 @@ import { beforeEach, describe, expect, test, vi } from "vitest"
 import { api, type Issue, type Label, type Status } from "@/lib/api"
 import { ProjectIssues } from "./project-issues.js"
 
-vi.mock("@/lib/api", () => ({
-  api: {
-    listStatuses: vi.fn(),
-    listIssues: vi.fn(),
-    listMembers: vi.fn(),
-    listLabels: vi.fn(),
-    listSubtasks: vi.fn(),
-    createIssue: vi.fn(),
-    updateIssue: vi.fn(),
-    deleteIssue: vi.fn(),
-  },
-}))
+vi.mock("@/lib/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api")>()
+  return {
+    ...actual,
+    api: {
+      listStatuses: vi.fn(),
+      listIssues: vi.fn(),
+      listMembers: vi.fn(),
+      listLabels: vi.fn(),
+      listSubtasks: vi.fn(),
+      createIssue: vi.fn(),
+      updateIssue: vi.fn(),
+      deleteIssue: vi.fn(),
+    },
+  }
+})
 
 const listStatuses = vi.mocked(api.listStatuses)
 const listIssues = vi.mocked(api.listIssues)
@@ -32,14 +36,14 @@ const statuses: Status[] = [
     id: "st-1",
     projectId: "pr-1",
     name: "Backlog",
-    category: "Todo",
+    category: "Backlog",
     position: 0,
   },
   {
     id: "st-2",
     projectId: "pr-1",
     name: "Shipped",
-    category: "Done",
+    category: "Completed",
     position: 1,
   },
 ]

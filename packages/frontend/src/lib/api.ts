@@ -32,7 +32,22 @@ export const projectSchema = z.object({
   key: z.string(),
 })
 
-export const statusCategorySchema = z.enum(["Todo", "In Progress", "Done"])
+/**
+ * The six fixed Status Categories in roster order (ADR-0001): Backlog,
+ * Unstarted, In Progress, Completed, Canceled, Duplicate. Completed,
+ * Canceled, and Duplicate are terminal and count as done everywhere
+ * (grouping, progress, guardrails).
+ */
+export const STATUS_CATEGORIES = [
+  "Backlog",
+  "Unstarted",
+  "In Progress",
+  "Completed",
+  "Canceled",
+  "Duplicate",
+] as const
+
+export const statusCategorySchema = z.enum(STATUS_CATEGORIES)
 
 export const statusSchema = z.object({
   id: z.string(),
@@ -126,6 +141,42 @@ export type Project = z.infer<typeof projectSchema>
 export type StatusCategory = z.infer<typeof statusCategorySchema>
 export type Status = z.infer<typeof statusSchema>
 export type Label = z.infer<typeof labelSchema>
+
+/**
+ * Terminal Status Categories (ADR-0001): Completed, Canceled, and Duplicate
+ * count as done everywhere. Statuses in these categories are finished work;
+ * the open three (Backlog, Unstarted, In Progress) are not.
+ */
+export const TERMINAL_STATUS_CATEGORIES = [
+  "Completed",
+  "Canceled",
+  "Duplicate",
+] as const satisfies readonly StatusCategory[]
+
+export function isTerminalCategory(category: StatusCategory): boolean {
+  return TERMINAL_STATUS_CATEGORIES.some((terminal) => terminal === category)
+}
+
+/**
+ * Progress rollup for a project's issues: `done` counts issues sitting in a
+ * terminal Status Category (ADR-0001), `total` counts every issue given.
+ * Issues whose status is unknown still count toward `total`, never `done`.
+ */
+export function issueProgress(
+  issues: Issue[],
+  statuses: Status[]
+): { total: number; done: number } {
+  const terminalStatusIds = new Set(
+    statuses
+      .filter((status) => isTerminalCategory(status.category))
+      .map((status) => status.id)
+  )
+  return {
+    total: issues.length,
+    done: issues.filter((issue) => terminalStatusIds.has(issue.statusId))
+      .length,
+  }
+}
 
 export interface CreateLabelInput {
   name: string

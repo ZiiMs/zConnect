@@ -322,9 +322,12 @@ export function LabelChip({
 }
 
 const CATEGORY_TONE: Record<Status["category"], string> = {
-  Todo: "var(--muted-foreground)",
+  Backlog: "var(--muted-foreground)",
+  Unstarted: "var(--muted-foreground)",
   "In Progress": "var(--proto-info)",
-  Done: "var(--proto-ok)",
+  Completed: "var(--proto-ok)",
+  Canceled: "var(--proto-warn)",
+  Duplicate: "var(--muted-foreground)",
 }
 
 export function StatusPill({

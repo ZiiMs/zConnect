@@ -4,21 +4,25 @@ import { beforeEach, describe, expect, test, vi } from "vitest"
 import { api, type Project } from "@/lib/api"
 import { ProjectPage } from "./project-page.js"
 
-vi.mock("@/lib/api", () => ({
-  api: {
-    listStatuses: vi.fn(),
-    deleteStatus: vi.fn(),
-    createStatus: vi.fn(),
-    updateProject: vi.fn(),
-    listIssues: vi.fn(),
-    listMembers: vi.fn(),
-    listLabels: vi.fn(),
-    listSubtasks: vi.fn(),
-    createIssue: vi.fn(),
-    updateIssue: vi.fn(),
-    deleteIssue: vi.fn(),
-  },
-}))
+vi.mock("@/lib/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api")>()
+  return {
+    ...actual,
+    api: {
+      listStatuses: vi.fn(),
+      deleteStatus: vi.fn(),
+      createStatus: vi.fn(),
+      updateProject: vi.fn(),
+      listIssues: vi.fn(),
+      listMembers: vi.fn(),
+      listLabels: vi.fn(),
+      listSubtasks: vi.fn(),
+      createIssue: vi.fn(),
+      updateIssue: vi.fn(),
+      deleteIssue: vi.fn(),
+    },
+  }
+})
 
 const listStatuses = vi.mocked(api.listStatuses)
 const deleteStatus = vi.mocked(api.deleteStatus)
@@ -38,14 +42,14 @@ const statuses = [
     id: "st-3",
     projectId: "pr-1",
     name: "Shipped",
-    category: "Done",
+    category: "Completed",
     position: 2,
   },
   {
     id: "st-1",
     projectId: "pr-1",
     name: "Backlog",
-    category: "Todo",
+    category: "Backlog",
     position: 0,
   },
   {
@@ -85,7 +89,7 @@ describe("project page", () => {
     const categories = screen
       .getAllByTestId("status-category")
       .map((el) => el.textContent)
-    expect(categories).toEqual(["Todo", "In Progress", "Done"])
+    expect(categories).toEqual(["Backlog", "In Progress", "Completed"])
   })
 
   test("shows an empty state without statuses", async () => {
@@ -109,14 +113,14 @@ describe("project page", () => {
         id: "st-1",
         projectId: "pr-1",
         name: "Backlog",
-        category: "Todo",
+        category: "Backlog",
         position: 0,
       },
       {
         id: "st-2",
         projectId: "pr-1",
         name: "Done",
-        category: "Done",
+        category: "Completed",
         position: 1,
       },
     ])
