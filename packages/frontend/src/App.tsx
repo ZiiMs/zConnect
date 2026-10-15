@@ -221,8 +221,10 @@ export function App() {
     )
   }
 
-  return session ? (
-    <WorkspaceShell userId={session.user.id} userEmail={session.user.email} />
+  const user = session?.user
+
+  return user ? (
+    <WorkspaceShell userId={user.id} userEmail={user.email} />
   ) : (
     <SignedOut />
   )

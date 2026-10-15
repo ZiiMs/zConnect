@@ -24,14 +24,14 @@ export function AuthForm() {
     return <p className="text-muted-foreground text-sm">Loading session…</p>
   }
 
-  if (session) {
+  const user = session?.user
+
+  if (user) {
     return (
       <div className="flex flex-col gap-3">
         <p className="text-sm">
           Signed in as{" "}
-          <span className="font-medium">
-            {session.user.name ?? session.user.email}
-          </span>
+          <span className="font-medium">{user.name ?? user.email}</span>
         </p>
         <Button variant="outline" onClick={() => void signOut()}>
           Sign out
