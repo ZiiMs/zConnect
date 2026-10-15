@@ -42,8 +42,13 @@ describe("issue subtasks", () => {
   let workspaceId: string
   let projectId: string
   let otherProjectId: string
+  /** An Unstarted-category status: the "open" status most tests move issues around. */
   let backlogId: string
+  let backlogCategoryId: string
+  let inProgressId: string
   let doneId: string
+  let canceledId: string
+  let duplicateId: string
   let otherBacklogId: string
 
   async function joinAsMember() {
@@ -108,8 +113,12 @@ describe("issue subtasks", () => {
       // T2: every new project arrives seeded; this describe wants clean ones.
       await clearSeededTracker(fresh.store, id)
       for (const [statusName, category] of [
-        ["Backlog", "Unstarted"],
+        ["Backlog", "Backlog"],
+        ["Todo", "Unstarted"],
+        ["In Progress", "In Progress"],
         ["Shipped", "Completed"],
+        ["Canceled", "Canceled"],
+        ["Duplicate", "Duplicate"],
       ] as const) {
         const created = await app.request(`/api/projects/${id}/statuses`, {
           method: "POST",
@@ -119,11 +128,15 @@ describe("issue subtasks", () => {
         const status = ((await created.json()) as { id: string }).id
         if (key === "WEB") {
           projectId = id
-          if (category === "Unstarted") backlogId = status
-          else doneId = status
+          if (statusName === "Backlog") backlogCategoryId = status
+          else if (statusName === "Todo") backlogId = status
+          else if (statusName === "In Progress") inProgressId = status
+          else if (statusName === "Shipped") doneId = status
+          else if (statusName === "Canceled") canceledId = status
+          else duplicateId = status
         } else {
           otherProjectId = id
-          if (category === "Unstarted") otherBacklogId = status
+          if (statusName === "Todo") otherBacklogId = status
         }
       }
     }
@@ -277,6 +290,83 @@ describe("issue subtasks", () => {
   })
 
   test("completing a parent with open subtasks warns but allows it", async () => {
+    for (const [category, statusId] of [
+      ["Completed", doneId],
+      ["Canceled", canceledId],
+      ["Duplicate", duplicateId],
+    ] as const) {
+      const parent = await createIssue(projectId, {
+        title: `Parent (${category})`,
+        statusId: backlogId,
+      })
+      await createIssue(projectId, {
+        title: `Open child (${category})`,
+        statusId: backlogId,
+        parentId: parent.id,
+      })
+      const res = await patchIssue(parent.identifier, { statusId })
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as {
+        statusId: string
+        warnings: string[]
+      }
+      expect(body.statusId).toBe(statusId)
+      expect(body.warnings).toHaveLength(1)
+      expect(body.warnings[0]).toMatch(/open subtask/i)
+    }
+  })
+
+  test("moving to a terminal status with subtasks already done warns nothing", async () => {
+    for (const [category, childStatusId] of [
+      ["Completed", doneId],
+      ["Canceled", canceledId],
+      ["Duplicate", duplicateId],
+    ] as const) {
+      const parent = await createIssue(projectId, {
+        title: `Parent with ${category} child`,
+        statusId: backlogId,
+      })
+      const child = await createIssue(projectId, {
+        title: `Done child (${category})`,
+        statusId: backlogId,
+        parentId: parent.id,
+      })
+      await patchIssue(child.identifier, { statusId: childStatusId })
+      const res = await patchIssue(parent.identifier, { statusId: doneId })
+      expect(res.status).toBe(200)
+      expect(((await res.json()) as { warnings: string[] }).warnings).toEqual(
+        []
+      )
+    }
+  })
+
+  test("moving with open subtasks to a non-terminal status warns nothing", async () => {
+    for (const [category, statusId] of [
+      ["Backlog", backlogCategoryId],
+      ["Unstarted", backlogId],
+      ["In Progress", inProgressId],
+    ] as const) {
+      const parent = await createIssue(projectId, {
+        title: `Parent (${category})`,
+        statusId: backlogId,
+      })
+      await createIssue(projectId, {
+        title: `Open child (${category})`,
+        statusId: backlogId,
+        parentId: parent.id,
+      })
+      const res = await patchIssue(parent.identifier, { statusId })
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as {
+        statusId: string
+        warnings: string[]
+      }
+      expect(body.statusId).toBe(statusId)
+      expect(body.warnings).toEqual([])
+    }
+  })
+
+  test("an unrelated update carries no warnings", async () => {
     const parent = await createIssue(projectId, {
       title: "Parent",
       statusId: backlogId,
@@ -286,39 +376,9 @@ describe("issue subtasks", () => {
       statusId: backlogId,
       parentId: parent.id,
     })
-    const res = await patchIssue(parent.identifier, { statusId: doneId })
-    expect(res.status).toBe(200)
-    const body = (await res.json()) as { statusId: string; warnings: string[] }
-    expect(body.statusId).toBe(doneId)
-    expect(body.warnings).toHaveLength(1)
-    expect(body.warnings[0]).toMatch(/open subtask/i)
-  })
-
-  test("completing with done subtasks, or to a non-Completed status, warns nothing", async () => {
-    const parent = await createIssue(projectId, {
-      title: "Parent",
-      statusId: backlogId,
-    })
-    const child = await createIssue(projectId, {
-      title: "Child",
-      statusId: backlogId,
-      parentId: parent.id,
-    })
-    await patchIssue(child.identifier, { statusId: doneId })
-    const done = await patchIssue(parent.identifier, { statusId: doneId })
-    expect(((await done.json()) as { warnings: string[] }).warnings).toEqual([])
-
-    const other = await createIssue(projectId, {
-      title: "Other parent",
-      statusId: backlogId,
-    })
-    await createIssue(projectId, {
-      title: "Other child",
-      statusId: backlogId,
-      parentId: other.id,
-    })
-    const moved = await patchIssue(other.identifier, { title: "Renamed" })
-    expect(((await moved.json()) as { warnings: string[] }).warnings).toEqual(
+    const renamed = await patchIssue(parent.identifier, { title: "Renamed" })
+    expect(renamed.status).toBe(200)
+    expect(((await renamed.json()) as { warnings: string[] }).warnings).toEqual(
       []
     )
   })

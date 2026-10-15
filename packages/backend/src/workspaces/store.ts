@@ -89,6 +89,27 @@ export const DEFAULT_SEED_ISSUES: readonly {
   { title: "Archive work you no longer need", statusName: "In Progress" },
 ]
 
+/**
+ * Categories that count as done everywhere: list grouping, progress math, and
+ * the completion guardrail (ADR-0001). `archived` stays orthogonal — it means
+ * hidden, not canceled.
+ */
+export const TERMINAL_STATUS_CATEGORIES = [
+  "Completed",
+  "Canceled",
+  "Duplicate",
+] as const satisfies readonly StatusCategory[]
+
+/** Whether a status category is one of the terminal three (done) buckets. */
+export function isTerminalStatusCategory(
+  category: StatusCategory | undefined
+): boolean {
+  return (
+    category !== undefined &&
+    TERMINAL_STATUS_CATEGORIES.some((terminal) => terminal === category)
+  )
+}
+
 /** Priority urgency per GLOSSARY.md. */
 export const PRIORITIES = ["Urgent", "High", "Medium", "Low", "None"] as const
 

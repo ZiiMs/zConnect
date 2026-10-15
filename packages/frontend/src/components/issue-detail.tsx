@@ -76,10 +76,6 @@ export function IssueDetail({
         >
           ← Back
         </button>
-        <p className="text-muted-foreground text-xs">
-          Issues <span aria-hidden="true">›</span>{" "}
-          <span className="font-mono">{issue.identifier}</span>
-        </p>
       </div>
       <div className="mt-4 grid gap-6 md:grid-cols-[1.5fr_1fr]">
         <div className="min-w-0">
