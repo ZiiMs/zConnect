@@ -137,9 +137,7 @@ export const issue = pgTable(
     statusId: uuid("status_id")
       .notNull()
       .references(() => status.id, { onDelete: "restrict" }),
-    priority: varchar("priority", { length: 16 })
-      .notNull()
-      .$type<Priority>(),
+    priority: varchar("priority", { length: 16 }).notNull().$type<Priority>(),
     assigneeId: text("assignee_id"),
     dueDate: timestamp("due_date", { withTimezone: true }),
     archived: boolean("archived").notNull().default(false),
@@ -230,6 +228,64 @@ export const issueLabel = pgTable(
   (table) => [primaryKey({ columns: [table.issueId, table.labelId] })]
 )
 
+/**
+ * GitHub App installs + External Links (T6). Vocabulary per GLOSSARY.md:
+ * External Link (never Integration/Sync). An install is workspace-level and
+ * scoped to chosen `owner/repo` names; links cache PR title/state from
+ * webhook payloads only (no live GitHub reads); merge is badge-only.
+ */
+export const githubInstall = pgTable("github_install", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspace.id, { onDelete: "cascade" }),
+  repos: text("repos").array().notNull().default([]),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+})
+
+export const externalLink = pgTable(
+  "external_link",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    issueId: uuid("issue_id")
+      .notNull()
+      .references(() => issue.id, { onDelete: "cascade" }),
+    provider: varchar("provider", { length: 16 }).notNull().default("github"),
+    kind: varchar("kind", { length: 16 }).notNull(),
+    url: text("url").notNull(),
+    title: text("title"),
+    state: varchar("state", { length: 16 }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("external_link_issue_url_unique").on(table.issueId, table.url),
+  ]
+)
+
+export const timelineEvent = pgTable("timeline_event", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  issueId: uuid("issue_id")
+    .notNull()
+    .references(() => issue.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull(),
+  body: text("body").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+})
+
+/** Processed webhook delivery ids for idempotent redelivery handling. */
+export const webhookDelivery = pgTable("webhook_delivery", {
+  deliveryId: text("delivery_id").primaryKey(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+})
+
 export type WorkspaceRole = "Owner" | "Admin" | "Member"
 
 /** Fixed Status Category buckets per GLOSSARY.md. */
@@ -237,3 +293,27 @@ export type StatusCategory = "Todo" | "In Progress" | "Done"
 
 /** Priority urgency per GLOSSARY.md. */
 export type Priority = "Urgent" | "High" | "Medium" | "Low" | "None"
+
+/**
+ * Workspace-scoped agent token (T7 – MCP server). One row per token issued
+ * from workspace settings: only the SHA-256 `hash` is stored (show-once
+ * plaintext), `prefix` identifies the token in settings lists. A token acts
+ * with Member-level access scoped to its workspace via the MCP route.
+ */
+export const workspaceToken = pgTable(
+  "workspace_token",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspace.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    hash: text("hash").notNull(),
+    prefix: varchar("prefix", { length: 16 }).notNull(),
+    createdBy: text("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [uniqueIndex("workspace_token_hash_unique").on(table.hash)]
+)

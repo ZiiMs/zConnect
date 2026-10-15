@@ -1,5 +1,5 @@
 {
-  "id": "efd17eeb-d3db-4d76-8790-1b32a5fff567",
+  "id": "7b58aea0-7fe4-4836-af8d-c24dc6f31056",
   "prevId": "d82e38aa-884d-4d07-add2-4b6e60d0662c",
   "version": "7",
   "dialect": "postgresql",
@@ -892,12 +892,6 @@
           "notNull": true,
           "default": "'{}'"
         },
-        "parent_id": {
-          "name": "parent_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -956,19 +950,6 @@
           ],
           "onDelete": "restrict",
           "onUpdate": "no action"
-        },
-        "issue_parent_id_issue_id_fk": {
-          "name": "issue_parent_id_issue_id_fk",
-          "tableFrom": "issue",
-          "tableTo": "issue",
-          "columnsFrom": [
-            "parent_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -977,8 +958,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.label": {
-      "name": "label",
+    "public.workspace_token": {
+      "name": "workspace_token",
       "schema": "",
       "columns": {
         "id": {
@@ -1000,12 +981,23 @@
           "primaryKey": false,
           "notNull": true
         },
-        "color": {
-          "name": "color",
-          "type": "varchar(7)",
+        "hash": {
+          "name": "hash",
+          "type": "text",
           "primaryKey": false,
-          "notNull": true,
-          "default": "'#94a3b8'"
+          "notNull": true
+        },
+        "prefix": {
+          "name": "prefix",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
         },
         "created_at": {
           "name": "created_at",
@@ -1016,17 +1008,11 @@
         }
       },
       "indexes": {
-        "label_workspace_name_unique": {
-          "name": "label_workspace_name_unique",
+        "workspace_token_hash_unique": {
+          "name": "workspace_token_hash_unique",
           "columns": [
             {
-              "expression": "workspace_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "name",
+              "expression": "hash",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -1039,9 +1025,9 @@
         }
       },
       "foreignKeys": {
-        "label_workspace_id_workspace_id_fk": {
-          "name": "label_workspace_id_workspace_id_fk",
-          "tableFrom": "label",
+        "workspace_token_workspace_id_workspace_id_fk": {
+          "name": "workspace_token_workspace_id_workspace_id_fk",
+          "tableFrom": "workspace_token",
           "tableTo": "workspace",
           "columnsFrom": [
             "workspace_id"
@@ -1054,66 +1040,6 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.issue_label": {
-      "name": "issue_label",
-      "schema": "",
-      "columns": {
-        "issue_id": {
-          "name": "issue_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "label_id": {
-          "name": "label_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "issue_label_issue_id_issue_id_fk": {
-          "name": "issue_label_issue_id_issue_id_fk",
-          "tableFrom": "issue_label",
-          "tableTo": "issue",
-          "columnsFrom": [
-            "issue_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "issue_label_label_id_label_id_fk": {
-          "name": "issue_label_label_id_label_id_fk",
-          "tableFrom": "issue_label",
-          "tableTo": "label",
-          "columnsFrom": [
-            "label_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "issue_label_pkey": {
-          "name": "issue_label_pkey",
-          "columns": [
-            "issue_id",
-            "label_id"
-          ]
-        }
-      },
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},

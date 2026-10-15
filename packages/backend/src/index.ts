@@ -1,6 +1,11 @@
 import { Hono } from "hono"
 import { cors } from "hono/cors"
 import { getDb } from "./db/index.js"
+import { createDrizzleGitHubStore } from "./github/drizzle-store.js"
+import type { GitHubWebhookJob } from "./github/job.js"
+import { createGitHubApp } from "./github/routes.js"
+import { createDrizzleTokenStore } from "./mcp/drizzle-tokens.js"
+import { createMcpApp } from "./mcp/routes.js"
 import { createDrizzleWorkspaceStore } from "./workspaces/drizzle-store.js"
 import { createWorkspacesApp } from "./workspaces/routes.js"
 
@@ -34,8 +39,48 @@ app.route(
   })
 )
 
+// GitHub App + External Links (T6), mounted additively. The queue import is
+// dynamic so the app object stays import-safe without REDIS_URL (contract
+// tests never enqueue). Webhook HMAC applies only when GITHUB_WEBHOOK_SECRET
+// is set — production must set it; see github/routes.ts.
+app.route(
+  "/",
+  createGitHubApp({
+    workspaces: createDrizzleWorkspaceStore(() => getDb()),
+    github: createDrizzleGitHubStore(() => getDb()),
+    getSession: async (req) => {
+      const { auth } = await import("./lib/auth.js")
+      const session = await auth.api.getSession({ headers: req.headers })
+      if (!session) return null
+      return { user: { id: session.user.id, email: session.user.email } }
+    },
+    webhookSecret: process.env.GITHUB_WEBHOOK_SECRET,
+    enqueue: async (job: GitHubWebhookJob) => {
+      const { queues, QUEUES } = await import("./lib/queue.js")
+      await queues[QUEUES.githubWebhook].add("github-webhook", job, {
+        jobId: job.deliveryId,
+      })
+    },
+  })
+)
+
 app.get("/", (c) => {
   return c.text("Hello Hono!")
 })
+
+// T7 MCP server: workspace token issuance + Streamable HTTP route.
+app.route(
+  "/",
+  createMcpApp({
+    store: createDrizzleWorkspaceStore(() => getDb()),
+    tokens: createDrizzleTokenStore(() => getDb()),
+    getSession: async (req) => {
+      const { auth } = await import("./lib/auth.js")
+      const session = await auth.api.getSession({ headers: req.headers })
+      if (!session) return null
+      return { user: { id: session.user.id, email: session.user.email } }
+    },
+  })
+)
 
 export default app

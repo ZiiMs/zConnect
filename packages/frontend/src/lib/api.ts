@@ -68,6 +68,12 @@ export const issueSchema = z.object({
   parentId: z.string().nullable().optional(),
   /** T5 completion guardrail: present on PATCH responses that complete. */
   warnings: z.array(z.string()).optional(),
+  /**
+   * Last-write marker for realtime conflict resolution (T4). The Issue
+   * API predates it, so it stays optional: payloads without it still parse,
+   * and `applyRemoteIssue` falls back to last-received-wins.
+   */
+  updatedAt: z.string().nullable().optional(),
 })
 
 export const labelSchema = z.object({
@@ -350,4 +356,76 @@ export const api = {
       { method: "DELETE" }
     )
   },
+}
+
+/**
+ * Client-side mirror of the server Issue query semantics (T4). The List,
+ * Table, and Kanban views share one filtered query; this keeps realtime
+ * inserts consistent with it: an incoming Issue joins the visible set only
+ * when it matches the active filter bar.
+ */
+export function matchesIssueFilters(
+  issue: Issue,
+  filters: {
+    statusIds: string[]
+    priorities: Priority[]
+    assigneeId?: string | null
+    text: string
+  }
+): boolean {
+  if (
+    filters.statusIds.length > 0 &&
+    !filters.statusIds.includes(issue.statusId)
+  ) {
+    return false
+  }
+  if (
+    filters.priorities.length > 0 &&
+    !filters.priorities.includes(issue.priority)
+  ) {
+    return false
+  }
+  if (
+    filters.assigneeId !== undefined &&
+    issue.assigneeId !== filters.assigneeId
+  ) {
+    return false
+  }
+  const text = filters.text.trim().toLowerCase()
+  if (text.length > 0) {
+    const haystack = `${issue.identifier} ${issue.title}`.toLowerCase()
+    if (!haystack.includes(text)) return false
+  }
+  return true
+}
+
+/**
+ * Last-write-wins merge for realtime Issue events (T4). Inserts append in
+ * issue-number order; updates replace by id. When both sides carry
+ * `updatedAt`, an older incoming write loses and `applied` is false so the
+ * caller can surface the conflict; without timestamps the incoming event
+ * wins.
+ */
+export function applyRemoteIssue(
+  current: Issue[],
+  incoming: Issue
+): { issues: Issue[]; applied: boolean } {
+  const existing = current.find((item) => item.id === incoming.id)
+  if (!existing) {
+    return {
+      issues: [...current, incoming].sort((a, b) => a.number - b.number),
+      applied: true,
+    }
+  }
+  if (
+    existing.updatedAt != null &&
+    incoming.updatedAt != null &&
+    incoming.updatedAt < existing.updatedAt
+  ) {
+    return { issues: current, applied: false }
+  }
+  return {
+    issues: current.map((item) => (item.id === incoming.id ? incoming : item)),
+    applied: true,
+  }
 }

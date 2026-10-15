@@ -1,0 +1,166 @@
+import { render, screen, within } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
+import { describe, expect, test, vi } from "vitest"
+import type { Issue, Status } from "@/lib/api"
+import { IssueTable } from "./issue-table.js"
+
+const statuses: Status[] = [
+  {
+    id: "st-1",
+    projectId: "pr-1",
+    name: "Backlog",
+    category: "Todo",
+    position: 0,
+  },
+  {
+    id: "st-2",
+    projectId: "pr-1",
+    name: "Shipped",
+    category: "Done",
+    position: 1,
+  },
+]
+
+const members = [{ userId: "user-member" }, { userId: "user-owner" }]
+
+const issues: Issue[] = [
+  {
+    id: "is-1",
+    projectId: "pr-1",
+    number: 1,
+    keyPrefix: "WEB",
+    identifier: "WEB-1",
+    title: "Fix login",
+    description: null,
+    statusId: "st-1",
+    priority: "High",
+    assigneeId: null,
+    dueDate: null,
+    archived: false,
+    labels: [],
+  },
+  {
+    id: "is-2",
+    projectId: "pr-1",
+    number: 2,
+    keyPrefix: "WEB",
+    identifier: "WEB-2",
+    title: "Ship homepage",
+    description: null,
+    statusId: "st-2",
+    priority: "Low",
+    assigneeId: "user-member",
+    dueDate: null,
+    archived: false,
+    labels: [],
+  },
+]
+
+function setup(
+  canEdit = true,
+  onUpdate: (issue: Issue, input: object) => void = () => {}
+) {
+  return render(
+    <IssueTable
+      issues={issues}
+      statuses={statuses}
+      members={members}
+      canEdit={canEdit}
+      onUpdate={onUpdate}
+    />
+  )
+}
+
+describe("issue table", () => {
+  test("renders one row per issue with identifier and title", () => {
+    setup()
+
+    expect(screen.getByText("WEB-1")).toBeInTheDocument()
+    expect(screen.getByText("Ship homepage")).toBeInTheDocument()
+    expect(screen.getAllByRole("row")).toHaveLength(3)
+  })
+
+  test("shows an empty state without issues", () => {
+    render(
+      <IssueTable
+        issues={[]}
+        statuses={statuses}
+        members={members}
+        canEdit={true}
+        onUpdate={() => {}}
+      />
+    )
+    expect(screen.getByText(/no issues match/i)).toBeInTheDocument()
+  })
+
+  test("editing the status cell calls through with the new status", async () => {
+    const user = userEvent.setup()
+    const onUpdate = vi.fn()
+    setup(true, onUpdate)
+
+    const row = screen.getByTestId("issue-row-WEB-1")
+    await user.selectOptions(
+      within(row).getByLabelText(/status for WEB-1/i),
+      "st-2"
+    )
+
+    expect(onUpdate).toHaveBeenCalledWith(issues[0], { statusId: "st-2" })
+  })
+
+  test("editing the priority cell calls through with the new priority", async () => {
+    const user = userEvent.setup()
+    const onUpdate = vi.fn()
+    setup(true, onUpdate)
+
+    const row = screen.getByTestId("issue-row-WEB-1")
+    await user.selectOptions(
+      within(row).getByLabelText(/priority for WEB-1/i),
+      "Urgent"
+    )
+
+    expect(onUpdate).toHaveBeenCalledWith(issues[0], { priority: "Urgent" })
+  })
+
+  test("editing the assignee cell calls through with the new assignee", async () => {
+    const user = userEvent.setup()
+    const onUpdate = vi.fn()
+    setup(true, onUpdate)
+
+    const row = screen.getByTestId("issue-row-WEB-2")
+    await user.selectOptions(
+      within(row).getByLabelText(/assignee for WEB-2/i),
+      "user-owner"
+    )
+
+    expect(onUpdate).toHaveBeenCalledWith(issues[1], {
+      assigneeId: "user-owner",
+    })
+  })
+
+  test("unassigning from the assignee cell sends null", async () => {
+    const user = userEvent.setup()
+    const onUpdate = vi.fn()
+    setup(true, onUpdate)
+
+    const row = screen.getByTestId("issue-row-WEB-2")
+    await user.selectOptions(
+      within(row).getByLabelText(/assignee for WEB-2/i),
+      ""
+    )
+
+    expect(onUpdate).toHaveBeenCalledWith(issues[1], { assigneeId: null })
+  })
+
+  test("hides cell controls from read-only viewers", () => {
+    setup(false)
+
+    expect(screen.queryByLabelText(/status for WEB-1/i)).not.toBeInTheDocument()
+    expect(
+      screen.queryByLabelText(/priority for WEB-1/i)
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByLabelText(/assignee for WEB-1/i)
+    ).not.toBeInTheDocument()
+    expect(screen.getByText("Backlog")).toBeInTheDocument()
+  })
+})
