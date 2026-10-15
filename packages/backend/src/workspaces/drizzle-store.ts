@@ -1,7 +1,8 @@
-import { and, asc, eq } from "drizzle-orm"
+import { and, asc, eq, inArray, isNull } from "drizzle-orm"
 import type { getDb } from "../db/index.js"
 import {
   invitation,
+  issue,
   project,
   projectSequence,
   projectViewer,
@@ -10,11 +11,16 @@ import {
   workspaceMember,
 } from "../db/schema.js"
 import type {
+  CreateIssueInput,
   Invitation,
+  Issue,
+  IssueFilters,
   Membership,
+  Priority,
   Project,
   Status,
   StatusCategory,
+  UpdateIssueInput,
   Workspace,
   WorkspaceRole,
   WorkspaceStore,
@@ -33,6 +39,19 @@ function notFound(message: string): Error {
   const error = new Error(message)
   ;(error as { code?: string }).code = "not_found"
   return error
+}
+
+function invalid(message: string): Error {
+  const error = new Error(message)
+  ;(error as { code?: string }).code = "invalid"
+  return error
+}
+
+function parseDueDate(dueDate: string | null | undefined): Date | null {
+  if (dueDate === undefined || dueDate === null) return null
+  const parsed = new Date(dueDate)
+  if (Number.isNaN(parsed.getTime())) throw invalid("Invalid due date")
+  return parsed
 }
 
 /**
@@ -330,8 +349,8 @@ export function createDrizzleWorkspaceStore(
       const rows = await db.select().from(status).where(eq(status.id, statusId))
       const row = rows[0]
       if (!row) throw notFound("Status not found")
-      // TODO(T3): count against the issue table once it exists; no issue
-      // rows can exist yet, so the guard below always passes for now.
+      // Guarded by the issue table: any Issue (including archived ones)
+      // still references its status, so deletion must stay blocked.
       if ((await this.countIssuesInStatus(statusId)) > 0) {
         const error = new Error("Cannot delete a status that holds issues")
         ;(error as { code?: string }).code = "locked"
@@ -347,6 +366,228 @@ export function createDrizzleWorkspaceStore(
       }
     },
 
+    async createIssue(
+      projectId: string,
+      input: CreateIssueInput
+    ): Promise<Issue> {
+      const db = resolveDb()
+      const projects = await db
+        .select()
+        .from(project)
+        .where(eq(project.id, projectId))
+      const projectRow = projects[0]
+      if (!projectRow) throw notFound("Project not found")
+      const title = input.title.trim()
+      if (!title) throw invalid("Invalid title")
+      const statusRows = await db
+        .select()
+        .from(status)
+        .where(eq(status.id, input.statusId))
+      const statusRow = statusRows[0]
+      if (!statusRow || statusRow.projectId !== projectId) {
+        throw invalid("Invalid status")
+      }
+      const priority: Priority = input.priority ?? "Medium"
+      let assigneeId: string | null = null
+      if (input.assigneeId !== undefined && input.assigneeId !== null) {
+        const found = await db
+          .select()
+          .from(workspaceMember)
+          .where(
+            and(
+              eq(workspaceMember.workspaceId, projectRow.workspaceId),
+              eq(workspaceMember.userId, input.assigneeId)
+            )
+          )
+        if (found.length === 0) throw invalid("Assignee is not a member")
+        assigneeId = input.assigneeId
+      }
+      const dueDate = parseDueDate(input.dueDate)
+      const sequences = await db
+        .select()
+        .from(projectSequence)
+        .where(eq(projectSequence.projectId, projectId))
+      const sequence = sequences[0]
+      if (!sequence) throw notFound("Project not found")
+      const number = sequence.nextNumber
+      await db
+        .update(projectSequence)
+        .set({ nextNumber: number + 1 })
+        .where(eq(projectSequence.projectId, projectId))
+      const [row] = await db
+        .insert(issue)
+        .values({
+          projectId,
+          number,
+          keyPrefix: projectRow.key,
+          identifier: `${projectRow.key}-${number}`,
+          title,
+          description: input.description ?? null,
+          statusId: statusRow.id,
+          priority,
+          assigneeId,
+          dueDate,
+          labels: input.labels ? [...input.labels] : [],
+        })
+        .returning()
+      return toIssue(row)
+    },
+
+    async listIssues(
+      projectId: string,
+      filters?: IssueFilters
+    ): Promise<Issue[]> {
+      const db = resolveDb()
+      const conditions = [
+        eq(issue.projectId, projectId),
+        eq(issue.archived, filters?.archived ?? false),
+      ]
+      if (filters?.statusIds !== undefined && filters.statusIds.length > 0) {
+        conditions.push(inArray(issue.statusId, filters.statusIds))
+      }
+      if (filters?.priorities !== undefined && filters.priorities.length > 0) {
+        conditions.push(inArray(issue.priority, filters.priorities))
+      }
+      if (filters?.assigneeId !== undefined) {
+        conditions.push(
+          filters.assigneeId === null
+            ? isNull(issue.assigneeId)
+            : eq(issue.assigneeId, filters.assigneeId)
+        )
+      }
+      const rows = await db
+        .select()
+        .from(issue)
+        .where(and(...conditions))
+        .orderBy(asc(issue.number))
+      const labels =
+        filters?.labels !== undefined && filters.labels.length > 0
+          ? new Set(filters.labels)
+          : undefined
+      const text = filters?.text?.toLowerCase()
+      return rows
+        .map(toIssue)
+        .filter(
+          (item) =>
+            !labels ||
+            [...labels].every((label) => item.labels.includes(label))
+        )
+        .filter(
+          (item) =>
+            !text ||
+            item.identifier.toLowerCase().includes(text) ||
+            item.title.toLowerCase().includes(text)
+        )
+    },
+
+    async getIssue(ref: string): Promise<Issue | null> {
+      const db = resolveDb()
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ref)) {
+        const byId = await db.select().from(issue).where(eq(issue.id, ref))
+        if (byId[0]) return toIssue(byId[0])
+      }
+      const byKey = await db
+        .select()
+        .from(issue)
+        .where(eq(issue.identifier, ref.toUpperCase()))
+      return byKey[0] ? toIssue(byKey[0]) : null
+    },
+
+    async updateIssue(
+      ref: string,
+      input: UpdateIssueInput
+    ): Promise<Issue> {
+      const db = resolveDb()
+      const current = await this.getIssue(ref)
+      if (!current) throw notFound("Issue not found")
+      let projectId = current.projectId
+      if (input.projectId !== undefined && input.projectId !== current.projectId) {
+        const targets = await db
+          .select()
+          .from(project)
+          .where(eq(project.id, input.projectId))
+        const target = targets[0]
+        if (!target) throw notFound("Project not found")
+        const sources = await db
+          .select()
+          .from(project)
+          .where(eq(project.id, current.projectId))
+        const source = sources[0]
+        if (!source || source.workspaceId !== target.workspaceId) {
+          throw invalid("Cannot move an issue to another workspace")
+        }
+        projectId = target.id
+      }
+      if (input.statusId !== undefined) {
+        const statusRows = await db
+          .select()
+          .from(status)
+          .where(eq(status.id, input.statusId))
+        const statusRow = statusRows[0]
+        if (!statusRow || statusRow.projectId !== projectId) {
+          throw invalid("Invalid status")
+        }
+      } else if (projectId !== current.projectId) {
+        const statusRows = await db
+          .select()
+          .from(status)
+          .where(eq(status.id, current.statusId))
+        const statusRow = statusRows[0]
+        if (!statusRow || statusRow.projectId !== projectId) {
+          throw invalid("A status in the target project is required")
+        }
+      }
+      if (input.title !== undefined && !input.title.trim()) {
+        throw invalid("Invalid title")
+      }
+      let assigneeId = current.assigneeId
+      let assigneeTouched = false
+      if (input.assigneeId !== undefined) {
+        assigneeTouched = true
+        assigneeId = input.assigneeId
+        if (assigneeId !== null) {
+          const projectRows = await db
+            .select()
+            .from(project)
+            .where(eq(project.id, projectId))
+          const projectRow = projectRows[0]
+          if (!projectRow) throw notFound("Project not found")
+          const found = await db
+            .select()
+            .from(workspaceMember)
+            .where(
+              and(
+                eq(workspaceMember.workspaceId, projectRow.workspaceId),
+                eq(workspaceMember.userId, assigneeId)
+              )
+            )
+          if (found.length === 0) throw invalid("Assignee is not a member")
+        }
+      }
+      const [updated] = await db
+        .update(issue)
+        .set({
+          ...(input.title !== undefined ? { title: input.title.trim() } : {}),
+          ...(input.description !== undefined
+            ? { description: input.description }
+            : {}),
+          ...(input.statusId !== undefined ? { statusId: input.statusId } : {}),
+          ...(input.priority !== undefined ? { priority: input.priority } : {}),
+          ...(assigneeTouched ? { assigneeId } : {}),
+          ...(input.dueDate !== undefined
+            ? { dueDate: parseDueDate(input.dueDate) }
+            : {}),
+          ...(input.archived !== undefined ? { archived: input.archived } : {}),
+          ...(input.labels !== undefined ? { labels: [...input.labels] } : {}),
+          ...(projectId !== current.projectId ? { projectId } : {}),
+          updatedAt: new Date(),
+        })
+        .where(eq(issue.id, current.id))
+        .returning()
+      if (!updated) throw notFound("Issue not found")
+      return toIssue(updated)
+    },
+
     async recordIssue(projectId, _statusId) {
       const db = resolveDb()
       const rows = await db
@@ -355,8 +596,8 @@ export function createDrizzleWorkspaceStore(
         .where(eq(projectSequence.projectId, projectId))
       const row = rows[0]
       if (!row) throw notFound("Project not found")
-      // Forward-compat probe: advances the sequence the way T3's issue
-      // creation will. Per-status counts arrive with T3's issue table.
+      // T2 probe: advances the sequence exactly like issue creation.
+      // Production routes never call it; contract tests seed through it.
       await db
         .update(projectSequence)
         .set({ nextNumber: row.nextNumber + 1 })
@@ -364,9 +605,13 @@ export function createDrizzleWorkspaceStore(
       return { number: row.nextNumber }
     },
 
-    async countIssuesInStatus(_statusId) {
-      // TODO(T3): query the issue table once it exists.
-      return 0
+    async countIssuesInStatus(statusId: string) {
+      const db = resolveDb()
+      const rows = await db
+        .select({ id: issue.id })
+        .from(issue)
+        .where(eq(issue.statusId, statusId))
+      return rows.length
     },
 
     async addProjectViewer(projectId, userId) {
@@ -438,6 +683,24 @@ function toStatus(row: typeof status.$inferSelect): Status {
     name: row.name,
     category: row.category as StatusCategory,
     position: row.position,
+  }
+}
+
+function toIssue(row: typeof issue.$inferSelect): Issue {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    number: row.number,
+    keyPrefix: row.keyPrefix,
+    identifier: row.identifier,
+    title: row.title,
+    description: row.description,
+    statusId: row.statusId,
+    priority: row.priority as Priority,
+    assigneeId: row.assigneeId,
+    dueDate: row.dueDate ? row.dueDate.toISOString() : null,
+    archived: row.archived,
+    labels: [...(row.labels ?? [])],
   }
 }
 

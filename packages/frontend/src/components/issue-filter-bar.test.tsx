@@ -1,0 +1,158 @@
+import { render, screen } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
+import React from "react"
+import { describe, expect, test, vi } from "vitest"
+import type { Status } from "@/lib/api"
+import {
+  emptyIssueFilters,
+  IssueFilterBar,
+  type IssueFilterValue,
+  loadIssueFilters,
+  saveIssueFilters,
+} from "./issue-filter-bar.js"
+
+const statuses: Status[] = [
+  {
+    id: "st-1",
+    projectId: "pr-1",
+    name: "Backlog",
+    category: "Todo",
+    position: 0,
+  },
+  {
+    id: "st-2",
+    projectId: "pr-1",
+    name: "Shipped",
+    category: "Done",
+    position: 1,
+  },
+]
+
+const members = [{ userId: "user-member" }, { userId: "user-owner" }]
+
+function renderBar(
+  value: IssueFilterValue = emptyIssueFilters(),
+  onChange: (value: IssueFilterValue) => void = () => {}
+) {
+  return render(
+    <IssueFilterBar
+      statuses={statuses}
+      members={members}
+      value={value}
+      onChange={onChange}
+    />
+  )
+}
+
+describe("issue filter bar", () => {
+  test("renders status, priority, assignee and text controls", () => {
+    renderBar()
+    expect(screen.getByLabelText(/search issues/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/assignee/i)).toBeInTheDocument()
+    expect(
+      screen.getByRole("checkbox", { name: "Backlog" })
+    ).toBeInTheDocument()
+    expect(screen.getByRole("checkbox", { name: "Urgent" })).toBeInTheDocument()
+  })
+
+  test("toggling a status notifies with the narrowed value", async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    renderBar(emptyIssueFilters(), onChange)
+
+    await user.click(screen.getByRole("checkbox", { name: "Backlog" }))
+
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ statusIds: ["st-1"] })
+    )
+  })
+
+  test("toggling a priority notifies with the narrowed value", async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    renderBar(emptyIssueFilters(), onChange)
+
+    await user.click(screen.getByRole("checkbox", { name: "High" }))
+
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ priorities: ["High"] })
+    )
+  })
+
+  test("typing text notifies with the search value", async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    function StatefulBar() {
+      const [value, setValue] = React.useState(emptyIssueFilters())
+      return (
+        <IssueFilterBar
+          statuses={statuses}
+          members={members}
+          value={value}
+          onChange={(next) => {
+            setValue(next)
+            onChange(next)
+          }}
+        />
+      )
+    }
+    render(<StatefulBar />)
+
+    await user.type(screen.getByLabelText(/search issues/i), "fix")
+
+    expect(onChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ text: "fix" })
+    )
+  })
+
+  test("picking an assignee notifies with the member", async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    renderBar(emptyIssueFilters(), onChange)
+
+    await user.selectOptions(screen.getByLabelText(/assignee/i), "user-member")
+
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ assigneeId: "user-member" })
+    )
+  })
+
+  test("checked state reflects the current value", () => {
+    renderBar({
+      ...emptyIssueFilters(),
+      statusIds: ["st-1"],
+      priorities: ["Urgent"],
+      text: "fix",
+    })
+    expect(screen.getByRole("checkbox", { name: "Backlog" })).toBeChecked()
+    expect(screen.getByRole("checkbox", { name: "Shipped" })).not.toBeChecked()
+    expect(screen.getByRole("checkbox", { name: "Urgent" })).toBeChecked()
+    expect(screen.getByLabelText(/search issues/i)).toHaveValue("fix")
+  })
+})
+
+describe("filter persistence", () => {
+  test("round-trips per user per project through localStorage", () => {
+    const value: IssueFilterValue = {
+      ...emptyIssueFilters(),
+      statusIds: ["st-1"],
+      text: "fix",
+    }
+    saveIssueFilters("user-a", "pr-1", value)
+    expect(loadIssueFilters("user-a", "pr-1")).toEqual(value)
+  })
+
+  test("keys are scoped: another user or project sees nothing", () => {
+    saveIssueFilters("user-a", "pr-1", {
+      ...emptyIssueFilters(),
+      text: "fix",
+    })
+    expect(loadIssueFilters("user-b", "pr-1")).toBeNull()
+    expect(loadIssueFilters("user-a", "pr-2")).toBeNull()
+  })
+
+  test("corrupt stored JSON loads as nothing", () => {
+    localStorage.setItem("zconnect:issue-filters:user-a:pr-1", "not-json{{{")
+    expect(loadIssueFilters("user-a", "pr-1")).toBeNull()
+  })
+})

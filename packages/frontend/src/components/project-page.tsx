@@ -1,21 +1,28 @@
 import { useCallback, useEffect, useState } from "react"
 import { CreateStatusForm } from "@/components/create-status-form"
+import { ProjectIssues } from "@/components/project-issues"
 import { ProjectKeyForm } from "@/components/project-key-form"
 import { Button } from "@/components/ui/button"
 import { api, type Project, type Status } from "@/lib/api"
 
 /**
  * Project page: renders the project's Statuses as ordered sections (the
- * empty workflow the Kanban view later builds on). Managers can edit the
- * Project Key, define Statuses, and delete empty Statuses.
+ * empty workflow the Kanban view later builds on) plus the Issue List view.
+ * Managers can edit the Project Key, define Statuses, and delete empty
+ * Statuses. Anyone who can write Issues (every workspace role; Viewers are
+ * read-only) gets the create form and List actions.
  */
 export function ProjectPage({
   project,
   canManage,
+  canWriteIssues,
+  userId,
   onProjectUpdated,
 }: {
   project: Project
   canManage: boolean
+  canWriteIssues: boolean
+  userId: string
   onProjectUpdated: (project: Project) => void
 }) {
   const [statuses, setStatuses] = useState<Status[]>([])
@@ -112,6 +119,11 @@ export function ProjectPage({
             )}
           </section>
         ))}
+      <ProjectIssues
+        project={project}
+        userId={userId}
+        canWrite={canWriteIssues}
+      />
     </div>
   )
 }

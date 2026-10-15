@@ -1,0 +1,109 @@
+import { render, screen, waitFor } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
+import { describe, expect, test, vi } from "vitest"
+import { api, type Issue, type Status } from "@/lib/api"
+import { CreateIssueForm } from "./create-issue-form.js"
+
+vi.mock("@/lib/api", () => ({
+  api: { createIssue: vi.fn() },
+}))
+
+const createIssue = vi.mocked(api.createIssue)
+
+const statuses: Status[] = [
+  {
+    id: "st-1",
+    projectId: "pr-1",
+    name: "Backlog",
+    category: "Todo",
+    position: 0,
+  },
+  {
+    id: "st-2",
+    projectId: "pr-1",
+    name: "Shipped",
+    category: "Done",
+    position: 1,
+  },
+]
+
+const created: Issue = {
+  id: "is-1",
+  projectId: "pr-1",
+  number: 1,
+  keyPrefix: "WEB",
+  identifier: "WEB-1",
+  title: "Fix login",
+  description: null,
+  statusId: "st-1",
+  priority: "High",
+  assigneeId: null,
+  dueDate: null,
+  archived: false,
+  labels: [],
+}
+
+describe("create issue form", () => {
+  test("renders title, status, priority and assignee controls", () => {
+    render(
+      <CreateIssueForm
+        projectId="pr-1"
+        statuses={statuses}
+        members={[{ userId: "user-member" }]}
+        onCreated={() => {}}
+      />
+    )
+    expect(screen.getByLabelText(/issue title/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/issue status/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/priority/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/assignee/i)).toBeInTheDocument()
+  })
+
+  test("submitting creates the issue and notifies", async () => {
+    const user = userEvent.setup()
+    const onCreated = vi.fn()
+    createIssue.mockResolvedValue(created)
+    render(
+      <CreateIssueForm
+        projectId="pr-1"
+        statuses={statuses}
+        members={[{ userId: "user-member" }]}
+        onCreated={onCreated}
+      />
+    )
+
+    await user.type(screen.getByLabelText(/issue title/i), "Fix login")
+    await user.selectOptions(screen.getByLabelText(/priority/i), "High")
+    await user.click(screen.getByRole("button", { name: /create issue/i }))
+
+    await waitFor(() =>
+      expect(createIssue).toHaveBeenCalledWith(
+        "pr-1",
+        expect.objectContaining({
+          title: "Fix login",
+          statusId: "st-1",
+          priority: "High",
+        })
+      )
+    )
+    expect(onCreated).toHaveBeenCalledWith(created)
+  })
+
+  test("a failed create shows the error", async () => {
+    const user = userEvent.setup()
+    createIssue.mockRejectedValueOnce(new Error("Invalid issue"))
+    render(
+      <CreateIssueForm
+        projectId="pr-1"
+        statuses={statuses}
+        members={[]}
+        onCreated={() => {}}
+      />
+    )
+
+    await user.type(screen.getByLabelText(/issue title/i), "Fix login")
+    await user.click(screen.getByRole("button", { name: /create issue/i }))
+
+    expect(await screen.findByText(/invalid issue/i)).toBeInTheDocument()
+  })
+})
