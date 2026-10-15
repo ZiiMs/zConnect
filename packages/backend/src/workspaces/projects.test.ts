@@ -124,7 +124,7 @@ describe("project key editing", () => {
   async function seedIssue() {
     const status = await store.createStatus(projectId, {
       name: "Backlog",
-      category: "Todo",
+      category: "Unstarted",
     })
     await store.recordIssue(projectId, status.id)
   }
@@ -278,11 +278,15 @@ describe("project statuses", () => {
     projectId = (await project.json()).id
   })
 
-  test("admin defines ordered statuses with categories", async () => {
+  test("admin defines ordered statuses across all six categories", async () => {
+    // One status per category, in roster order (ADR-0001).
     for (const [name, category] of [
-      ["Backlog", "Todo"],
+      ["Backlog", "Backlog"],
+      ["Triage", "Unstarted"],
       ["In Review", "In Progress"],
-      ["Shipped", "Done"],
+      ["Shipped", "Completed"],
+      ["Dropped", "Canceled"],
+      ["Repeat", "Duplicate"],
     ] as const) {
       const res = await postStatus(owner.id, projectId, { name, category })
       expect(res.status).toBe(201)
@@ -290,9 +294,12 @@ describe("project statuses", () => {
 
     const statuses = await listStatuses()
     expect(statuses.map((s) => [s.name, s.category, s.position])).toEqual([
-      ["Backlog", "Todo", 0],
-      ["In Review", "In Progress", 1],
-      ["Shipped", "Done", 2],
+      ["Backlog", "Backlog", 0],
+      ["Triage", "Unstarted", 1],
+      ["In Review", "In Progress", 2],
+      ["Shipped", "Completed", 3],
+      ["Dropped", "Canceled", 4],
+      ["Repeat", "Duplicate", 5],
     ])
   })
 
@@ -302,18 +309,31 @@ describe("project statuses", () => {
       category: "Blocked",
     })
     expect(badCategory.status).toBe(400)
+    expect(await badCategory.json()).toEqual({ error: "Invalid status" })
+    // The retired three-bucket categories are no longer accepted.
+    for (const category of ["Todo", "Done"]) {
+      const retired = await postStatus(owner.id, projectId, {
+        name: "Old",
+        category,
+      })
+      expect(retired.status).toBe(400)
+      expect(await retired.json()).toEqual({ error: "Invalid status" })
+    }
     const blankName = await postStatus(owner.id, projectId, {
       name: " ",
-      category: "Todo",
+      category: "Unstarted",
     })
     expect(blankName.status).toBe(400)
   })
 
   test("duplicate status name returns 409", async () => {
-    await postStatus(owner.id, projectId, { name: "Backlog", category: "Todo" })
+    await postStatus(owner.id, projectId, {
+      name: "Backlog",
+      category: "Unstarted",
+    })
     const res = await postStatus(owner.id, projectId, {
       name: "Backlog",
-      category: "Done",
+      category: "Completed",
     })
     expect(res.status).toBe(409)
   })
@@ -342,13 +362,17 @@ describe("project statuses", () => {
     for (const userId of [member.id, viewer.id]) {
       const res = await postStatus(userId, projectId, {
         name: "Backlog",
-        category: "Todo",
+        category: "Unstarted",
       })
       expect(res.status).toBe(403)
     }
     expect(
-      (await postStatus(undefined, projectId, { name: "B", category: "Todo" }))
-        .status
+      (
+        await postStatus(undefined, projectId, {
+          name: "B",
+          category: "Unstarted",
+        })
+      ).status
     ).toBe(401)
   })
 
@@ -360,7 +384,7 @@ describe("project statuses", () => {
     expect(listed.status).toBe(404)
     const created = await postStatus(owner.id, missing, {
       name: "Backlog",
-      category: "Todo",
+      category: "Unstarted",
     })
     expect(created.status).toBe(404)
   })
@@ -368,7 +392,7 @@ describe("project statuses", () => {
   test("admin renames and recategorizes a status", async () => {
     await postStatus(owner.id, projectId, {
       name: "Backlog",
-      category: "Todo",
+      category: "Unstarted",
     })
     const [{ id }] = await listStatuses()
 
@@ -386,7 +410,7 @@ describe("project statuses", () => {
 
   test("admin reorders a status by position", async () => {
     for (const name of ["First", "Second", "Third"]) {
-      await postStatus(owner.id, projectId, { name, category: "Todo" })
+      await postStatus(owner.id, projectId, { name, category: "Unstarted" })
     }
     const before = await listStatuses()
     const third = before.find((s) => s.name === "Third")
@@ -405,7 +429,7 @@ describe("project statuses", () => {
   test("outsider cannot rename a status (403)", async () => {
     await postStatus(owner.id, projectId, {
       name: "Backlog",
-      category: "Todo",
+      category: "Unstarted",
     })
     const listed = await app.request(`/api/projects/${projectId}/statuses`, {
       headers: auth(owner.id),
@@ -432,7 +456,10 @@ describe("project statuses", () => {
       body: JSON.stringify({ name: "Other", key: "OTHER" }),
     })
     const otherId = ((await other.json()) as { id: string }).id
-    await postStatus(owner.id, otherId, { name: "Backlog", category: "Todo" })
+    await postStatus(owner.id, otherId, {
+      name: "Backlog",
+      category: "Unstarted",
+    })
     const foreign = (
       (await (
         await app.request(`/api/projects/${otherId}/statuses`, {
@@ -485,7 +512,7 @@ describe("status deletion", () => {
     projectId = ((await project.json()) as { id: string }).id
   })
 
-  async function defineStatus(name: string, category = "Todo") {
+  async function defineStatus(name: string, category = "Unstarted") {
     const res = await app.request(`/api/projects/${projectId}/statuses`, {
       method: "POST",
       headers: { "content-type": "application/json", ...auth(owner.id) },

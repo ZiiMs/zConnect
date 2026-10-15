@@ -199,8 +199,8 @@ describe("mcp project.list and issue.list parity", () => {
     )
     projectId = (await project.json()).id
     for (const [name, category] of [
-      ["Backlog", "Todo"],
-      ["Shipped", "Done"],
+      ["Backlog", "Unstarted"],
+      ["Shipped", "Completed"],
     ] as const) {
       const created = await app.request(`/api/projects/${projectId}/statuses`, {
         method: "POST",
@@ -348,7 +348,7 @@ describe("mcp issue.get parity", () => {
     const status = await app.request(`/api/projects/${projectId}/statuses`, {
       method: "POST",
       headers: { "content-type": "application/json", ...auth(owner.id) },
-      body: JSON.stringify({ name: "Backlog", category: "Todo" }),
+      body: JSON.stringify({ name: "Backlog", category: "Unstarted" }),
     })
     statusId = (await status.json()).id
     await app.request(`/api/workspaces/${workspaceId}/invites`, {
@@ -481,7 +481,7 @@ describe("mcp issue.create and issue.update parity", () => {
     const status = await app.request(`/api/projects/${projectId}/statuses`, {
       method: "POST",
       headers: { "content-type": "application/json", ...auth(owner.id) },
-      body: JSON.stringify({ name: "Backlog", category: "Todo" }),
+      body: JSON.stringify({ name: "Backlog", category: "Unstarted" }),
     })
     statusId = (await status.json()).id
     await app.request(`/api/workspaces/${workspaceId}/invites`, {
@@ -587,7 +587,7 @@ describe("mcp issue.create and issue.update parity", () => {
     const done = await app.request(`/api/projects/${projectId}/statuses`, {
       method: "POST",
       headers: { "content-type": "application/json", ...auth(owner.id) },
-      body: JSON.stringify({ name: "Shipped", category: "Done" }),
+      body: JSON.stringify({ name: "Shipped", category: "Completed" }),
     })
     const doneId = ((await done.json()) as { id: string }).id
 
@@ -693,7 +693,7 @@ describe("mcp issue.create and issue.update parity", () => {
       {
         method: "POST",
         headers: { "content-type": "application/json", ...auth(owner.id) },
-        body: JSON.stringify({ name: "Triage", category: "Todo" }),
+        body: JSON.stringify({ name: "Triage", category: "Unstarted" }),
       }
     )
     const targetStatusId = ((await targetStatus.json()) as { id: string }).id

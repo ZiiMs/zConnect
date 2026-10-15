@@ -34,8 +34,15 @@ export interface Project {
   key: string
 }
 
-/** Status Category buckets per GLOSSARY.md. */
-export const STATUS_CATEGORIES = ["Todo", "In Progress", "Done"] as const
+/** Status Category buckets per GLOSSARY.md, in roster order (ADR-0001). */
+export const STATUS_CATEGORIES = [
+  "Backlog",
+  "Unstarted",
+  "In Progress",
+  "Completed",
+  "Canceled",
+  "Duplicate",
+] as const
 
 export type StatusCategory = (typeof STATUS_CATEGORIES)[number]
 

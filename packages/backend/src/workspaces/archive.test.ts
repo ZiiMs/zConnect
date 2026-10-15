@@ -107,7 +107,7 @@ describe("issue archive and hard delete", () => {
     const status = await app.request(`/api/projects/${projectId}/statuses`, {
       method: "POST",
       headers: { "content-type": "application/json", ...auth(owner.id) },
-      body: JSON.stringify({ name: "Backlog", category: "Todo" }),
+      body: JSON.stringify({ name: "Backlog", category: "Unstarted" }),
     })
     backlogId = ((await status.json()) as { id: string }).id
     await joinAs(member)

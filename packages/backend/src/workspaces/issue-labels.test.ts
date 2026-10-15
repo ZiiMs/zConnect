@@ -107,7 +107,7 @@ describe("issue label links", () => {
       const created = await app.request(`/api/projects/${id}/statuses`, {
         method: "POST",
         headers: { "content-type": "application/json", ...auth(owner.id) },
-        body: JSON.stringify({ name: "Backlog", category: "Todo" }),
+        body: JSON.stringify({ name: "Backlog", category: "Unstarted" }),
       })
       const status = ((await created.json()) as { id: string }).id
       if (key === "WEB") {

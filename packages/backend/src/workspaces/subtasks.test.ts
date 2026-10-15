@@ -105,8 +105,8 @@ describe("issue subtasks", () => {
       )
       const id = ((await project.json()) as { id: string }).id
       for (const [statusName, category] of [
-        ["Backlog", "Todo"],
-        ["Shipped", "Done"],
+        ["Backlog", "Unstarted"],
+        ["Shipped", "Completed"],
       ] as const) {
         const created = await app.request(`/api/projects/${id}/statuses`, {
           method: "POST",
@@ -116,11 +116,11 @@ describe("issue subtasks", () => {
         const status = ((await created.json()) as { id: string }).id
         if (key === "WEB") {
           projectId = id
-          if (category === "Todo") backlogId = status
+          if (category === "Unstarted") backlogId = status
           else doneId = status
         } else {
           otherProjectId = id
-          if (category === "Todo") otherBacklogId = status
+          if (category === "Unstarted") otherBacklogId = status
         }
       }
     }
@@ -291,7 +291,7 @@ describe("issue subtasks", () => {
     expect(body.warnings[0]).toMatch(/open subtask/i)
   })
 
-  test("completing with done subtasks, or to a non-Done status, warns nothing", async () => {
+  test("completing with done subtasks, or to a non-Completed status, warns nothing", async () => {
     const parent = await createIssue(projectId, {
       title: "Parent",
       statusId: backlogId,

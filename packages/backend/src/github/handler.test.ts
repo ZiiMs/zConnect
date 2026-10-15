@@ -47,7 +47,7 @@ describe("pull request webhook handler", () => {
     projectId = project.id
     const status = await workspaces.createStatus(projectId, {
       name: "Backlog",
-      category: "Todo",
+      category: "Unstarted",
     })
     statusId = status.id
     const issue = await workspaces.createIssue(projectId, {
