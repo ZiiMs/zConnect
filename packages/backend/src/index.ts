@@ -1,6 +1,8 @@
 import { Hono } from "hono"
 import { cors } from "hono/cors"
 import { getDb } from "./db/index.js"
+import { createDrizzleTokenStore } from "./mcp/drizzle-tokens.js"
+import { createMcpApp } from "./mcp/routes.js"
 import { createDrizzleWorkspaceStore } from "./workspaces/drizzle-store.js"
 import { createWorkspacesApp } from "./workspaces/routes.js"
 
@@ -37,5 +39,20 @@ app.route(
 app.get("/", (c) => {
   return c.text("Hello Hono!")
 })
+
+// T7 MCP server: workspace token issuance + Streamable HTTP route.
+app.route(
+  "/",
+  createMcpApp({
+    store: createDrizzleWorkspaceStore(() => getDb()),
+    tokens: createDrizzleTokenStore(() => getDb()),
+    getSession: async (req) => {
+      const { auth } = await import("./lib/auth.js")
+      const session = await auth.api.getSession({ headers: req.headers })
+      if (!session) return null
+      return { user: { id: session.user.id, email: session.user.email } }
+    },
+  })
+)
 
 export default app

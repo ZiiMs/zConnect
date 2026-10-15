@@ -184,3 +184,27 @@ export type StatusCategory = "Todo" | "In Progress" | "Done"
 
 /** Priority urgency per GLOSSARY.md. */
 export type Priority = "Urgent" | "High" | "Medium" | "Low" | "None"
+
+/**
+ * Workspace-scoped agent token (T7 – MCP server). One row per token issued
+ * from workspace settings: only the SHA-256 `hash` is stored (show-once
+ * plaintext), `prefix` identifies the token in settings lists. A token acts
+ * with Member-level access scoped to its workspace via the MCP route.
+ */
+export const workspaceToken = pgTable(
+  "workspace_token",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspace.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    hash: text("hash").notNull(),
+    prefix: varchar("prefix", { length: 16 }).notNull(),
+    createdBy: text("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [uniqueIndex("workspace_token_hash_unique").on(table.hash)]
+)
