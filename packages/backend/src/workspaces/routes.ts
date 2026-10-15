@@ -1,7 +1,11 @@
 import { Hono } from "hono"
 import { z } from "zod"
 import type { GetSession } from "./session.js"
-import { WORKSPACE_ROLES, type WorkspaceStore } from "./store.js"
+import {
+  STATUS_CATEGORIES,
+  WORKSPACE_ROLES,
+  type WorkspaceStore,
+} from "./store.js"
 
 const createWorkspaceBody = z.object({ name: z.string().trim().min(1) })
 
@@ -10,16 +14,46 @@ const inviteBody = z.object({
   role: z.enum(WORKSPACE_ROLES),
 })
 
+const projectKeySchema = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(/^[A-Z][A-Z0-9]{1,15}$/)
+
 const createProjectBody = z.object({
   name: z.string().trim().min(1),
-  key: z
-    .string()
-    .trim()
-    .toUpperCase()
-    .regex(/^[A-Z][A-Z0-9]{1,15}$/),
+  key: projectKeySchema,
 })
 
+const updateProjectBody = z
+  .object({
+    name: z.string().trim().min(1).optional(),
+    key: projectKeySchema.optional(),
+  })
+  .refine((body) => body.name !== undefined || body.key !== undefined, {
+    message: "Nothing to update",
+  })
+
 const grantViewerBody = z.object({ userId: z.string().trim().min(1) })
+
+const createStatusBody = z.object({
+  name: z.string().trim().min(1),
+  category: z.enum(STATUS_CATEGORIES),
+})
+
+const updateStatusBody = z
+  .object({
+    name: z.string().trim().min(1).optional(),
+    category: z.enum(STATUS_CATEGORIES).optional(),
+    position: z.number().int().min(0).optional(),
+  })
+  .refine(
+    (body) =>
+      body.name !== undefined ||
+      body.category !== undefined ||
+      body.position !== undefined,
+    { message: "Nothing to update" }
+  )
 
 function isConflict(error: unknown) {
   return (
@@ -34,6 +68,14 @@ function isNotFound(error: unknown) {
     typeof error === "object" &&
     error !== null &&
     (error as { code?: string }).code === "not_found"
+  )
+}
+
+function isLocked(error: unknown) {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: string }).code === "locked"
   )
 }
 
@@ -138,6 +180,14 @@ export function createWorkspacesApp({ store, getSession }: WorkspacesDeps) {
     return mine.find((w) => w.id === workspaceId) ?? null
   }
 
+  async function readableProject(projectId: string, userId: string) {
+    const project = await store.getProject(projectId)
+    if (!project) return null
+    const visible = await visibleWorkspace(project.workspaceId, userId)
+    if (!visible) return null
+    return project
+  }
+
   app.get("/api/workspaces/:id/projects", async (c) => {
     const session = await getSession(c.req.raw)
     if (!session) return c.json({ error: "Unauthorized" }, 401)
@@ -181,6 +231,143 @@ export function createWorkspacesApp({ store, getSession }: WorkspacesDeps) {
     if (!parsed.success) return c.json({ error: "Invalid viewer" }, 400)
     await store.addProjectViewer(project.id, parsed.data.userId)
     return c.json({ projectId: project.id, userId: parsed.data.userId }, 201)
+  })
+
+  app.get("/api/projects/:id", async (c) => {
+    const session = await getSession(c.req.raw)
+    if (!session) return c.json({ error: "Unauthorized" }, 401)
+    const project = await readableProject(c.req.param("id"), session.user.id)
+    if (!project) {
+      const exists = await store.getProject(c.req.param("id"))
+      return c.json(
+        { error: exists ? "Forbidden" : "Not found" },
+        exists ? 403 : 404
+      )
+    }
+    return c.json(project)
+  })
+
+  app.get("/api/projects/:id/statuses", async (c) => {
+    const session = await getSession(c.req.raw)
+    if (!session) return c.json({ error: "Unauthorized" }, 401)
+    const project = await readableProject(c.req.param("id"), session.user.id)
+    if (!project) {
+      const exists = await store.getProject(c.req.param("id"))
+      return c.json(
+        { error: exists ? "Forbidden" : "Not found" },
+        exists ? 403 : 404
+      )
+    }
+    return c.json(await store.listStatuses(project.id))
+  })
+
+  app.patch("/api/projects/:id", async (c) => {
+    const session = await getSession(c.req.raw)
+    if (!session) return c.json({ error: "Unauthorized" }, 401)
+    const project = await store.getProject(c.req.param("id"))
+    if (!project) return c.json({ error: "Not found" }, 404)
+    const membership = await store.getMembership(
+      project.workspaceId,
+      session.user.id
+    )
+    if (!membership || membership.role === "Member") {
+      return c.json({ error: "Forbidden" }, 403)
+    }
+    const parsed = updateProjectBody.safeParse(await c.req.json())
+    if (!parsed.success) return c.json({ error: "Invalid project" }, 400)
+    try {
+      return c.json(await store.updateProject(project.id, parsed.data))
+    } catch (error) {
+      if (isLocked(error))
+        return c.json({ error: (error as Error).message }, 409)
+      if (isConflict(error)) return c.json({ error: "Key taken" }, 409)
+      throw error
+    }
+  })
+
+  async function manageableProject(projectId: string, userId: string) {
+    const project = await store.getProject(projectId)
+    if (!project) return null
+    const membership = await store.getMembership(project.workspaceId, userId)
+    if (!membership || membership.role === "Member") return null
+    return project
+  }
+
+  app.post("/api/projects/:id/statuses", async (c) => {
+    const session = await getSession(c.req.raw)
+    if (!session) return c.json({ error: "Unauthorized" }, 401)
+    const project = await store.getProject(c.req.param("id"))
+    if (!project) return c.json({ error: "Not found" }, 404)
+    if (!(await manageableProject(project.id, session.user.id))) {
+      return c.json({ error: "Forbidden" }, 403)
+    }
+    const parsed = createStatusBody.safeParse(await c.req.json())
+    if (!parsed.success) return c.json({ error: "Invalid status" }, 400)
+    try {
+      const status = await store.createStatus(project.id, parsed.data)
+      return c.json(status, 201)
+    } catch (error) {
+      if (isConflict(error)) return c.json({ error: "Status name taken" }, 409)
+      throw error
+    }
+  })
+
+  app.patch("/api/projects/:projectId/statuses/:statusId", async (c) => {
+    const session = await getSession(c.req.raw)
+    if (!session) return c.json({ error: "Unauthorized" }, 401)
+    const project = await manageableProject(
+      c.req.param("projectId"),
+      session.user.id
+    )
+    if (!project) {
+      const exists = await store.getProject(c.req.param("projectId"))
+      return c.json(
+        { error: exists ? "Forbidden" : "Not found" },
+        exists ? 403 : 404
+      )
+    }
+    const status = await store.getStatus(c.req.param("statusId"))
+    if (!status || status.projectId !== project.id) {
+      return c.json({ error: "Not found" }, 404)
+    }
+    const parsed = updateStatusBody.safeParse(await c.req.json())
+    if (!parsed.success) return c.json({ error: "Invalid status" }, 400)
+    try {
+      return c.json(await store.updateStatus(status.id, parsed.data))
+    } catch (error) {
+      if (isNotFound(error)) return c.json({ error: "Not found" }, 404)
+      if (isConflict(error)) return c.json({ error: "Status name taken" }, 409)
+      throw error
+    }
+  })
+
+  app.delete("/api/projects/:projectId/statuses/:statusId", async (c) => {
+    const session = await getSession(c.req.raw)
+    if (!session) return c.json({ error: "Unauthorized" }, 401)
+    const project = await manageableProject(
+      c.req.param("projectId"),
+      session.user.id
+    )
+    if (!project) {
+      const exists = await store.getProject(c.req.param("projectId"))
+      return c.json(
+        { error: exists ? "Forbidden" : "Not found" },
+        exists ? 403 : 404
+      )
+    }
+    const status = await store.getStatus(c.req.param("statusId"))
+    if (!status || status.projectId !== project.id) {
+      return c.json({ error: "Not found" }, 404)
+    }
+    try {
+      await store.deleteStatus(status.id)
+      return new Response(null, { status: 204 })
+    } catch (error) {
+      if (isNotFound(error)) return c.json({ error: "Not found" }, 404)
+      if (isLocked(error))
+        return c.json({ error: (error as Error).message }, 409)
+      throw error
+    }
   })
 
   return app

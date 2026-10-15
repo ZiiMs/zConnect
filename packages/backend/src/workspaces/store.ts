@@ -34,6 +34,19 @@ export interface Project {
   key: string
 }
 
+/** Status Category buckets per GLOSSARY.md. */
+export const STATUS_CATEGORIES = ["Todo", "In Progress", "Done"] as const
+
+export type StatusCategory = (typeof STATUS_CATEGORIES)[number]
+
+export interface Status {
+  id: string
+  projectId: string
+  name: string
+  category: StatusCategory
+  position: number
+}
+
 /**
  * Persistence boundary for workspace tenancy. The Hono routes depend only on
  * this interface: contract tests inject the memory store, production injects
@@ -58,6 +71,33 @@ export interface WorkspaceStore {
   ): Promise<Project>
   listProjects(workspaceId: string): Promise<Project[]>
   getProject(projectId: string): Promise<Project | null>
+  updateProject(
+    projectId: string,
+    input: { name?: string; key?: string }
+  ): Promise<Project>
+  /** Next issue number for the project; 1 until the first issue. */
+  getNextIssueNumber(projectId: string): Promise<number>
+  /** True once the project holds at least one issue (key edits lock). */
+  hasIssues(projectId: string): Promise<boolean>
+  createStatus(
+    projectId: string,
+    input: { name: string; category: StatusCategory }
+  ): Promise<Status>
+  /** Statuses in Kanban order (ascending position). */
+  listStatuses(projectId: string): Promise<Status[]>
+  getStatus(statusId: string): Promise<Status | null>
+  updateStatus(
+    statusId: string,
+    input: { name?: string; category?: StatusCategory; position?: number }
+  ): Promise<Status>
+  deleteStatus(statusId: string): Promise<void>
+  /**
+   * Minimal issue-presence probe until T3 backs it with the full issue
+   * model: consumes the next sequence number for the status. Contract tests
+   * seed through it; production routes never call it directly.
+   */
+  recordIssue(projectId: string, statusId: string): Promise<{ number: number }>
+  countIssuesInStatus(statusId: string): Promise<number>
   addProjectViewer(projectId: string, userId: string): Promise<void>
   isProjectViewer(projectId: string, userId: string): Promise<boolean>
   hasProjectGrantInWorkspace(
@@ -72,9 +112,18 @@ export function createMemoryWorkspaceStore(): WorkspaceStore {
   const invitations = new Map<string, Invitation>()
   const projects = new Map<string, Project>()
   const projectViewers = new Set<string>()
+  const sequences = new Map<string, number>()
+  const statuses = new Map<string, Status>()
+  const issueRefs: { id: string; projectId: string; statusId: string }[] = []
 
   const memberKey = (workspaceId: string, userId: string) =>
     `${workspaceId}:${userId}`
+
+  function locked(message: string): Error {
+    const error = new Error(message)
+    ;(error as { code?: string }).code = "locked"
+    return error
+  }
 
   return {
     async createWorkspace(ownerId, name) {
@@ -184,7 +233,166 @@ export function createMemoryWorkspaceStore(): WorkspaceStore {
         key,
       }
       projects.set(project.id, project)
+      sequences.set(project.id, 1)
       return project
+    },
+
+    async updateProject(projectId, input) {
+      const project = projects.get(projectId)
+      if (!project) {
+        const error = new Error("Project not found")
+        ;(error as { code?: string }).code = "not_found"
+        throw error
+      }
+      if (input.key !== undefined) {
+        const key = input.key.toUpperCase()
+        if (key !== project.key) {
+          if (issueRefs.some((r) => r.projectId === projectId)) {
+            throw locked("Project key is locked once issues exist")
+          }
+          const duplicate = [...projects.values()].some(
+            (p) =>
+              p.workspaceId === project.workspaceId &&
+              p.key === key &&
+              p.id !== projectId
+          )
+          if (duplicate) {
+            const error = new Error("Project key already exists")
+            ;(error as { code?: string }).code = "conflict"
+            throw error
+          }
+          project.key = key
+        }
+      }
+      if (input.name !== undefined) project.name = input.name
+      return { ...project }
+    },
+
+    async getNextIssueNumber(projectId) {
+      const next = sequences.get(projectId)
+      if (next === undefined) {
+        const error = new Error("Project not found")
+        ;(error as { code?: string }).code = "not_found"
+        throw error
+      }
+      return next
+    },
+
+    async hasIssues(projectId) {
+      return issueRefs.some((r) => r.projectId === projectId)
+    },
+
+    async createStatus(projectId, input) {
+      if (!projects.has(projectId)) {
+        const error = new Error("Project not found")
+        ;(error as { code?: string }).code = "not_found"
+        throw error
+      }
+      const duplicate = [...statuses.values()].some(
+        (s) => s.projectId === projectId && s.name === input.name
+      )
+      if (duplicate) {
+        const error = new Error("Status already exists")
+        ;(error as { code?: string }).code = "conflict"
+        throw error
+      }
+      const position = [...statuses.values()].filter(
+        (s) => s.projectId === projectId
+      ).length
+      const status: Status = {
+        id: crypto.randomUUID(),
+        projectId,
+        name: input.name,
+        category: input.category,
+        position,
+      }
+      statuses.set(status.id, status)
+      return { ...status }
+    },
+
+    async listStatuses(projectId) {
+      return [...statuses.values()]
+        .filter((s) => s.projectId === projectId)
+        .sort((a, b) => a.position - b.position)
+        .map((s) => ({ ...s }))
+    },
+
+    async getStatus(statusId) {
+      const status = statuses.get(statusId)
+      return status ? { ...status } : null
+    },
+
+    async updateStatus(statusId, input) {
+      const status = statuses.get(statusId)
+      if (!status) {
+        const error = new Error("Status not found")
+        ;(error as { code?: string }).code = "not_found"
+        throw error
+      }
+      if (input.name !== undefined && input.name !== status.name) {
+        const duplicate = [...statuses.values()].some(
+          (s) =>
+            s.projectId === status.projectId &&
+            s.name === input.name &&
+            s.id !== statusId
+        )
+        if (duplicate) {
+          const error = new Error("Status already exists")
+          ;(error as { code?: string }).code = "conflict"
+          throw error
+        }
+        status.name = input.name
+      }
+      if (input.category !== undefined) status.category = input.category
+      if (input.position !== undefined) {
+        const ordered = [...statuses.values()]
+          .filter((s) => s.projectId === status.projectId)
+          .sort((a, b) => a.position - b.position)
+          .filter((s) => s.id !== statusId)
+        const at = Math.max(0, Math.min(input.position, ordered.length))
+        ordered.splice(at, 0, status)
+        ordered.forEach((s, index) => {
+          s.position = index
+        })
+      }
+      return { ...status }
+    },
+
+    async deleteStatus(statusId) {
+      const status = statuses.get(statusId)
+      if (!status) {
+        const error = new Error("Status not found")
+        ;(error as { code?: string }).code = "not_found"
+        throw error
+      }
+      if (issueRefs.some((r) => r.statusId === statusId)) {
+        throw locked("Cannot delete a status that holds issues")
+      }
+      statuses.delete(statusId)
+      ;[...statuses.values()]
+        .filter((s) => s.projectId === status.projectId)
+        .sort((a, b) => a.position - b.position)
+        .forEach((s, index) => {
+          s.position = index
+        })
+    },
+
+    async recordIssue(projectId, statusId) {
+      const project = projects.get(projectId)
+      const status = statuses.get(statusId)
+      if (!project || !status || status.projectId !== projectId) {
+        const error = new Error("Project or status not found")
+        ;(error as { code?: string }).code = "not_found"
+        throw error
+      }
+      const number = sequences.get(projectId) ?? 1
+      sequences.set(projectId, number + 1)
+      issueRefs.push({ id: crypto.randomUUID(), projectId, statusId })
+      return { number }
+    },
+
+    async countIssuesInStatus(statusId) {
+      return issueRefs.filter((r) => r.statusId === statusId).length
     },
 
     async listProjects(workspaceId) {

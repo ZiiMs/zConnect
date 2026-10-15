@@ -1,4 +1,5 @@
 import {
+  integer,
   pgTable,
   primaryKey,
   text,
@@ -73,6 +74,43 @@ export const projectViewer = pgTable(
   (table) => [primaryKey({ columns: [table.projectId, table.userId] })]
 )
 
+/**
+ * Project workflow (T2 – Project + Status workflow). Vocabulary per
+ * GLOSSARY.md: Status (ordered step, never Column/State), Status Category
+ * (fixed bucket Todo/In Progress/Done), Project Key prefix.
+ */
+export const status = pgTable(
+  "status",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => project.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    category: varchar("category", { length: 16 })
+      .notNull()
+      .$type<StatusCategory>(),
+    position: integer("position").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("status_project_name_unique").on(table.projectId, table.name),
+  ]
+)
+
+/**
+ * Per-project issue number sequence. One row per project, starting at 1;
+ * T3's issue creation consumes numbers from it so identifiers form KEY-N.
+ */
+export const projectSequence = pgTable("project_sequence", {
+  projectId: uuid("project_id")
+    .primaryKey()
+    .references(() => project.id, { onDelete: "cascade" }),
+  nextNumber: integer("next_number").notNull().default(1),
+})
+
 export const invitation = pgTable(
   "invitation",
   {
@@ -96,3 +134,6 @@ export const invitation = pgTable(
 )
 
 export type WorkspaceRole = "Owner" | "Admin" | "Member"
+
+/** Fixed Status Category buckets per GLOSSARY.md. */
+export type StatusCategory = "Todo" | "In Progress" | "Done"
