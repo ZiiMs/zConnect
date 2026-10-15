@@ -3,7 +3,7 @@ import {
   ApiError,
   api,
   issueProgress,
-  isTerminalCategory,
+  isTerminalStatusCategory,
   type Status,
   statusCategorySchema,
 } from "./api.js"
@@ -234,11 +234,9 @@ describe("status category domain (ADR-0001)", () => {
   })
 
   test("only Completed, Canceled and Duplicate are terminal", () => {
-    expect(statusCategorySchema.options.filter(isTerminalCategory)).toEqual([
-      "Completed",
-      "Canceled",
-      "Duplicate",
-    ])
+    expect(
+      statusCategorySchema.options.filter(isTerminalStatusCategory)
+    ).toEqual(["Completed", "Canceled", "Duplicate"])
   })
 
   test("progress counts the terminal three as done, not the open three", () => {

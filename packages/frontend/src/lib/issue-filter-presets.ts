@@ -27,6 +27,21 @@ export const ACTIVE_STATUS_CATEGORIES: readonly StatusCategory[] = [
 
 export const BACKLOG_STATUS_CATEGORIES: readonly StatusCategory[] = ["Backlog"]
 
+/**
+ * The Status Categories each preset selects, in one place so the two
+ * directions below cannot drift. "All Issues" is the empty set: the query
+ * then carries no status constraint and keeps its standing `archived=false`
+ * default, so it never lists archived issues.
+ */
+export const PRESET_STATUS_CATEGORIES: Record<
+  IssueFilterPreset,
+  readonly StatusCategory[]
+> = {
+  active: ACTIVE_STATUS_CATEGORIES,
+  backlog: BACKLOG_STATUS_CATEGORIES,
+  all: [],
+}
+
 function statusIdsForCategories(
   statuses: Status[],
   categories: readonly StatusCategory[]
@@ -37,21 +52,19 @@ function statusIdsForCategories(
     .map((status) => status.id)
 }
 
-export function activeStatusIds(statuses: Status[]): string[] {
-  return statusIdsForCategories(statuses, ACTIVE_STATUS_CATEGORIES)
-}
-
-export function backlogStatusIds(statuses: Status[]): string[] {
-  return statusIdsForCategories(statuses, BACKLOG_STATUS_CATEGORIES)
-}
-
 export function presetStatusIds(
   preset: IssueFilterPreset,
   statuses: Status[]
 ): string[] {
-  if (preset === "active") return activeStatusIds(statuses)
-  if (preset === "backlog") return backlogStatusIds(statuses)
-  return []
+  return statusIdsForCategories(statuses, PRESET_STATUS_CATEGORIES[preset])
+}
+
+export function activeStatusIds(statuses: Status[]): string[] {
+  return presetStatusIds("active", statuses)
+}
+
+export function backlogStatusIds(statuses: Status[]): string[] {
+  return presetStatusIds("backlog", statuses)
 }
 
 function sameIds(a: string[], b: string[]): boolean {
@@ -60,14 +73,19 @@ function sameIds(a: string[], b: string[]): boolean {
 
 /**
  * Which preset the current status-id selection is, or null once the user has
- * hand-narrowed the set (no single preset then describes it).
+ * hand-narrowed the set (no single preset then describes it). An empty
+ * selection reads as "all".
  */
 export function presetForStatusIds(
   statusIds: string[],
   statuses: Status[]
 ): IssueFilterPreset | null {
   if (statusIds.length === 0) return "all"
-  if (sameIds(statusIds, activeStatusIds(statuses))) return "active"
-  if (sameIds(statusIds, backlogStatusIds(statuses))) return "backlog"
+  for (const preset of ISSUE_FILTER_PRESETS) {
+    if (preset.id === "all") continue
+    if (sameIds(statusIds, presetStatusIds(preset.id, statuses))) {
+      return preset.id
+    }
+  }
   return null
 }
