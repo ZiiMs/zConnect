@@ -1,3 +1,4 @@
+import type { ReactNode } from "react"
 import { useState } from "react"
 import { AuthForm } from "@/components/auth-form"
 import { CreateProjectForm } from "@/components/create-project-form"
@@ -28,6 +29,54 @@ function SignedOut() {
 
 type ShellView = "project" | "settings"
 
+/**
+ * One labeled rail block: distinct surface, collapsible via its header
+ * toggle. Keeps the narrow rail scannable once workspaces, nav and
+ * projects stack up.
+ */
+function RailSection({
+  label,
+  action,
+  defaultOpen = true,
+  children,
+}: {
+  label: string
+  action?: ReactNode
+  defaultOpen?: boolean
+  children: ReactNode
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  const panelId = `rail-section-${label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")}`
+  return (
+    <section className="flex flex-col gap-2 rounded-md border border-sidebar-border bg-card p-2">
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls={panelId}
+          onClick={() => setOpen((value) => !value)}
+          className="flex min-w-0 flex-1 items-center gap-1.5 rounded px-1 py-0.5 text-left"
+        >
+          <span aria-hidden="true" className="text-muted-foreground text-xs">
+            {open ? "▾" : "▸"}
+          </span>
+          <span className="truncate font-medium text-[11px] text-muted-foreground uppercase tracking-wider">
+            {label}
+          </span>
+        </button>
+        {action}
+      </div>
+      {open && (
+        <div id={panelId} className="flex flex-col gap-2">
+          {children}
+        </div>
+      )}
+    </section>
+  )
+}
+
 function WorkspaceShell({
   userId,
   userEmail,
@@ -51,6 +100,7 @@ function WorkspaceShell({
     replace: replaceProject,
   } = useProjects(selected?.id ?? null)
   const [view, setView] = useState<ShellView>("project")
+  const [creatingProject, setCreatingProject] = useState(false)
 
   const initials = selected
     ? selected.name
@@ -72,7 +122,7 @@ function WorkspaceShell({
             {selected ? selected.name : "zConnect"}
           </span>
         </div>
-        <div className="flex flex-col gap-2">
+        <RailSection label="Workspaces">
           {loading && (
             <p className="text-muted-foreground text-sm">Loading workspaces…</p>
           )}
@@ -84,10 +134,13 @@ function WorkspaceShell({
               onSelect={select}
             />
           )}
-        </div>
+        </RailSection>
         {selected && (
           <>
-            <nav aria-label="Workspace" className="flex flex-col gap-1">
+            <nav
+              aria-label="Workspace"
+              className="flex flex-col gap-1 rounded-md border border-sidebar-border bg-card p-1"
+            >
               <button
                 type="button"
                 aria-current={view === "project" ? "page" : undefined}
@@ -114,13 +167,27 @@ function WorkspaceShell({
                 Settings
               </button>
             </nav>
-            <section className="flex flex-col gap-2">
-              <h2 className="font-medium text-sm">
-                Projects{" "}
-                <span className="text-muted-foreground text-xs">
-                  {projects.length}
-                </span>
-              </h2>
+            <RailSection
+              label="Projects"
+              action={
+                <>
+                  <span className="text-muted-foreground text-xs">
+                    {projects.length}
+                  </span>
+                  {canManageMembers && (
+                    <button
+                      type="button"
+                      aria-label="New project"
+                      aria-expanded={creatingProject}
+                      onClick={() => setCreatingProject((value) => !value)}
+                      className="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                    >
+                      <span aria-hidden="true">+</span>
+                    </button>
+                  )}
+                </>
+              }
+            >
               {projectsLoading && (
                 <p className="text-muted-foreground text-sm">
                   Loading projects…
@@ -129,11 +196,14 @@ function WorkspaceShell({
               {projectsError && (
                 <p className="text-destructive text-sm">{projectsError}</p>
               )}
-              {!projectsLoading && !projectsError && projects.length === 0 && (
-                <p className="text-muted-foreground text-sm">
-                  No projects yet — create one to get started.
-                </p>
-              )}
+              {!projectsLoading &&
+                !projectsError &&
+                projects.length === 0 &&
+                !creatingProject && (
+                  <p className="text-muted-foreground text-sm">
+                    No projects yet — create one to get started.
+                  </p>
+                )}
               {projects.map((project) => (
                 <Button
                   key={project.id}
@@ -148,15 +218,17 @@ function WorkspaceShell({
                   <span className="text-xs opacity-70">{project.key}</span>
                 </Button>
               ))}
-              {canManageMembers && (
+              {canManageMembers && creatingProject && (
                 <CreateProjectForm
                   workspaceId={selected.id}
                   onCreated={(project) => {
                     void refreshProjects().then(() => selectProject(project.id))
+                    setCreatingProject(false)
                   }}
+                  onCancel={() => setCreatingProject(false)}
                 />
               )}
-            </section>
+            </RailSection>
           </>
         )}
         <div className="mt-auto flex flex-col gap-2 border-t pt-3">

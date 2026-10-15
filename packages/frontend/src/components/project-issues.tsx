@@ -13,6 +13,8 @@ import { IssueList } from "@/components/issue-list"
 import { IssueTable } from "@/components/issue-table"
 import { KanbanBoard } from "@/components/kanban-board"
 import { SubtaskList } from "@/components/subtask-list"
+import { Button } from "@/components/ui/button"
+import { Modal } from "@/components/ui/dialog"
 import { useIssueSubscription } from "@/hooks/use-issue-subscription"
 import {
   api,
@@ -78,6 +80,7 @@ export function ProjectIssues({
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [subtasks, setSubtasks] = useState<Record<string, Issue[]>>({})
   const [toast, setToast] = useState<string | null>(null)
+  const [composerOpen, setComposerOpen] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
@@ -239,33 +242,45 @@ export function ProjectIssues({
         value={filters}
         onChange={handleFilters}
       />
-      <div role="tablist" aria-label="Issue views" className="flex gap-2">
-        {VIEWS.map((option) => (
-          <button
-            key={option.id}
-            type="button"
-            role="tab"
-            aria-selected={view === option.id}
-            onClick={() => setView(option.id)}
-            className="rounded-md border px-3 py-1 text-sm"
-          >
-            {option.label}
-          </button>
-        ))}
+      <div className="flex items-center gap-2">
+        <div role="tablist" aria-label="Issue views" className="flex gap-2">
+          {VIEWS.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              role="tab"
+              aria-selected={view === option.id}
+              onClick={() => setView(option.id)}
+              className="rounded-md border px-3 py-1 text-sm"
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+        {canWrite && statuses.length > 0 && (
+          <Button className="ml-auto" onClick={() => setComposerOpen(true)}>
+            New issue
+          </Button>
+        )}
       </div>
-      {canWrite && statuses.length > 0 && (
+      <Modal
+        open={composerOpen}
+        onOpenChange={setComposerOpen}
+        title="New issue"
+      >
         <CreateIssueForm
           projectId={project.id}
           statuses={statuses}
           members={members}
           labels={labels}
-          onCreated={(created) =>
+          onCreated={(created) => {
             setIssues((current) =>
               [...current, created].sort((a, b) => a.number - b.number)
             )
-          }
+            setComposerOpen(false)
+          }}
         />
-      )}
+      </Modal>
       {loading && (
         <p className="text-muted-foreground text-sm">Loading issues…</p>
       )}

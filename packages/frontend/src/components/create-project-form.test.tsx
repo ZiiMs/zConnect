@@ -53,4 +53,25 @@ describe("create project form", () => {
 
     expect(await screen.findByText(/key taken/i)).toBeInTheDocument()
   })
+
+  test("shows no cancel button without onCancel; calls it when provided", async () => {
+    const user = userEvent.setup()
+    const { rerender } = render(
+      <CreateProjectForm workspaceId="ws-1" onCreated={() => {}} />
+    )
+    expect(
+      screen.queryByRole("button", { name: /cancel/i })
+    ).not.toBeInTheDocument()
+
+    const onCancel = vi.fn()
+    rerender(
+      <CreateProjectForm
+        workspaceId="ws-1"
+        onCreated={() => {}}
+        onCancel={onCancel}
+      />
+    )
+    await user.click(screen.getByRole("button", { name: /cancel/i }))
+    expect(onCancel).toHaveBeenCalledTimes(1)
+  })
 })

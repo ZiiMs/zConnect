@@ -9,9 +9,12 @@ const inputClass =
 export function CreateProjectForm({
   workspaceId,
   onCreated,
+  onCancel,
 }: {
   workspaceId: string
   onCreated: (project: Project) => void
+  /** Shown as a Cancel button when the parent toggles the form. */
+  onCancel?: () => void
 }) {
   const [name, setName] = useState("")
   const [key, setKey] = useState("")
@@ -60,6 +63,11 @@ export function CreateProjectForm({
         <Button type="submit" disabled={sending}>
           {sending ? "Creating…" : "Create project"}
         </Button>
+        {onCancel && (
+          <Button type="button" variant="outline" onClick={onCancel}>
+            Cancel
+          </Button>
+        )}
       </div>
       {error && <p className="text-destructive text-sm">{error}</p>}
     </form>

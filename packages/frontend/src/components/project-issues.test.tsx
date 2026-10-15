@@ -242,4 +242,32 @@ describe("project issues list view", () => {
     expect(await screen.findByText("Split it")).toBeInTheDocument()
     expect(listSubtasks).toHaveBeenCalledWith("WEB-1")
   })
+
+  test("creating an issue happens in a modal that closes on success", async () => {
+    const user = userEvent.setup()
+    const createIssue = vi.mocked(api.createIssue)
+    createIssue.mockResolvedValue({
+      ...issues[0],
+      id: "is-2",
+      number: 2,
+      identifier: "WEB-2",
+      title: "New from modal",
+    })
+    setup()
+    await screen.findByText("WEB-1")
+
+    expect(screen.queryByLabelText(/issue title/i)).not.toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: /^new issue$/i }))
+    await user.type(screen.getByLabelText(/issue title/i), "New from modal")
+    await user.click(screen.getByRole("button", { name: /^create issue$/i }))
+
+    await waitFor(() =>
+      expect(createIssue).toHaveBeenCalledWith(
+        "pr-1",
+        expect.objectContaining({ title: "New from modal" })
+      )
+    )
+    expect(await screen.findByText("WEB-2")).toBeInTheDocument()
+    expect(screen.queryByLabelText(/issue title/i)).not.toBeInTheDocument()
+  })
 })
