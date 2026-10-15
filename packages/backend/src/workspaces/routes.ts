@@ -648,9 +648,12 @@ export function createWorkspacesApp({ store, getSession }: WorkspacesDeps) {
   })
 
   /**
-   * T5 gentle guardrail: completing means moving to a Done-category status.
-   * A parent with open (non-archived, non-Done) subtasks still completes,
-   * but the response carries warnings describing the open work.
+   * T5 gentle guardrail: completing means moving to a Completed-category
+   * status. A parent with open (non-archived, non-Completed) subtasks still
+   * completes, but the response carries warnings describing the open work.
+   *
+   * T1 renames the terminal bucket Done → Completed; T3 widens this to the
+   * three terminal categories (Completed, Canceled, Duplicate).
    */
   async function completionWarnings(
     updated: { id: string; projectId: string },
@@ -658,7 +661,7 @@ export function createWorkspacesApp({ store, getSession }: WorkspacesDeps) {
   ): Promise<string[]> {
     if (statusId === undefined) return []
     const target = await store.getStatus(statusId)
-    if (target?.category !== "Done") return []
+    if (target?.category !== "Completed") return []
     const children = await store.listSubtasks(updated.id)
     if (children.length === 0) return []
     const byId = new Map(
@@ -666,7 +669,7 @@ export function createWorkspacesApp({ store, getSession }: WorkspacesDeps) {
     )
     const open = children.filter(
       (child) =>
-        !child.archived && byId.get(child.statusId)?.category !== "Done"
+        !child.archived && byId.get(child.statusId)?.category !== "Completed"
     )
     if (open.length === 0) return []
     const noun = open.length === 1 ? "subtask" : "subtasks"

@@ -59,7 +59,7 @@ async function seed(app: Hono, workspaces: WorkspaceStore) {
   })
   const status = await workspaces.createStatus(project.id, {
     name: "Backlog",
-    category: "Todo",
+    category: "Unstarted",
   })
   const issue = await workspaces.createIssue(project.id, {
     title: "Fix login",

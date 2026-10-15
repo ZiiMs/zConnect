@@ -57,6 +57,13 @@
       "when": 1792086660235,
       "tag": "0007_labels_subtasks_archive",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792098214828,
+      "tag": "0008_six_status_categories",
+      "breakpoints": true
     }
   ]
 }

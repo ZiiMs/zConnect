@@ -79,7 +79,8 @@ export const projectViewer = pgTable(
 /**
  * Project workflow (T2 – Project + Status workflow). Vocabulary per
  * GLOSSARY.md: Status (ordered step, never Column/State), Status Category
- * (fixed bucket Todo/In Progress/Done), Project Key prefix.
+ * (fixed bucket Backlog/Unstarted/In Progress/Completed/Canceled/Duplicate),
+ * Project Key prefix.
  */
 export const status = pgTable(
   "status",
@@ -288,8 +289,14 @@ export const webhookDelivery = pgTable("webhook_delivery", {
 
 export type WorkspaceRole = "Owner" | "Admin" | "Member"
 
-/** Fixed Status Category buckets per GLOSSARY.md. */
-export type StatusCategory = "Todo" | "In Progress" | "Done"
+/** Fixed Status Category buckets per GLOSSARY.md, in roster order (ADR-0001). */
+export type StatusCategory =
+  | "Backlog"
+  | "Unstarted"
+  | "In Progress"
+  | "Completed"
+  | "Canceled"
+  | "Duplicate"
 
 /** Priority urgency per GLOSSARY.md. */
 export type Priority = "Urgent" | "High" | "Medium" | "Low" | "None"
