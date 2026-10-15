@@ -287,3 +287,84 @@ describe("issue api client", () => {
     await expect(api.listIssues("pr-1")).rejects.toThrow()
   })
 })
+
+describe("label api client", () => {
+  const labelPayload = {
+    id: "lb-1",
+    workspaceId: "ws-1",
+    name: "bug",
+    color: "#ef4444",
+  }
+
+  test("listLabels parses the workspace registry", async () => {
+    const fetchMock = mockFetchOnce([labelPayload])
+
+    const result = await api.listLabels("ws-1")
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/workspaces/ws-1/labels")
+    expect(result).toEqual([labelPayload])
+  })
+
+  test("createLabel posts name and color", async () => {
+    const fetchMock = mockFetchOnce(labelPayload)
+
+    await api.createLabel("ws-1", { name: "bug", color: "#ef4444" })
+
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/workspaces/ws-1/labels")
+    expect(options.method).toBe("POST")
+    expect(JSON.parse(options.body as string)).toEqual({
+      name: "bug",
+      color: "#ef4444",
+    })
+  })
+
+  test("updateLabel patches the registry row", async () => {
+    const fetchMock = mockFetchOnce({ ...labelPayload, name: "defect" })
+
+    const result = await api.updateLabel("ws-1", "lb-1", { name: "defect" })
+
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/workspaces/ws-1/labels/lb-1")
+    expect(options.method).toBe("PATCH")
+    expect(result.name).toBe("defect")
+  })
+
+  test("deleteLabel sends DELETE", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(null, { status: 204 }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    await api.deleteLabel("ws-1", "lb-1")
+
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/workspaces/ws-1/labels/lb-1")
+    expect(options.method).toBe("DELETE")
+  })
+})
+
+describe("subtask and archive api client", () => {
+  test("listSubtasks resolves by human identifier", async () => {
+    const fetchMock = mockFetchOnce([])
+
+    await api.listSubtasks("WEB-1")
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/issues/WEB-1/subtasks")
+  })
+
+  test("deleteIssue sends DELETE", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(null, { status: 204 }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    await api.deleteIssue("WEB-1")
+
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/issues/WEB-1")
+    expect(options.method).toBe("DELETE")
+  })
+})

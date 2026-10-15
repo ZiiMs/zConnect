@@ -116,4 +116,54 @@ describe("issue list", () => {
     expect(screen.queryByLabelText(/status for WEB-1/i)).not.toBeInTheDocument()
     expect(screen.getByText("Backlog")).toBeInTheDocument()
   })
+
+  test("renders label names on the row", () => {
+    render(
+      <IssueList
+        issues={issues}
+        statuses={statuses}
+        canEdit={true}
+        onStatusChange={() => {}}
+      />
+    )
+    const row = screen.getByTestId("issue-WEB-2")
+    expect(within(row).getByText("feature")).toBeInTheDocument()
+  })
+
+  test("renders per-row actions when provided", async () => {
+    const user = userEvent.setup()
+    const onArchive = vi.fn()
+    render(
+      <IssueList
+        issues={issues}
+        statuses={statuses}
+        canEdit={true}
+        onStatusChange={() => {}}
+        actions={(issue) => (
+          <button type="button" onClick={() => onArchive(issue.identifier)}>
+            Archive {issue.identifier}
+          </button>
+        )}
+      />
+    )
+
+    await user.click(
+      screen.getByRole("button", { name: "Archive WEB-1" })
+    )
+    expect(onArchive).toHaveBeenCalledWith("WEB-1")
+  })
+
+  test("renders no actions by default", () => {
+    render(
+      <IssueList
+        issues={issues}
+        statuses={statuses}
+        canEdit={true}
+        onStatusChange={() => {}}
+      />
+    )
+    expect(
+      screen.queryByRole("button", { name: /archive/i })
+    ).not.toBeInTheDocument()
+  })
 })

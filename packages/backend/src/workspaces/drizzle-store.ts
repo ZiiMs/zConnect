@@ -3,6 +3,8 @@ import type { getDb } from "../db/index.js"
 import {
   invitation,
   issue,
+  issueLabel,
+  label,
   project,
   projectSequence,
   projectViewer,
@@ -12,20 +14,25 @@ import {
 } from "../db/schema.js"
 import type {
   CreateIssueInput,
+  CreateLabelInput,
   Invitation,
   Issue,
   IssueFilters,
+  Label,
   Membership,
   Priority,
   Project,
   Status,
   StatusCategory,
   UpdateIssueInput,
+  UpdateLabelInput,
   Workspace,
   WorkspaceRole,
   WorkspaceStore,
   WorkspaceWithRole,
 } from "./store.js"
+import { DEFAULT_LABEL_COLOR, isValidLabelColor } from "./store.js"
+import { normalizeLabelNames } from "./store.js"
 
 type Db = ReturnType<typeof getDb>
 
@@ -54,6 +61,92 @@ function parseDueDate(dueDate: string | null | undefined): Date | null {
   return parsed
 }
 
+/**
+ * Validate a T5 subtask link for `childId` (null when creating): same
+ * project, no self-parent, one level only (parent must be top-level and the
+ * child must not already have subtasks). Unknown ids are invalid (400).
+ */
+async function resolveParentRow(
+  db: Db,
+  projectId: string,
+  selfId: string | null,
+  parentId: string
+): Promise<string> {
+  const parentRows = await db
+    .select()
+    .from(issue)
+    .where(eq(issue.id, parentId))
+  const parentRow = parentRows[0]
+  if (!parentRow) throw invalid("Parent issue not found")
+  if (parentRow.projectId !== projectId) {
+    throw invalid("A subtask must live in the same project as its parent")
+  }
+  if (selfId !== null && parentRow.id === selfId) {
+    throw invalid("An issue cannot be its own parent")
+  }
+  if (parentRow.parentId) {
+    throw invalid("Subtasks cannot nest more than one level")
+  }
+  if (selfId !== null) {
+    const existing = await db
+      .select({ id: issue.id })
+      .from(issue)
+      .where(eq(issue.parentId, selfId))
+    if (existing.length > 0) {
+      throw invalid("An issue with subtasks cannot become a subtask")
+    }
+  }
+  return parentRow.id
+}
+
+/**
+ * Resolve one label name to its registry row, creating it with the default
+ * color when missing. Matches are case-insensitive per the store contract.
+ */
+async function ensureLabelRow(
+  db: Db,
+  workspaceId: string,
+  name: string
+): Promise<typeof label.$inferSelect> {
+  const existing = await db
+    .select()
+    .from(label)
+    .where(eq(label.workspaceId, workspaceId))
+  const found = existing.find(
+    (row) => row.name.toLowerCase() === name.toLowerCase()
+  )
+  if (found) return found
+  try {
+    const [row] = await db
+      .insert(label)
+      .values({ workspaceId, name, color: DEFAULT_LABEL_COLOR })
+      .returning()
+    return row
+  } catch {
+    const retry = await db
+      .select()
+      .from(label)
+      .where(eq(label.workspaceId, workspaceId))
+    const raced = retry.find(
+      (row) => row.name.toLowerCase() === name.toLowerCase()
+    )
+    if (raced) return raced
+    throw conflict("Label already exists")
+  }
+}
+
+async function relinkIssue(
+  db: Db,
+  issueId: string,
+  labelIds: string[]
+): Promise<void> {
+  await db.delete(issueLabel).where(eq(issueLabel.issueId, issueId))
+  if (labelIds.length > 0) {
+    await db
+      .insert(issueLabel)
+      .values(labelIds.map((labelId) => ({ issueId, labelId })))
+  }
+}
 /**
  * Production WorkspaceStore over Supabase Postgres. The database connection
  * resolves lazily per call so importing the app never requires DATABASE_URL —
@@ -414,6 +507,15 @@ export function createDrizzleWorkspaceStore(
         .update(projectSequence)
         .set({ nextNumber: number + 1 })
         .where(eq(projectSequence.projectId, projectId))
+      // T5 registry: free-form names resolve to shared rows (auto-created),
+      // while the T3 text[] column stays the read-compatible name list.
+      const labelNames = normalizeLabelNames(input.labels ?? [])
+      const labelRows: { id: string }[] = []
+      for (const name of labelNames) {
+        labelRows.push(
+          await ensureLabelRow(db, projectRow.workspaceId, name)
+        )
+      }
       const [row] = await db
         .insert(issue)
         .values({
@@ -427,9 +529,18 @@ export function createDrizzleWorkspaceStore(
           priority,
           assigneeId,
           dueDate,
-          labels: input.labels ? [...input.labels] : [],
+          labels: [...labelNames],
+          parentId:
+            input.parentId === undefined || input.parentId === null
+              ? null
+              : await resolveParentRow(db, projectId, null, input.parentId),
         })
         .returning()
+      await relinkIssue(
+        db,
+        row.id,
+        labelRows.map((r) => r.id)
+      )
       return toIssue(row)
     },
 
@@ -516,6 +627,14 @@ export function createDrizzleWorkspaceStore(
         if (!source || source.workspaceId !== target.workspaceId) {
           throw invalid("Cannot move an issue to another workspace")
         }
+        // Subtask links are same-project only, so linked issues stay put.
+        const linked = await db
+          .select({ id: issue.id })
+          .from(issue)
+          .where(eq(issue.parentId, current.id))
+        if (current.parentId !== null || linked.length > 0) {
+          throw invalid("Cannot move an issue with subtask links")
+        }
         projectId = target.id
       }
       if (input.statusId !== undefined) {
@@ -564,6 +683,32 @@ export function createDrizzleWorkspaceStore(
           if (found.length === 0) throw invalid("Assignee is not a member")
         }
       }
+      let labelNames: string[] | undefined
+      let labelRows: { id: string }[] | undefined
+      if (input.labels !== undefined) {
+        const projectRows = await db
+          .select()
+          .from(project)
+          .where(eq(project.id, projectId))
+        const projectRow = projectRows[0]
+        if (!projectRow) throw notFound("Project not found")
+        labelNames = normalizeLabelNames(input.labels)
+        labelRows = []
+        for (const name of labelNames) {
+          labelRows.push(
+            await ensureLabelRow(db, projectRow.workspaceId, name)
+          )
+        }
+      }
+      let parentTouched = false
+      let parentId: string | null = current.parentId
+      if (input.parentId !== undefined) {
+        parentTouched = true
+        parentId =
+          input.parentId === null
+            ? null
+            : await resolveParentRow(db, projectId, current.id, input.parentId)
+      }
       const [updated] = await db
         .update(issue)
         .set({
@@ -578,14 +723,179 @@ export function createDrizzleWorkspaceStore(
             ? { dueDate: parseDueDate(input.dueDate) }
             : {}),
           ...(input.archived !== undefined ? { archived: input.archived } : {}),
-          ...(input.labels !== undefined ? { labels: [...input.labels] } : {}),
+          ...(labelNames !== undefined ? { labels: [...labelNames] } : {}),
+          ...(parentTouched ? { parentId } : {}),
           ...(projectId !== current.projectId ? { projectId } : {}),
           updatedAt: new Date(),
         })
         .where(eq(issue.id, current.id))
         .returning()
       if (!updated) throw notFound("Issue not found")
+      if (labelNames !== undefined && labelRows !== undefined) {
+        await relinkIssue(
+          db,
+          current.id,
+          labelRows.map((r) => r.id)
+        )
+      }
       return toIssue(updated)
+    },
+
+    async createLabel(
+      workspaceId: string,
+      input: CreateLabelInput
+    ): Promise<Label> {
+      const db = resolveDb()
+      const name = input.name.trim()
+      if (!name) throw invalid("Invalid label name")
+      const color = input.color ?? DEFAULT_LABEL_COLOR
+      if (!isValidLabelColor(color)) throw invalid("Invalid label color")
+      try {
+        const [row] = await db
+          .insert(label)
+          .values({ workspaceId, name, color })
+          .returning()
+        return toLabel(row)
+      } catch {
+        throw conflict("Label already exists")
+      }
+    },
+
+    async listLabels(workspaceId: string): Promise<Label[]> {
+      const db = resolveDb()
+      const rows = await db
+        .select()
+        .from(label)
+        .where(eq(label.workspaceId, workspaceId))
+        .orderBy(asc(label.name))
+      return rows.map(toLabel)
+    },
+
+    async updateLabel(
+      labelId: string,
+      input: UpdateLabelInput
+    ): Promise<Label> {
+      const db = resolveDb()
+      const rows = await db.select().from(label).where(eq(label.id, labelId))
+      const row = rows[0]
+      if (!row) throw notFound("Label not found")
+      const patch: { name?: string; color?: string } = {}
+      if (input.name !== undefined) {
+        const name = input.name.trim()
+        if (!name) throw invalid("Invalid label name")
+        if (name !== row.name) patch.name = name
+      }
+      if (input.color !== undefined) {
+        if (!isValidLabelColor(input.color)) {
+          throw invalid("Invalid label color")
+        }
+        patch.color = input.color
+      }
+      if (Object.keys(patch).length === 0) return toLabel(row)
+      const nextName = patch.name
+      const siblings = await db
+        .select()
+        .from(label)
+        .where(eq(label.workspaceId, row.workspaceId))
+      if (
+        nextName !== undefined &&
+        siblings.some(
+          (s) =>
+            s.id !== labelId && s.name.toLowerCase() === nextName.toLowerCase()
+        )
+      ) {
+        throw conflict("Label already exists")
+      }
+      try {
+        const [updated] = await db
+          .update(label)
+          .set(patch)
+          .where(eq(label.id, labelId))
+          .returning()
+        if (nextName !== undefined && nextName !== row.name) {
+          // Rename propagation: rewrite the T3 text[] names on linked issues.
+          const links = await db
+            .select()
+            .from(issueLabel)
+            .where(eq(issueLabel.labelId, labelId))
+          for (const link of links) {
+            const issueRows = await db
+              .select()
+              .from(issue)
+              .where(eq(issue.id, link.issueId))
+            const issueRow = issueRows[0]
+            if (!issueRow) continue
+            await db
+              .update(issue)
+              .set({
+                labels: (issueRow.labels ?? []).map((name) =>
+                  name === row.name ? nextName : name
+                ),
+              })
+              .where(eq(issue.id, link.issueId))
+          }
+        }
+        return toLabel(updated)
+      } catch (error) {
+        if (
+          typeof error === "object" &&
+          error !== null &&
+          (error as { code?: string }).code === "conflict"
+        ) {
+          throw error
+        }
+        throw conflict("Label already exists")
+      }
+    },
+
+    async deleteLabel(labelId: string): Promise<void> {
+      const db = resolveDb()
+      const rows = await db.select().from(label).where(eq(label.id, labelId))
+      const row = rows[0]
+      if (!row) throw notFound("Label not found")
+      const links = await db
+        .select()
+        .from(issueLabel)
+        .where(eq(issueLabel.labelId, labelId))
+      // Scrub the T3 text[] names on linked issues so filters stay correct.
+      for (const link of links) {
+        const issueRows = await db
+          .select()
+          .from(issue)
+          .where(eq(issue.id, link.issueId))
+        const issueRow = issueRows[0]
+        if (!issueRow) continue
+        await db
+          .update(issue)
+          .set({
+            labels: (issueRow.labels ?? []).filter((name) => name !== row.name),
+          })
+          .where(eq(issue.id, link.issueId))
+      }
+      await db.delete(issueLabel).where(eq(issueLabel.labelId, labelId))
+      await db.delete(label).where(eq(label.id, labelId))
+    },
+
+    async listSubtasks(parentId: string): Promise<Issue[]> {
+      const db = resolveDb()
+      const rows = await db
+        .select()
+        .from(issue)
+        .where(eq(issue.parentId, parentId))
+        .orderBy(asc(issue.number))
+      return rows.map(toIssue)
+    },
+
+    async deleteIssue(ref: string): Promise<void> {
+      const db = resolveDb()
+      const current = await this.getIssue(ref)
+      if (!current) throw notFound("Issue not found")
+      await db
+        .update(issue)
+        .set({ parentId: null })
+        .where(eq(issue.parentId, current.id))
+      await db.delete(issueLabel).where(eq(issueLabel.issueId, current.id))
+      await db.delete(issue).where(eq(issue.id, current.id))
     },
 
     async recordIssue(projectId, _statusId) {
@@ -686,6 +996,15 @@ function toStatus(row: typeof status.$inferSelect): Status {
   }
 }
 
+function toLabel(row: typeof label.$inferSelect): Label {
+  return {
+    id: row.id,
+    workspaceId: row.workspaceId,
+    name: row.name,
+    color: row.color ?? DEFAULT_LABEL_COLOR,
+  }
+}
+
 function toIssue(row: typeof issue.$inferSelect): Issue {
   return {
     id: row.id,
@@ -701,6 +1020,7 @@ function toIssue(row: typeof issue.$inferSelect): Issue {
     dueDate: row.dueDate ? row.dueDate.toISOString() : null,
     archived: row.archived,
     labels: [...(row.labels ?? [])],
+    parentId: row.parentId,
   }
 }
 

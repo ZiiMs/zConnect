@@ -12,8 +12,11 @@ vi.mock("@/lib/api", () => ({
     updateProject: vi.fn(),
     listIssues: vi.fn(),
     listMembers: vi.fn(),
+    listLabels: vi.fn(),
+    listSubtasks: vi.fn(),
     createIssue: vi.fn(),
     updateIssue: vi.fn(),
+    deleteIssue: vi.fn(),
   },
 }))
 
@@ -21,6 +24,7 @@ const listStatuses = vi.mocked(api.listStatuses)
 const deleteStatus = vi.mocked(api.deleteStatus)
 const listIssues = vi.mocked(api.listIssues)
 const listMembers = vi.mocked(api.listMembers)
+const listLabels = vi.mocked(api.listLabels)
 
 const project: Project = {
   id: "pr-1",
@@ -59,6 +63,7 @@ describe("project page", () => {
     vi.clearAllMocks()
     listIssues.mockResolvedValue([])
     listMembers.mockResolvedValue([])
+    listLabels.mockResolvedValue([])
   })
 
   test("renders statuses as ordered sections with categories", async () => {

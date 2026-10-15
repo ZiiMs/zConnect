@@ -70,6 +70,12 @@ export interface Issue {
   archived: boolean
   /** Free-form Labels per GLOSSARY.md (workspace-shared registry deferred). */
   labels: string[]
+  /**
+   * T5 Subtask link: parent Issue row id, null for top-level Issues.
+   * One level only — a Subtask cannot itself have subtasks, and an Issue
+   * with subtasks cannot become a subtask.
+   */
+  parentId: string | null
 }
 
 export interface CreateIssueInput {
@@ -80,6 +86,7 @@ export interface CreateIssueInput {
   assigneeId?: string | null
   dueDate?: string | null
   labels?: string[]
+  parentId?: string | null
 }
 
 export interface UpdateIssueInput {
@@ -93,6 +100,8 @@ export interface UpdateIssueInput {
   labels?: string[]
   /** Move target: identifier, keyPrefix and number stay frozen. */
   projectId?: string
+  /** Relink (id) or unlink (null) the Subtask parent. */
+  parentId?: string | null
 }
 
 export interface IssueFilters {
@@ -102,6 +111,48 @@ export interface IssueFilters {
   labels?: string[]
   archived?: boolean
   text?: string
+}
+
+/** Workspace-shared Label per GLOSSARY.md, with a display color. */
+export interface Label {
+  id: string
+  workspaceId: string
+  name: string
+  color: string
+}
+
+export interface CreateLabelInput {
+  name: string
+  color?: string
+}
+
+export interface UpdateLabelInput {
+  name?: string
+  color?: string
+}
+
+/** Default swatch for registry rows auto-created from free-form names. */
+export const DEFAULT_LABEL_COLOR = "#94a3b8"
+
+const LABEL_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/
+
+export function isValidLabelColor(color: string): boolean {
+  return LABEL_COLOR_PATTERN.test(color)
+}
+
+/**
+ * T5 label-name normalization shared by both stores: trim, drop blanks,
+ * dedupe case-insensitively keeping first-seen casing and order.
+ */
+export function normalizeLabelNames(names: string[]): string[] {
+  const seen = new Map<string, string>()
+  for (const raw of names) {
+    const name = raw.trim()
+    if (!name) continue
+    const key = name.toLowerCase()
+    if (!seen.has(key)) seen.set(key, name)
+  }
+  return [...seen.values()]
 }
 
 /**
@@ -154,6 +205,26 @@ export interface WorkspaceStore {
   getIssue(ref: string): Promise<Issue | null>
   updateIssue(ref: string, input: UpdateIssueInput): Promise<Issue>
   /**
+   * T5 hard delete (Owner/Admin only at the route layer). Subtasks of the
+   * deleted issue become top-level; label links drop with the row.
+   */
+  deleteIssue(ref: string): Promise<void>
+  /**
+   * T5 direct subtasks of a parent Issue, in number order (archived
+   * included; callers decide what counts as open).
+   */
+  listSubtasks(parentId: string): Promise<Issue[]>
+  /**
+   * Workspace-shared Label registry (T5). Any workspace membership
+   * (Owner/Admin/Member) may manage labels; names are unique per workspace,
+   * compared case-insensitively.
+   */
+  createLabel(workspaceId: string, input: CreateLabelInput): Promise<Label>
+  /** Labels in name order, reusable across the workspace's projects. */
+  listLabels(workspaceId: string): Promise<Label[]>
+  updateLabel(labelId: string, input: UpdateLabelInput): Promise<Label>
+  deleteLabel(labelId: string): Promise<void>
+  /**
    * Minimal issue-presence probe: consumes the next sequence number for the
    * status. T2 contract tests seed through it; T3's real issue creation
    * consumes the same sequence. Production routes never call it directly.
@@ -178,6 +249,83 @@ export function createMemoryWorkspaceStore(): WorkspaceStore {
   const statuses = new Map<string, Status>()
   const issues = new Map<string, Issue>()
   const issueRefs: { id: string; projectId: string; statusId: string }[] = []
+  /** T5 registry rows by id; issue links by issue id. */
+  const labels = new Map<string, Label>()
+  const issueLinks = new Map<string, Set<string>>()
+
+  function findLabel(workspaceId: string, name: string): Label | undefined {
+    const key = name.toLowerCase()
+    for (const label of labels.values()) {
+      if (
+        label.workspaceId === workspaceId &&
+        label.name.toLowerCase() === key
+      ) {
+        return label
+      }
+    }
+    return undefined
+  }
+
+  /** Resolve names to registry rows, auto-creating missing ones. */
+  function ensureLabelRows(workspaceId: string, names: string[]): Label[] {
+    return normalizeLabelNames(names).map((name) => {
+      const existing = findLabel(workspaceId, name)
+      if (existing) return existing
+      const row: Label = {
+        id: crypto.randomUUID(),
+        workspaceId,
+        name,
+        color: DEFAULT_LABEL_COLOR,
+      }
+      labels.set(row.id, row)
+      return row
+    })
+  }
+
+  function relinkIssue(issueId: string, rows: Label[]): string[] {
+    issueLinks.set(
+      issueId,
+      new Set(rows.map((row) => row.id))
+    )
+    return rows.map((row) => row.name)
+  }
+
+  function childCount(issueId: string): number {
+    let count = 0
+    for (const issue of issues.values()) {
+      if (issue.parentId === issueId) count += 1
+    }
+    return count
+  }
+
+  /**
+   * T5 one-level rule: a subtask cannot itself have subtasks, and an issue
+   * that already has subtasks cannot become a subtask. `parentId` is a row
+   * id; unknown ids are invalid (400), matching the T3 foreign-status rule.
+   */
+  function resolveParentId(
+    projectId: string,
+    selfId: string | null,
+    parentId: string | null | undefined
+  ): string | null | undefined {
+    if (parentId === undefined) return undefined
+    if (parentId === null) return null
+    const parent = issues.get(parentId)
+    if (!parent) throw invalid("Parent issue not found")
+    if (parent.projectId !== projectId) {
+      throw invalid("A subtask must live in the same project as its parent")
+    }
+    if (selfId !== null && parent.id === selfId) {
+      throw invalid("An issue cannot be its own parent")
+    }
+    if (parent.parentId) {
+      throw invalid("Subtasks cannot nest more than one level")
+    }
+    if (selfId !== null && childCount(selfId) > 0) {
+      throw invalid("An issue with subtasks cannot become a subtask")
+    }
+    return parent.id
+  }
 
   const memberKey = (workspaceId: string, userId: string) =>
     `${workspaceId}:${userId}`
@@ -487,6 +635,8 @@ export function createMemoryWorkspaceStore(): WorkspaceStore {
       const dueDate = normalizeDueDate(input.dueDate)
       const number = sequences.get(projectId) ?? 1
       sequences.set(projectId, number + 1)
+      const labelRows = ensureLabelRows(project.workspaceId, input.labels ?? [])
+      const parentId = resolveParentId(projectId, null, input.parentId) ?? null
       const issue: Issue = {
         id: crypto.randomUUID(),
         projectId,
@@ -500,9 +650,11 @@ export function createMemoryWorkspaceStore(): WorkspaceStore {
         assigneeId,
         dueDate,
         archived: false,
-        labels: input.labels ? [...input.labels] : [],
+        labels: labelRows.map((row) => row.name),
+        parentId,
       }
       issues.set(issue.id, issue)
+      relinkIssue(issue.id, labelRows)
       return { ...issue, labels: [...issue.labels] }
     },
 
@@ -582,6 +734,10 @@ export function createMemoryWorkspaceStore(): WorkspaceStore {
         if (!current || current.workspaceId !== target.workspaceId) {
           throw invalid("Cannot move an issue to another workspace")
         }
+        // Subtask links are same-project only, so linked issues stay put.
+        if (stored.parentId || childCount(stored.id) > 0) {
+          throw invalid("Cannot move an issue with subtask links")
+        }
         projectId = target.id
       }
       const statusTarget = projectId
@@ -596,6 +752,10 @@ export function createMemoryWorkspaceStore(): WorkspaceStore {
         if (!status || status.projectId !== projectId) {
           throw invalid("A status in the target project is required")
         }
+      }
+      if (input.parentId !== undefined) {
+        stored.parentId =
+          resolveParentId(projectId, stored.id, input.parentId) ?? null
       }
       stored.projectId = projectId
       if (input.title !== undefined) {
@@ -619,8 +779,134 @@ export function createMemoryWorkspaceStore(): WorkspaceStore {
       }
       if (input.dueDate !== undefined) stored.dueDate = normalizeDueDate(input.dueDate)
       if (input.archived !== undefined) stored.archived = input.archived
-      if (input.labels !== undefined) stored.labels = [...input.labels]
+      if (input.labels !== undefined) {
+        const project = projects.get(stored.projectId)
+        if (!project) {
+          const error = new Error("Project not found")
+          ;(error as { code?: string }).code = "not_found"
+          throw error
+        }
+        stored.labels = relinkIssue(
+          stored.id,
+          ensureLabelRows(project.workspaceId, input.labels)
+        )
+      }
       return { ...stored, labels: [...stored.labels] }
+    },
+
+    async createLabel(workspaceId, input) {
+      const name = input.name.trim()
+      if (!name) throw invalid("Invalid label name")
+      const color = input.color ?? DEFAULT_LABEL_COLOR
+      if (!isValidLabelColor(color)) throw invalid("Invalid label color")
+      const duplicate = [...labels.values()].some(
+        (l) => l.workspaceId === workspaceId && l.name.toLowerCase() === name.toLowerCase()
+      )
+      if (duplicate) {
+        const error = new Error("Label already exists")
+        ;(error as { code?: string }).code = "conflict"
+        throw error
+      }
+      const label: Label = {
+        id: crypto.randomUUID(),
+        workspaceId,
+        name,
+        color,
+      }
+      labels.set(label.id, label)
+      return { ...label }
+    },
+
+    async listLabels(workspaceId) {
+      return [...labels.values()]
+        .filter((l) => l.workspaceId === workspaceId)
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((l) => ({ ...l }))
+    },
+
+    async updateLabel(labelId, input) {
+      const label = labels.get(labelId)
+      if (!label) {
+        const error = new Error("Label not found")
+        ;(error as { code?: string }).code = "not_found"
+        throw error
+      }
+      let oldName: string | undefined
+      if (input.name !== undefined) {
+        const name = input.name.trim()
+        if (!name) throw invalid("Invalid label name")
+        const duplicate = [...labels.values()].some(
+          (l) =>
+            l.id !== labelId &&
+            l.workspaceId === label.workspaceId &&
+            l.name.toLowerCase() === name.toLowerCase()
+        )
+        if (duplicate) {
+          const error = new Error("Label already exists")
+          ;(error as { code?: string }).code = "conflict"
+          throw error
+        }
+        oldName = label.name
+        label.name = name
+      }
+      if (input.color !== undefined) {
+        if (!isValidLabelColor(input.color)) throw invalid("Invalid label color")
+        label.color = input.color
+      }
+      if (oldName !== undefined && oldName !== label.name) {
+        // Rename propagation: linked issues keep the T3 text[] names in sync.
+        for (const [issueId, ids] of issueLinks) {
+          if (!ids.has(labelId)) continue
+          const stored = issues.get(issueId)
+          if (stored) {
+            stored.labels = stored.labels.map((name) =>
+              name === oldName ? label.name : name
+            )
+          }
+        }
+      }
+      return { ...label }
+    },
+
+    async deleteLabel(labelId) {
+      const label = labels.get(labelId)
+      if (!label) {
+        const error = new Error("Label not found")
+        ;(error as { code?: string }).code = "not_found"
+        throw error
+      }
+      const name = label.name
+      labels.delete(labelId)
+      // Scrub the T3 text[] names on linked issues so filters stay correct.
+      for (const [issueId, ids] of issueLinks) {
+        if (!ids.delete(labelId)) continue
+        const stored = issues.get(issueId)
+        if (stored) stored.labels = stored.labels.filter((n) => n !== name)
+        if (ids.size === 0) issueLinks.delete(issueId)
+      }
+    },
+
+    async listSubtasks(parentId) {
+      return [...issues.values()]
+        .filter((issue) => issue.parentId === parentId)
+        .sort((a, b) => a.number - b.number)
+        .map((issue) => ({ ...issue, labels: [...issue.labels] }))
+    },
+
+    async deleteIssue(ref) {
+      const issue = issues.get(ref) ?? (await this.getIssue(ref))
+      const stored = issue ? issues.get(issue.id) : undefined
+      if (!stored) {
+        const error = new Error("Issue not found")
+        ;(error as { code?: string }).code = "not_found"
+        throw error
+      }
+      issues.delete(stored.id)
+      issueLinks.delete(stored.id)
+      // Children become top-level instead of disappearing with the parent.
+      for (const child of issues.values()) {
+        if (child.parentId === stored.id) child.parentId = null
+      }
     },
 
     async recordIssue(projectId, statusId) {

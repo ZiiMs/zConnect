@@ -38,6 +38,23 @@ const updateProjectBody = z
 
 const grantViewerBody = z.object({ userId: z.string().trim().min(1) })
 
+/** T5 workspace-shared Label registry: names unique per workspace. */
+const labelColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/)
+
+const createLabelBody = z.object({
+  name: z.string().trim().min(1).max(64),
+  color: labelColorSchema.optional(),
+})
+
+const updateLabelBody = z
+  .object({
+    name: z.string().trim().min(1).max(64).optional(),
+    color: labelColorSchema.optional(),
+  })
+  .refine((body) => body.name !== undefined || body.color !== undefined, {
+    message: "Nothing to update",
+  })
+
 const createStatusBody = z.object({
   name: z.string().trim().min(1),
   category: z.enum(STATUS_CATEGORIES),
@@ -65,6 +82,7 @@ const createIssueBody = z.object({
   assigneeId: z.string().trim().min(1).nullable().optional(),
   dueDate: z.string().trim().min(1).nullable().optional(),
   labels: z.array(z.string().trim().min(1).max(64)).max(20).optional(),
+  parentId: z.string().trim().min(1).nullable().optional(),
 })
 
 const updateIssueBody = z
@@ -78,6 +96,7 @@ const updateIssueBody = z
     archived: z.boolean().optional(),
     labels: z.array(z.string().trim().min(1).max(64)).max(20).optional(),
     projectId: z.string().trim().min(1).optional(),
+    parentId: z.string().trim().min(1).nullable().optional(),
   })
   .refine((body) => Object.values(body).some((v) => v !== undefined), {
     message: "Nothing to update",
@@ -254,6 +273,80 @@ export function createWorkspacesApp({ store, getSession }: WorkspacesDeps) {
       return c.json(project, 201)
     } catch (error) {
       if (isConflict(error)) return c.json({ error: "Key taken" }, 409)
+      throw error
+    }
+  })
+
+  /**
+   * T5 label registry. Reading needs any visible workspace membership
+   * (viewers included); writes need a real membership (Owner/Admin/Member).
+   */
+  app.get("/api/workspaces/:id/labels", async (c) => {
+    const session = await getSession(c.req.raw)
+    if (!session) return c.json({ error: "Unauthorized" }, 401)
+    const visible = await visibleWorkspace(c.req.param("id"), session.user.id)
+    if (!visible) return c.json({ error: "Forbidden" }, 403)
+    return c.json(await store.listLabels(visible.id))
+  })
+
+  app.post("/api/workspaces/:id/labels", async (c) => {
+    const session = await getSession(c.req.raw)
+    if (!session) return c.json({ error: "Unauthorized" }, 401)
+    const workspaceId = c.req.param("id")
+    const membership = await store.getMembership(workspaceId, session.user.id)
+    if (!membership) return c.json({ error: "Forbidden" }, 403)
+    const parsed = createLabelBody.safeParse(await c.req.json())
+    if (!parsed.success) return c.json({ error: "Invalid label" }, 400)
+    try {
+      const label = await store.createLabel(workspaceId, parsed.data)
+      return c.json(label, 201)
+    } catch (error) {
+      if (isConflict(error)) return c.json({ error: "Label taken" }, 409)
+      if (isInvalid(error))
+        return c.json({ error: (error as Error).message }, 400)
+      throw error
+    }
+  })
+
+  async function workspaceLabel(workspaceId: string, labelId: string) {
+    const labels = await store.listLabels(workspaceId)
+    return labels.find((l) => l.id === labelId) ?? null
+  }
+
+  app.patch("/api/workspaces/:id/labels/:labelId", async (c) => {
+    const session = await getSession(c.req.raw)
+    if (!session) return c.json({ error: "Unauthorized" }, 401)
+    const workspaceId = c.req.param("id")
+    const membership = await store.getMembership(workspaceId, session.user.id)
+    if (!membership) return c.json({ error: "Forbidden" }, 403)
+    const label = await workspaceLabel(workspaceId, c.req.param("labelId"))
+    if (!label) return c.json({ error: "Not found" }, 404)
+    const parsed = updateLabelBody.safeParse(await c.req.json())
+    if (!parsed.success) return c.json({ error: "Invalid label" }, 400)
+    try {
+      return c.json(await store.updateLabel(label.id, parsed.data))
+    } catch (error) {
+      if (isNotFound(error)) return c.json({ error: "Not found" }, 404)
+      if (isConflict(error)) return c.json({ error: "Label taken" }, 409)
+      if (isInvalid(error))
+        return c.json({ error: (error as Error).message }, 400)
+      throw error
+    }
+  })
+
+  app.delete("/api/workspaces/:id/labels/:labelId", async (c) => {
+    const session = await getSession(c.req.raw)
+    if (!session) return c.json({ error: "Unauthorized" }, 401)
+    const workspaceId = c.req.param("id")
+    const membership = await store.getMembership(workspaceId, session.user.id)
+    if (!membership) return c.json({ error: "Forbidden" }, 403)
+    const label = await workspaceLabel(workspaceId, c.req.param("labelId"))
+    if (!label) return c.json({ error: "Not found" }, 404)
+    try {
+      await store.deleteLabel(label.id)
+      return new Response(null, { status: 204 })
+    } catch (error) {
+      if (isNotFound(error)) return c.json({ error: "Not found" }, 404)
       throw error
     }
   })
@@ -483,6 +576,47 @@ export function createWorkspacesApp({ store, getSession }: WorkspacesDeps) {
     return c.json(issue)
   })
 
+  app.get("/api/issues/:key/subtasks", async (c) => {
+    const session = await getSession(c.req.raw)
+    if (!session) return c.json({ error: "Unauthorized" }, 401)
+    const issue = await store.getIssue(c.req.param("key"))
+    if (!issue) return c.json({ error: "Not found" }, 404)
+    const project = await readableProject(issue.projectId, session.user.id)
+    if (!project) return c.json({ error: "Forbidden" }, 403)
+    return c.json(await store.listSubtasks(issue.id))
+  })
+
+  /**
+   * T5 hard delete: Owner/Admin of the owning workspace only. Archiving
+   * (PATCH archived) stays the recoverable default; this is the permanent
+   * escape hatch.
+   */
+  app.delete("/api/issues/:key", async (c) => {
+    const session = await getSession(c.req.raw)
+    if (!session) return c.json({ error: "Unauthorized" }, 401)
+    const issue = await store.getIssue(c.req.param("key"))
+    if (!issue) return c.json({ error: "Not found" }, 404)
+    const project = await store.getProject(issue.projectId)
+    if (!project) return c.json({ error: "Not found" }, 404)
+    const membership = await store.getMembership(
+      project.workspaceId,
+      session.user.id
+    )
+    if (
+      !membership ||
+      (membership.role !== "Owner" && membership.role !== "Admin")
+    ) {
+      return c.json({ error: "Forbidden" }, 403)
+    }
+    try {
+      await store.deleteIssue(issue.id)
+      return new Response(null, { status: 204 })
+    } catch (error) {
+      if (isNotFound(error)) return c.json({ error: "Not found" }, 404)
+      throw error
+    }
+  })
+
   app.patch("/api/issues/:key", async (c) => {
     const session = await getSession(c.req.raw)
     if (!session) return c.json({ error: "Unauthorized" }, 401)
@@ -500,7 +634,8 @@ export function createWorkspacesApp({ store, getSession }: WorkspacesDeps) {
       return c.json({ error: "Not found" }, 404)
     }
     try {
-      return c.json(await store.updateIssue(issue.id, parsed.data))
+      const updated = await store.updateIssue(issue.id, parsed.data)
+      return c.json({ ...updated, warnings: await completionWarnings(updated, parsed.data.statusId) })
     } catch (error) {
       if (isInvalid(error))
         return c.json({ error: (error as Error).message }, 400)
@@ -508,6 +643,33 @@ export function createWorkspacesApp({ store, getSession }: WorkspacesDeps) {
       throw error
     }
   })
+
+  /**
+   * T5 gentle guardrail: completing means moving to a Done-category status.
+   * A parent with open (non-archived, non-Done) subtasks still completes,
+   * but the response carries warnings describing the open work.
+   */
+  async function completionWarnings(
+    updated: { id: string; projectId: string },
+    statusId: string | undefined
+  ): Promise<string[]> {
+    if (statusId === undefined) return []
+    const target = await store.getStatus(statusId)
+    if (target?.category !== "Done") return []
+    const children = await store.listSubtasks(updated.id)
+    if (children.length === 0) return []
+    const byId = new Map(
+      (await store.listStatuses(updated.projectId)).map((s) => [s.id, s])
+    )
+    const open = children.filter(
+      (child) => !child.archived && byId.get(child.statusId)?.category !== "Done"
+    )
+    if (open.length === 0) return []
+    const noun = open.length === 1 ? "subtask" : "subtasks"
+    return [
+      `Completing with ${open.length} open ${noun}: ${open.map((child) => child.identifier).join(", ")}`,
+    ]
+  }
 
   return app
 }

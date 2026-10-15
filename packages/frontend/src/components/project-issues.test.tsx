@@ -1,7 +1,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, test, vi } from "vitest"
-import { api, type Issue, type Status } from "@/lib/api"
+import { api, type Issue, type Label, type Status } from "@/lib/api"
 import { ProjectIssues } from "./project-issues.js"
 
 vi.mock("@/lib/api", () => ({
@@ -9,15 +9,21 @@ vi.mock("@/lib/api", () => ({
     listStatuses: vi.fn(),
     listIssues: vi.fn(),
     listMembers: vi.fn(),
+    listLabels: vi.fn(),
+    listSubtasks: vi.fn(),
     createIssue: vi.fn(),
     updateIssue: vi.fn(),
+    deleteIssue: vi.fn(),
   },
 }))
 
 const listStatuses = vi.mocked(api.listStatuses)
 const listIssues = vi.mocked(api.listIssues)
 const listMembers = vi.mocked(api.listMembers)
+const listLabels = vi.mocked(api.listLabels)
+const listSubtasks = vi.mocked(api.listSubtasks)
 const updateIssue = vi.mocked(api.updateIssue)
+const deleteIssue = vi.mocked(api.deleteIssue)
 
 const project = { id: "pr-1", workspaceId: "ws-1", name: "Web", key: "WEB" }
 
@@ -56,12 +62,19 @@ const issues: Issue[] = [
   },
 ]
 
-function setup(canWrite = true) {
+function setup(canWrite = true, canAdmin = false, registry: Label[] = []) {
   listStatuses.mockResolvedValue(statuses)
   listMembers.mockResolvedValue([])
+  listLabels.mockResolvedValue(registry)
+  listSubtasks.mockResolvedValue([])
   listIssues.mockResolvedValue(issues)
   return render(
-    <ProjectIssues project={project} userId="user-a" canWrite={canWrite} />
+    <ProjectIssues
+      project={project}
+      userId="user-a"
+      canWrite={canWrite}
+      canAdmin={canAdmin}
+    />
   )
 }
 
@@ -150,5 +163,83 @@ describe("project issues list view", () => {
 
     expect(screen.queryByLabelText(/issue title/i)).not.toBeInTheDocument()
     expect(screen.queryByLabelText(/status for WEB-1/i)).not.toBeInTheDocument()
+  })
+
+  test("registry labels narrow the query", async () => {
+    const user = userEvent.setup()
+    setup(true, false, [
+      { id: "lb-1", workspaceId: "ws-1", name: "bug", color: "#ef4444" },
+    ])
+    await screen.findByText("WEB-1")
+
+    const bar = screen.getByRole("region", { name: /issue filters/i })
+    await user.click(within(bar).getByRole("checkbox", { name: "bug" }))
+
+    await waitFor(() =>
+      expect(listIssues).toHaveBeenLastCalledWith(
+        "pr-1",
+        expect.objectContaining({ labels: ["bug"] })
+      )
+    )
+  })
+
+  test("completing with open subtasks shows the warning", async () => {
+    const user = userEvent.setup()
+    updateIssue.mockResolvedValue({
+      ...issues[0],
+      statusId: "st-2",
+      warnings: ["Completing with 1 open subtask: WEB-2"],
+    })
+    setup()
+    await screen.findByText("WEB-1")
+
+    const row = screen.getByTestId("issue-WEB-1")
+    await user.selectOptions(
+      within(row).getByLabelText(/status for WEB-1/i),
+      "st-2"
+    )
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/open subtask/i)
+  })
+
+  test("archiving and deleting through row actions updates the list", async () => {
+    const user = userEvent.setup()
+    updateIssue.mockResolvedValue({ ...issues[0], archived: true })
+    deleteIssue.mockResolvedValue(undefined)
+    setup(true, true)
+    await screen.findByText("WEB-1")
+    const row = screen.getByTestId("issue-WEB-1")
+
+    await user.click(within(row).getByRole("button", { name: /archive/i }))
+    await waitFor(() =>
+      expect(updateIssue).toHaveBeenCalledWith("WEB-1", { archived: true })
+    )
+
+    await user.click(
+      within(row).getByRole("button", { name: /delete permanently/i })
+    )
+    await waitFor(() => expect(deleteIssue).toHaveBeenCalledWith("WEB-1"))
+    expect(screen.queryByText("WEB-1")).not.toBeInTheDocument()
+  })
+
+  test("expanding subtasks loads the children", async () => {
+    const user = userEvent.setup()
+    setup()
+    listSubtasks.mockResolvedValue([
+      {
+        ...issues[0],
+        id: "is-2",
+        number: 2,
+        identifier: "WEB-2",
+        title: "Split it",
+        parentId: "is-1",
+      },
+    ])
+    await screen.findByText("WEB-1")
+
+    await user.click(screen.getByRole("button", { name: /subtasks/i }))
+
+    expect(await screen.findByText("Split it")).toBeInTheDocument()
+    expect(listSubtasks).toHaveBeenCalledWith("WEB-1")
   })
 })
