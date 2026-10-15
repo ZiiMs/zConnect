@@ -37,6 +37,7 @@ import {
   DEFAULT_STATUS_ROSTER,
   isValidLabelColor,
   normalizeLabelNames,
+  seedIssueFields,
 } from "./store.js"
 
 type Db = ReturnType<typeof getDb>
@@ -331,17 +332,7 @@ export function createDrizzleWorkspaceStore(
             }
             await tx.insert(issue).values({
               projectId: projectRow.id,
-              number: nextNumber,
-              keyPrefix: projectRow.key,
-              identifier: `${projectRow.key}-${nextNumber}`,
-              title: seed.title,
-              description: null,
-              statusId,
-              priority: "None",
-              assigneeId: null,
-              dueDate: null,
-              labels: [],
-              parentId: null,
+              ...seedIssueFields(projectRow.key, nextNumber, statusId, seed),
             })
             nextNumber += 1
           }

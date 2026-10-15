@@ -153,7 +153,7 @@ export const TERMINAL_STATUS_CATEGORIES = [
   "Duplicate",
 ] as const satisfies readonly StatusCategory[]
 
-export function isTerminalCategory(category: StatusCategory): boolean {
+export function isTerminalStatusCategory(category: StatusCategory): boolean {
   return TERMINAL_STATUS_CATEGORIES.some((terminal) => terminal === category)
 }
 
@@ -168,7 +168,7 @@ export function issueProgress(
 ): { total: number; done: number } {
   const terminalStatusIds = new Set(
     statuses
-      .filter((status) => isTerminalCategory(status.category))
+      .filter((status) => isTerminalStatusCategory(status.category))
       .map((status) => status.id)
   )
   return {

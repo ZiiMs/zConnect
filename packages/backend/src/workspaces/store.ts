@@ -90,6 +90,54 @@ export const DEFAULT_SEED_ISSUES: readonly {
 ]
 
 /**
+ * Persisted fields of one seeded Issue, the single description both stores
+ * build from so the memory and Drizzle seeding waterfalls cannot drift.
+ * Matches what `CreateIssue` would store: the title verbatim, unassigned,
+ * no due date, no labels, no parent, and priority None.
+ */
+export interface SeedIssueFields {
+  number: number
+  keyPrefix: string
+  identifier: string
+  title: string
+  description: null
+  statusId: string
+  priority: "None"
+  assigneeId: null
+  dueDate: null
+  archived: false
+  labels: string[]
+  parentId: null
+}
+
+/**
+ * The seeded-Issue field set for one `DEFAULT_SEED_ISSUES` entry: given the
+ * Project Key, the issue number, the resolved status id and the seed, both
+ * stores insert these identical fields.
+ */
+export function seedIssueFields(
+  projectKey: string,
+  number: number,
+  statusId: string,
+  seed: { title: string }
+): SeedIssueFields {
+  return {
+    number,
+    keyPrefix: projectKey,
+    identifier: `${projectKey}-${number}`,
+    title: seed.title,
+    description: null,
+    statusId,
+    priority: "None",
+    assigneeId: null,
+    dueDate: null,
+    archived: false,
+    labels: [],
+    parentId: null,
+  }
+}
+
+/**
  * Categories that count as done everywhere: list grouping, progress math, and
  * the completion guardrail (ADR-0001). `archived` stays orthogonal — it means
  * hidden, not canceled.
@@ -453,9 +501,9 @@ export function createMemoryWorkspaceStore(
   }
 
   /**
-   * Shape one Issue row the way CreateIssue always does. Shared with the
-   * `createProject` waterfall so a seeded Issue is indistinguishable from a
-   * user-created one.
+   * Shape one Issue row the way CreateIssue always does. The `createProject`
+   * waterfall seeds through `seedIssueFields`, which mirrors these fields, so
+   * a seeded Issue is indistinguishable from a user-created one.
    */
   function newIssueRow(
     project: Project,
@@ -616,15 +664,13 @@ export function createMemoryWorkspaceStore(
         if (!statusId) {
           throw invalid(`Seed status ${seed.statusName} is missing`)
         }
-        // Same path as CreateIssue: consumes the sequence and KEY-N
-        // identifiers, unassigned with no due date and priority None.
-        stagedIssues.push(
-          newIssueRow(project, nextNumber, {
-            title: seed.title,
-            statusId,
-            priority: "None",
-          })
-        )
+        // Same persisted fields as CreateIssue: consumes the sequence and
+        // KEY-N identifiers, unassigned with no due date and priority None.
+        stagedIssues.push({
+          id: crypto.randomUUID(),
+          projectId: project.id,
+          ...seedIssueFields(project.key, nextNumber, statusId, seed),
+        })
         nextNumber += 1
       }
       projects.set(project.id, project)

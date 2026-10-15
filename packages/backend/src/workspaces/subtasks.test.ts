@@ -43,13 +43,13 @@ describe("issue subtasks", () => {
   let projectId: string
   let otherProjectId: string
   /** An Unstarted-category status: the "open" status most tests move issues around. */
-  let backlogId: string
+  let unstartedId: string
   let backlogCategoryId: string
   let inProgressId: string
   let doneId: string
   let canceledId: string
   let duplicateId: string
-  let otherBacklogId: string
+  let otherUnstartedId: string
 
   async function joinAsMember() {
     await app.request(`/api/workspaces/${workspaceId}/invites`, {
@@ -129,14 +129,14 @@ describe("issue subtasks", () => {
         if (key === "WEB") {
           projectId = id
           if (statusName === "Backlog") backlogCategoryId = status
-          else if (statusName === "Todo") backlogId = status
+          else if (statusName === "Todo") unstartedId = status
           else if (statusName === "In Progress") inProgressId = status
           else if (statusName === "Shipped") doneId = status
           else if (statusName === "Canceled") canceledId = status
           else duplicateId = status
         } else {
           otherProjectId = id
-          if (statusName === "Todo") otherBacklogId = status
+          if (statusName === "Todo") otherUnstartedId = status
         }
       }
     }
@@ -146,12 +146,12 @@ describe("issue subtasks", () => {
   test("creates a subtask linked to its parent", async () => {
     const parent = await createIssue(projectId, {
       title: "Parent",
-      statusId: backlogId,
+      statusId: unstartedId,
     })
     expect(parent.parentId).toBeNull()
     const child = await createIssue(projectId, {
       title: "Child",
-      statusId: backlogId,
+      statusId: unstartedId,
       parentId: parent.id,
     })
     expect(child.parentId).toBe(parent.id)
@@ -165,11 +165,11 @@ describe("issue subtasks", () => {
   test("links to a parent at update time and unlinks with null", async () => {
     const parent = await createIssue(projectId, {
       title: "Parent",
-      statusId: backlogId,
+      statusId: unstartedId,
     })
     const child = await createIssue(projectId, {
       title: "Child",
-      statusId: backlogId,
+      statusId: unstartedId,
     })
     const linked = await patchIssue(child.identifier, { parentId: parent.id })
     expect(linked.status).toBe(200)
@@ -183,16 +183,16 @@ describe("issue subtasks", () => {
   test("rejects missing, cross-project, self and nested parents", async () => {
     const parent = await createIssue(projectId, {
       title: "Parent",
-      statusId: backlogId,
+      statusId: unstartedId,
     })
     const child = await createIssue(projectId, {
       title: "Child",
-      statusId: backlogId,
+      statusId: unstartedId,
       parentId: parent.id,
     })
     const other = await createIssue(otherProjectId, {
       title: "Other",
-      statusId: otherBacklogId,
+      statusId: otherUnstartedId,
     })
 
     // Creating with a missing or cross-project parent fails the same way.
@@ -202,7 +202,7 @@ describe("issue subtasks", () => {
         headers: { "content-type": "application/json", ...auth(member.id) },
         body: JSON.stringify({
           title: "Bad link",
-          statusId: backlogId,
+          statusId: unstartedId,
           parentId,
         }),
       })
@@ -225,7 +225,7 @@ describe("issue subtasks", () => {
       headers: { "content-type": "application/json", ...auth(member.id) },
       body: JSON.stringify({
         title: "Grandchild",
-        statusId: backlogId,
+        statusId: unstartedId,
         parentId: child.id,
       }),
     })
@@ -235,16 +235,16 @@ describe("issue subtasks", () => {
   test("rejects making an issue with subtasks into a subtask", async () => {
     const parent = await createIssue(projectId, {
       title: "Parent",
-      statusId: backlogId,
+      statusId: unstartedId,
     })
     await createIssue(projectId, {
       title: "Child",
-      statusId: backlogId,
+      statusId: unstartedId,
       parentId: parent.id,
     })
     const sibling = await createIssue(projectId, {
       title: "Sibling",
-      statusId: backlogId,
+      statusId: unstartedId,
     })
     const res = await patchIssue(parent.identifier, { parentId: sibling.id })
     expect(res.status).toBe(400)
@@ -253,16 +253,16 @@ describe("issue subtasks", () => {
   test("lists direct subtasks in number order", async () => {
     const parent = await createIssue(projectId, {
       title: "Parent",
-      statusId: backlogId,
+      statusId: unstartedId,
     })
     await createIssue(projectId, {
       title: "Child b",
-      statusId: backlogId,
+      statusId: unstartedId,
       parentId: parent.id,
     })
     await createIssue(projectId, {
       title: "Child a",
-      statusId: backlogId,
+      statusId: unstartedId,
       parentId: parent.id,
     })
     const res = await app.request(`/api/issues/${parent.identifier}/subtasks`, {
@@ -297,11 +297,11 @@ describe("issue subtasks", () => {
     ] as const) {
       const parent = await createIssue(projectId, {
         title: `Parent (${category})`,
-        statusId: backlogId,
+        statusId: unstartedId,
       })
       await createIssue(projectId, {
         title: `Open child (${category})`,
-        statusId: backlogId,
+        statusId: unstartedId,
         parentId: parent.id,
       })
       const res = await patchIssue(parent.identifier, { statusId })
@@ -324,11 +324,11 @@ describe("issue subtasks", () => {
     ] as const) {
       const parent = await createIssue(projectId, {
         title: `Parent with ${category} child`,
-        statusId: backlogId,
+        statusId: unstartedId,
       })
       const child = await createIssue(projectId, {
         title: `Done child (${category})`,
-        statusId: backlogId,
+        statusId: unstartedId,
         parentId: parent.id,
       })
       await patchIssue(child.identifier, { statusId: childStatusId })
@@ -343,16 +343,16 @@ describe("issue subtasks", () => {
   test("moving with open subtasks to a non-terminal status warns nothing", async () => {
     for (const [category, statusId] of [
       ["Backlog", backlogCategoryId],
-      ["Unstarted", backlogId],
+      ["Unstarted", unstartedId],
       ["In Progress", inProgressId],
     ] as const) {
       const parent = await createIssue(projectId, {
         title: `Parent (${category})`,
-        statusId: backlogId,
+        statusId: unstartedId,
       })
       await createIssue(projectId, {
         title: `Open child (${category})`,
-        statusId: backlogId,
+        statusId: unstartedId,
         parentId: parent.id,
       })
       const res = await patchIssue(parent.identifier, { statusId })
@@ -369,11 +369,11 @@ describe("issue subtasks", () => {
   test("an unrelated update carries no warnings", async () => {
     const parent = await createIssue(projectId, {
       title: "Parent",
-      statusId: backlogId,
+      statusId: unstartedId,
     })
     await createIssue(projectId, {
       title: "Open child",
-      statusId: backlogId,
+      statusId: unstartedId,
       parentId: parent.id,
     })
     const renamed = await patchIssue(parent.identifier, { title: "Renamed" })
@@ -386,18 +386,18 @@ describe("issue subtasks", () => {
   test("cannot move a subtask or a parent to another project", async () => {
     const parent = await createIssue(projectId, {
       title: "Parent",
-      statusId: backlogId,
+      statusId: unstartedId,
     })
     const child = await createIssue(projectId, {
       title: "Child",
-      statusId: backlogId,
+      statusId: unstartedId,
       parentId: parent.id,
     })
     expect(
       (
         await patchIssue(child.identifier, {
           projectId: otherProjectId,
-          statusId: otherBacklogId,
+          statusId: otherUnstartedId,
         })
       ).status
     ).toBe(400)
@@ -405,7 +405,7 @@ describe("issue subtasks", () => {
       (
         await patchIssue(parent.identifier, {
           projectId: otherProjectId,
-          statusId: otherBacklogId,
+          statusId: otherUnstartedId,
         })
       ).status
     ).toBe(400)

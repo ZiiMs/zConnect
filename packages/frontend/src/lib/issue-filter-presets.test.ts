@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest"
-import { isTerminalCategory, type Status } from "@/lib/api"
+import { isTerminalStatusCategory, type Status } from "@/lib/api"
 import {
   activeStatusIds,
   backlogStatusIds,
@@ -91,7 +91,7 @@ describe("issue filter presets", () => {
       "In Progress",
     ])
     for (const category of activeCategories) {
-      expect(isTerminalCategory(category)).toBe(false)
+      expect(isTerminalStatusCategory(category)).toBe(false)
     }
   })
 
