@@ -50,6 +50,13 @@
       "when": 1792085875637,
       "tag": "0006_github_links",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": 7,
+      "when": 1792086660235,
+      "tag": "0007_labels_subtasks_archive",
+      "breakpoints": true
     }
   ]
 }

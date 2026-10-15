@@ -123,6 +123,7 @@ export function ProjectPage({
         project={project}
         userId={userId}
         canWrite={canWriteIssues}
+        canAdmin={canManage}
       />
     </div>
   )

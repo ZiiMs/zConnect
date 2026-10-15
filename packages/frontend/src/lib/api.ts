@@ -64,12 +64,23 @@ export const issueSchema = z.object({
   dueDate: z.string().nullable(),
   archived: z.boolean(),
   labels: z.array(z.string()),
+  /** T5 subtask parent row id; absent on older payloads and test fixtures. */
+  parentId: z.string().nullable().optional(),
+  /** T5 completion guardrail: present on PATCH responses that complete. */
+  warnings: z.array(z.string()).optional(),
   /**
    * Last-write marker for realtime conflict resolution (T4). The Issue
    * API predates it, so it stays optional: payloads without it still parse,
    * and `applyRemoteIssue` falls back to last-received-wins.
    */
   updatedAt: z.string().nullable().optional(),
+})
+
+export const labelSchema = z.object({
+  id: z.string(),
+  workspaceId: z.string(),
+  name: z.string(),
+  color: z.string(),
 })
 
 export type Priority = z.infer<typeof prioritySchema>
@@ -92,6 +103,7 @@ export interface CreateIssueInput {
   assigneeId?: string | null
   dueDate?: string | null
   labels?: string[]
+  parentId?: string | null
 }
 
 export interface UpdateIssueInput {
@@ -104,6 +116,7 @@ export interface UpdateIssueInput {
   archived?: boolean
   labels?: string[]
   projectId?: string
+  parentId?: string | null
 }
 
 export type Workspace = z.infer<typeof workspaceSchema>
@@ -112,6 +125,17 @@ export type Invitation = z.infer<typeof invitationSchema>
 export type Project = z.infer<typeof projectSchema>
 export type StatusCategory = z.infer<typeof statusCategorySchema>
 export type Status = z.infer<typeof statusSchema>
+export type Label = z.infer<typeof labelSchema>
+
+export interface CreateLabelInput {
+  name: string
+  color?: string
+}
+
+export interface UpdateLabelInput {
+  name?: string
+  color?: string
+}
 
 export class ApiError extends Error {
   readonly status: number
@@ -284,6 +308,53 @@ export const api = {
       method: "PATCH",
       body: input,
     })
+  },
+
+  deleteIssue(ref: string): Promise<void> {
+    return request(`/api/issues/${encodeURIComponent(ref)}`, z.void(), {
+      method: "DELETE",
+    })
+  },
+
+  listSubtasks(ref: string): Promise<Issue[]> {
+    return request(
+      `/api/issues/${encodeURIComponent(ref)}/subtasks`,
+      z.array(issueSchema)
+    )
+  },
+
+  listLabels(workspaceId: string): Promise<Label[]> {
+    return request(
+      `/api/workspaces/${workspaceId}/labels`,
+      z.array(labelSchema)
+    )
+  },
+
+  createLabel(workspaceId: string, input: CreateLabelInput): Promise<Label> {
+    return request(`/api/workspaces/${workspaceId}/labels`, labelSchema, {
+      method: "POST",
+      body: input,
+    })
+  },
+
+  updateLabel(
+    workspaceId: string,
+    labelId: string,
+    input: UpdateLabelInput
+  ): Promise<Label> {
+    return request(
+      `/api/workspaces/${workspaceId}/labels/${labelId}`,
+      labelSchema,
+      { method: "PATCH", body: input }
+    )
+  },
+
+  deleteLabel(workspaceId: string, labelId: string): Promise<void> {
+    return request(
+      `/api/workspaces/${workspaceId}/labels/${labelId}`,
+      z.void(),
+      { method: "DELETE" }
+    )
   },
 }
 

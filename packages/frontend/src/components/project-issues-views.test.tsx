@@ -13,8 +13,11 @@ vi.mock("@/lib/api", async (importOriginal) => {
       listStatuses: vi.fn(),
       listIssues: vi.fn(),
       listMembers: vi.fn(),
+      listLabels: vi.fn(),
+      listSubtasks: vi.fn(),
       createIssue: vi.fn(),
       updateIssue: vi.fn(),
+      deleteIssue: vi.fn(),
     },
   }
 })
@@ -39,6 +42,7 @@ vi.mock("@/hooks/use-issue-subscription", () => ({
 const listStatuses = vi.mocked(api.listStatuses)
 const listIssues = vi.mocked(api.listIssues)
 const listMembers = vi.mocked(api.listMembers)
+const listLabels = vi.mocked(api.listLabels)
 const updateIssue = vi.mocked(api.updateIssue)
 
 const project = { id: "pr-1", workspaceId: "ws-1", name: "Web", key: "WEB" }
@@ -90,6 +94,7 @@ const secondIssue: Issue = {
 function setup(issues: Issue[] = [baseIssue, secondIssue]) {
   listStatuses.mockResolvedValue(statuses)
   listMembers.mockResolvedValue([])
+  listLabels.mockResolvedValue([])
   listIssues.mockResolvedValue(issues)
   subscription.handler = null
   subscription.projectId = null

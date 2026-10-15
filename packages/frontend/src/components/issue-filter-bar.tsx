@@ -1,4 +1,4 @@
-import type { Priority, Status } from "@/lib/api"
+import type { Label, Priority, Status } from "@/lib/api"
 
 const PRIORITY_OPTIONS: Priority[] = ["Urgent", "High", "Medium", "Low", "None"]
 
@@ -7,11 +7,19 @@ export interface IssueFilterValue {
   priorities: Priority[]
   /** undefined = everyone, null = unassigned, string = one member. */
   assigneeId?: string | null
+  /** T5 registry label names; every selected label must match (AND). */
+  labels: string[]
   text: string
 }
 
 export function emptyIssueFilters(): IssueFilterValue {
-  return { statusIds: [], priorities: [], assigneeId: undefined, text: "" }
+  return {
+    statusIds: [],
+    priorities: [],
+    assigneeId: undefined,
+    labels: [],
+    text: "",
+  }
 }
 
 function toggle(list: string[], id: string): string[] {
@@ -52,6 +60,9 @@ export function loadIssueFilters(
         typeof value.assigneeId === "string"
           ? value.assigneeId
           : undefined,
+      labels: Array.isArray(value.labels)
+        ? value.labels.filter((name): name is string => typeof name === "string")
+        : [],
       text: typeof value.text === "string" ? value.text : "",
     }
   } catch {
@@ -76,11 +87,14 @@ const checkClass = "flex items-center gap-1 text-sm"
 export function IssueFilterBar({
   statuses,
   members,
+  labels = [],
   value,
   onChange,
 }: {
   statuses: Status[]
   members: { userId: string }[]
+  /** T5 workspace registry; the group hides when no labels exist yet. */
+  labels?: Label[]
   value: IssueFilterValue
   onChange: (value: IssueFilterValue) => void
 }) {
@@ -131,6 +145,31 @@ export function IssueFilterBar({
           </label>
         ))}
       </fieldset>
+      {labels.length > 0 && (
+        <fieldset className={groupClass}>
+          <legend className={labelClass}>Labels</legend>
+          {labels.map((label) => (
+            <label key={label.id} className={checkClass}>
+              <input
+                type="checkbox"
+                checked={value.labels.includes(label.name)}
+                onChange={() =>
+                  onChange({
+                    ...value,
+                    labels: toggle(value.labels, label.name),
+                  })
+                }
+              />
+              <span
+                aria-hidden="true"
+                className="inline-block size-3 rounded-full"
+                style={{ backgroundColor: label.color }}
+              />
+              {label.name}
+            </label>
+          ))}
+        </fieldset>
+      )}
       <div className={groupClass}>
         <label className={labelClass} htmlFor="issue-filter-assignee">
           Assignee

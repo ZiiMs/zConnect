@@ -1,6 +1,7 @@
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
-import { api, type Issue, type Priority, type Status } from "@/lib/api"
+import { LabelPicker } from "@/components/label-picker"
+import { api, type Issue, type Label, type Priority, type Status } from "@/lib/api"
 
 const inputClass =
   "w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
@@ -12,11 +13,14 @@ export function CreateIssueForm({
   projectId,
   statuses,
   members,
+  labels = [],
   onCreated,
 }: {
   projectId: string
   statuses: Status[]
   members: { userId: string }[]
+  /** T5 workspace registry for optional label selection. */
+  labels?: Label[]
   onCreated: (issue: Issue) => void
 }) {
   const [title, setTitle] = useState("")
@@ -25,6 +29,7 @@ export function CreateIssueForm({
   const [priority, setPriority] = useState<Priority>("Medium")
   const [assigneeId, setAssigneeId] = useState("")
   const [dueDate, setDueDate] = useState("")
+  const [labelNames, setLabelNames] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
 
@@ -41,11 +46,13 @@ export function CreateIssueForm({
           priority,
           assigneeId: assigneeId ? assigneeId : null,
           dueDate: dueDate ? new Date(dueDate).toISOString() : null,
+          labels: labelNames,
         })
       )
       setTitle("")
       setDescription("")
       setDueDate("")
+      setLabelNames([])
     } catch (err) {
       setError(err instanceof Error ? err.message : "Creation failed")
     } finally {
@@ -123,6 +130,11 @@ export function CreateIssueForm({
             {sending ? "Creating…" : "Create issue"}
           </Button>
         </div>
+        <LabelPicker
+          labels={labels}
+          selected={labelNames}
+          onChange={setLabelNames}
+        />
       </div>
       {error && <p className="text-destructive text-sm">{error}</p>}
     </form>

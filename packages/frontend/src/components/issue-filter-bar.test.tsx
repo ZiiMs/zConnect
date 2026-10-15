@@ -156,3 +156,54 @@ describe("filter persistence", () => {
     expect(loadIssueFilters("user-a", "pr-1")).toBeNull()
   })
 })
+
+describe("label filters", () => {
+  const registry = [
+    { id: "lb-1", workspaceId: "ws-1", name: "bug", color: "#ef4444" },
+    { id: "lb-2", workspaceId: "ws-1", name: "feature", color: "#22c55e" },
+  ]
+
+  function renderWithLabels(
+    value: IssueFilterValue = emptyIssueFilters(),
+    onChange: (value: IssueFilterValue) => void = () => {}
+  ) {
+    return render(
+      <IssueFilterBar
+        statuses={statuses}
+        members={members}
+        labels={registry}
+        value={value}
+        onChange={onChange}
+      />
+    )
+  }
+
+  test("renders registry labels with colors in the filter bar", () => {
+    renderWithLabels()
+    expect(screen.getByRole("checkbox", { name: "bug" })).toBeInTheDocument()
+    expect(
+      screen.getByRole("checkbox", { name: "feature" })
+    ).toBeInTheDocument()
+  })
+
+  test("toggling a label notifies with the narrowed value", async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    renderWithLabels(emptyIssueFilters(), onChange)
+
+    await user.click(screen.getByRole("checkbox", { name: "bug" }))
+
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ labels: ["bug"] })
+    )
+  })
+
+  test("label choices persist per user per project", () => {
+    const value: IssueFilterValue = {
+      ...emptyIssueFilters(),
+      labels: ["bug"],
+    }
+    saveIssueFilters("user-a", "pr-1", value)
+    expect(loadIssueFilters("user-a", "pr-1")).toEqual(value)
+  })
+})

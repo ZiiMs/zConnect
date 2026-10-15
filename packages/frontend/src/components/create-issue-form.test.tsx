@@ -106,4 +106,32 @@ describe("create issue form", () => {
 
     expect(await screen.findByText(/invalid issue/i)).toBeInTheDocument()
   })
+
+  test("selecting registry labels sends them with the create", async () => {
+    const user = userEvent.setup()
+    const onCreated = vi.fn()
+    createIssue.mockResolvedValue(created)
+    render(
+      <CreateIssueForm
+        projectId="pr-1"
+        statuses={statuses}
+        members={[{ userId: "user-member" }]}
+        labels={[
+          { id: "lb-1", workspaceId: "ws-1", name: "bug", color: "#ef4444" },
+        ]}
+        onCreated={onCreated}
+      />
+    )
+
+    await user.type(screen.getByLabelText(/issue title/i), "Fix login")
+    await user.click(screen.getByRole("checkbox", { name: "bug" }))
+    await user.click(screen.getByRole("button", { name: /create issue/i }))
+
+    await waitFor(() =>
+      expect(createIssue).toHaveBeenCalledWith(
+        "pr-1",
+        expect.objectContaining({ title: "Fix login", labels: ["bug"] })
+      )
+    )
+  })
 })
