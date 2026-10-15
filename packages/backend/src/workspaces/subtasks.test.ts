@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test"
 import { createWorkspacesApp } from "./routes.js"
 import type { Session } from "./session.js"
 import { createMemoryWorkspaceStore } from "./store.js"
+import { clearSeededTracker } from "./test-support.js"
 
 const owner = { id: "user-owner", email: "owner@example.com" }
 const member = { id: "user-member", email: "member@example.com" }
@@ -109,6 +110,8 @@ describe("issue subtasks", () => {
         }
       )
       const id = ((await project.json()) as { id: string }).id
+      // T2: every new project arrives seeded; this describe wants clean ones.
+      await clearSeededTracker(fresh.store, id)
       for (const [statusName, category] of [
         ["Backlog", "Backlog"],
         ["Todo", "Unstarted"],
@@ -268,7 +271,7 @@ describe("issue subtasks", () => {
     expect(res.status).toBe(200)
     expect(
       ((await res.json()) as { identifier: string }[]).map((i) => i.identifier)
-    ).toEqual(["WEB-2", "WEB-3"])
+    ).toEqual(["WEB-8", "WEB-9"])
 
     expect(
       (

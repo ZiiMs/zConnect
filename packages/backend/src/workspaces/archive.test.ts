@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test"
 import { createWorkspacesApp } from "./routes.js"
 import type { Session } from "./session.js"
 import { createMemoryWorkspaceStore } from "./store.js"
+import { clearSeededTracker } from "./test-support.js"
 
 const owner = { id: "user-owner", email: "owner@example.com" }
 const admin = { id: "user-admin", email: "admin@example.com" }
@@ -104,6 +105,8 @@ describe("issue archive and hard delete", () => {
       }
     )
     projectId = ((await project.json()) as { id: string }).id
+    // T2: every new project arrives seeded; this describe wants a clean one.
+    await clearSeededTracker(fresh.store, projectId)
     const status = await app.request(`/api/projects/${projectId}/statuses`, {
       method: "POST",
       headers: { "content-type": "application/json", ...auth(owner.id) },
@@ -123,7 +126,7 @@ describe("issue archive and hard delete", () => {
     })
     expect(archived.status).toBe(200)
     expect(await listIds()).toEqual([])
-    expect(await listIds("?archived=true")).toEqual(["WEB-1"])
+    expect(await listIds("?archived=true")).toEqual(["WEB-7"])
 
     const restored = await app.request(`/api/issues/${seeded.identifier}`, {
       method: "PATCH",
@@ -134,7 +137,7 @@ describe("issue archive and hard delete", () => {
     expect(((await restored.json()) as { archived: boolean }).archived).toBe(
       false
     )
-    expect(await listIds()).toEqual(["WEB-1"])
+    expect(await listIds()).toEqual(["WEB-7"])
   })
 
   test("owner hard-deletes; the issue is gone everywhere", async () => {
@@ -160,7 +163,7 @@ describe("issue archive and hard delete", () => {
 
     const second = await createIssue("Two")
     expect((await removeIssue(second.identifier, member.id)).status).toBe(403)
-    expect(await listIds()).toEqual(["WEB-2"])
+    expect(await listIds()).toEqual(["WEB-8"])
   })
 
   test("viewer, outsider and anonymous cannot hard-delete; unknown is 404", async () => {

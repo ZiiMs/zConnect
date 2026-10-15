@@ -3,6 +3,7 @@ import { Hono } from "hono"
 import { createWorkspacesApp } from "../workspaces/routes.js"
 import type { Session } from "../workspaces/session.js"
 import { createMemoryWorkspaceStore } from "../workspaces/store.js"
+import { clearSeededTracker } from "../workspaces/test-support.js"
 import { createMcpApp } from "./routes.js"
 import { createMemoryTokenStore } from "./tokens.js"
 
@@ -110,7 +111,7 @@ describe("mcp transport", () => {
   })
 
   test("unknown methods are not reachable (404); GET is rejected (405)", async () => {
-    const noDelete = await mcp(token, rpc("issue.delete", { ref: "WEB-1" }))
+    const noDelete = await mcp(token, rpc("issue.delete", { ref: "WEB-7" }))
     expect(noDelete.status).toBe(404)
     const noAdmin = await mcp(token, rpc("member.add", { userId: "x" }))
     expect(noAdmin.status).toBe(404)
@@ -187,7 +188,8 @@ describe("mcp project.list and issue.list parity", () => {
   }
 
   beforeEach(async () => {
-    app = setup().app
+    const fresh = setup()
+    app = fresh.app
     ;({ workspaceId, token } = await seedWorkspace(app))
     const project = await app.request(
       `/api/workspaces/${workspaceId}/projects`,
@@ -198,6 +200,8 @@ describe("mcp project.list and issue.list parity", () => {
       }
     )
     projectId = (await project.json()).id
+    // T2: every new project arrives seeded; this describe wants a clean one.
+    await clearSeededTracker(fresh.store, projectId)
     for (const [name, category] of [
       ["Backlog", "Unstarted"],
       ["Shipped", "Completed"],
@@ -334,7 +338,8 @@ describe("mcp issue.get parity", () => {
   }
 
   beforeEach(async () => {
-    app = setup().app
+    const fresh = setup()
+    app = fresh.app
     ;({ workspaceId, token } = await seedWorkspace(app))
     const project = await app.request(
       `/api/workspaces/${workspaceId}/projects`,
@@ -345,6 +350,8 @@ describe("mcp issue.get parity", () => {
       }
     )
     projectId = (await project.json()).id
+    // T2: every new project arrives seeded; this describe wants a clean one.
+    await clearSeededTracker(fresh.store, projectId)
     const status = await app.request(`/api/projects/${projectId}/statuses`, {
       method: "POST",
       headers: { "content-type": "application/json", ...auth(owner.id) },
@@ -373,12 +380,12 @@ describe("mcp issue.get parity", () => {
   })
 
   test("issue.get resolves the human identifier like REST", async () => {
-    expect(identifier).toBe("WEB-1")
-    await expectGetParity("WEB-1")
+    expect(identifier).toBe("WEB-7")
+    await expectGetParity("WEB-7")
   })
 
   test("issue.get is case-insensitive and resolves row ids", async () => {
-    await expectGetParity("web-1")
+    await expectGetParity("web-7")
     await expectGetParity(rowId)
   })
 
@@ -467,7 +474,8 @@ describe("mcp issue.create and issue.update parity", () => {
   }
 
   beforeEach(async () => {
-    app = setup().app
+    const fresh = setup()
+    app = fresh.app
     ;({ workspaceId, token } = await seedWorkspace(app))
     const project = await app.request(
       `/api/workspaces/${workspaceId}/projects`,
@@ -478,6 +486,8 @@ describe("mcp issue.create and issue.update parity", () => {
       }
     )
     projectId = (await project.json()).id
+    // T2: every new project arrives seeded; this describe wants a clean one.
+    await clearSeededTracker(fresh.store, projectId)
     const status = await app.request(`/api/projects/${projectId}/statuses`, {
       method: "POST",
       headers: { "content-type": "application/json", ...auth(owner.id) },
@@ -504,7 +514,7 @@ describe("mcp issue.create and issue.update parity", () => {
     const restRes = await restCreate(member.id, body)
     expect(restRes.status).toBe(201)
     const restBody = (await restRes.json()) as { identifier: string }
-    expect(restBody.identifier).toBe("WEB-1")
+    expect(restBody.identifier).toBe("WEB-7")
 
     // A second creation through MCP consumes the next sequence number, so
     // parity here is semantic (same shape, next identifier), not identical.
@@ -518,7 +528,7 @@ describe("mcp issue.create and issue.update parity", () => {
     }
     expect(mcpBody).toMatchObject({ jsonrpc: "2.0", id: 1 })
     expect(mcpBody.result).toMatchObject({
-      identifier: "WEB-2",
+      identifier: "WEB-8",
       title: "Fix login",
       projectId,
     })
@@ -710,7 +720,7 @@ describe("mcp issue.create and issue.update parity", () => {
       identifier: string
       projectId: string
     }
-    expect(body.identifier).toBe("WEB-1")
+    expect(body.identifier).toBe("WEB-7")
     expect(body.projectId).toBe(otherId)
   })
 })
