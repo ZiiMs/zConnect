@@ -32,10 +32,22 @@ export const projectSchema = z.object({
   key: z.string(),
 })
 
+export const statusCategorySchema = z.enum(["Todo", "In Progress", "Done"])
+
+export const statusSchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  name: z.string(),
+  category: statusCategorySchema,
+  position: z.number(),
+})
+
 export type Workspace = z.infer<typeof workspaceSchema>
 export type Member = z.infer<typeof memberSchema>
 export type Invitation = z.infer<typeof invitationSchema>
 export type Project = z.infer<typeof projectSchema>
+export type StatusCategory = z.infer<typeof statusCategorySchema>
+export type Status = z.infer<typeof statusSchema>
 
 export class ApiError extends Error {
   readonly status: number
@@ -65,6 +77,7 @@ async function request<T>(
         : res.statusText
     throw new ApiError(res.status, message)
   }
+  if (res.status === 204) return schema.parse(undefined)
   return schema.parse(json)
 }
 
@@ -101,6 +114,64 @@ export const api = {
     return request(
       `/api/workspaces/${workspaceId}/projects`,
       z.array(projectSchema)
+    )
+  },
+
+  createProject(
+    workspaceId: string,
+    input: { name: string; key: string }
+  ): Promise<Project> {
+    return request(`/api/workspaces/${workspaceId}/projects`, projectSchema, {
+      method: "POST",
+      body: input,
+    })
+  },
+
+  getProject(projectId: string): Promise<Project> {
+    return request(`/api/projects/${projectId}`, projectSchema)
+  },
+
+  updateProject(
+    projectId: string,
+    input: { name?: string; key?: string }
+  ): Promise<Project> {
+    return request(`/api/projects/${projectId}`, projectSchema, {
+      method: "PATCH",
+      body: input,
+    })
+  },
+
+  listStatuses(projectId: string): Promise<Status[]> {
+    return request(`/api/projects/${projectId}/statuses`, z.array(statusSchema))
+  },
+
+  createStatus(
+    projectId: string,
+    input: { name: string; category: StatusCategory }
+  ): Promise<Status> {
+    return request(`/api/projects/${projectId}/statuses`, statusSchema, {
+      method: "POST",
+      body: input,
+    })
+  },
+
+  updateStatus(
+    projectId: string,
+    statusId: string,
+    input: { name?: string; category?: StatusCategory; position?: number }
+  ): Promise<Status> {
+    return request(
+      `/api/projects/${projectId}/statuses/${statusId}`,
+      statusSchema,
+      { method: "PATCH", body: input }
+    )
+  },
+
+  deleteStatus(projectId: string, statusId: string): Promise<void> {
+    return request(
+      `/api/projects/${projectId}/statuses/${statusId}`,
+      z.void(),
+      { method: "DELETE" }
     )
   },
 }

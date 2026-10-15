@@ -83,3 +83,125 @@ describe("workspace api client", () => {
     await expect(api.listWorkspaces()).rejects.toThrow()
   })
 })
+
+describe("project api client", () => {
+  test("createProject posts name and key", async () => {
+    const fetchMock = mockFetchOnce({
+      id: "pr-1",
+      workspaceId: "ws-1",
+      name: "Web",
+      key: "WEB",
+    })
+
+    await api.createProject("ws-1", { name: "Web", key: "WEB" })
+
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/workspaces/ws-1/projects")
+    expect(options.method).toBe("POST")
+    expect(JSON.parse(options.body as string)).toEqual({
+      name: "Web",
+      key: "WEB",
+    })
+  })
+
+  test("updateProject patches name and key", async () => {
+    const fetchMock = mockFetchOnce({
+      id: "pr-1",
+      workspaceId: "ws-1",
+      name: "Website",
+      key: "SITE",
+    })
+
+    await api.updateProject("pr-1", { name: "Website", key: "SITE" })
+
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/projects/pr-1")
+    expect(options.method).toBe("PATCH")
+  })
+
+  test("listStatuses parses ordered statuses", async () => {
+    mockFetchOnce([
+      {
+        id: "st-1",
+        projectId: "pr-1",
+        name: "Backlog",
+        category: "Todo",
+        position: 0,
+      },
+      {
+        id: "st-2",
+        projectId: "pr-1",
+        name: "Shipped",
+        category: "Done",
+        position: 1,
+      },
+    ])
+
+    const result = await api.listStatuses("pr-1")
+
+    expect(result).toEqual([
+      {
+        id: "st-1",
+        projectId: "pr-1",
+        name: "Backlog",
+        category: "Todo",
+        position: 0,
+      },
+      {
+        id: "st-2",
+        projectId: "pr-1",
+        name: "Shipped",
+        category: "Done",
+        position: 1,
+      },
+    ])
+  })
+
+  test("createStatus posts name and category", async () => {
+    const fetchMock = mockFetchOnce({
+      id: "st-1",
+      projectId: "pr-1",
+      name: "Backlog",
+      category: "Todo",
+      position: 0,
+    })
+
+    await api.createStatus("pr-1", { name: "Backlog", category: "Todo" })
+
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/projects/pr-1/statuses")
+    expect(options.method).toBe("POST")
+    expect(JSON.parse(options.body as string)).toEqual({
+      name: "Backlog",
+      category: "Todo",
+    })
+  })
+
+  test("deleteStatus sends DELETE", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(null, { status: 204 }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    await api.deleteStatus("pr-1", "st-1")
+
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/projects/pr-1/statuses/st-1")
+    expect(options.method).toBe("DELETE")
+  })
+
+  test("blocked deletes throw ApiError with status", async () => {
+    mockFetchOnce(
+      { error: "Cannot delete a status that holds issues" },
+      { status: 409 }
+    )
+
+    const failure = await api
+      .deleteStatus("pr-1", "st-1")
+      .catch((error: unknown) => error)
+
+    expect(failure).toBeInstanceOf(ApiError)
+    expect((failure as ApiError).status).toBe(409)
+    expect((failure as Error).message).toMatch(/holds issues/i)
+  })
+})

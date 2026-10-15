@@ -1,9 +1,12 @@
 import { AuthForm } from "@/components/auth-form"
+import { CreateProjectForm } from "@/components/create-project-form"
 import { CreateWorkspaceForm } from "@/components/create-workspace-form"
 import { InviteMemberForm } from "@/components/invite-member-form"
+import { ProjectPage } from "@/components/project-page"
 import { Button } from "@/components/ui/button"
 import { WorkspaceMembers } from "@/components/workspace-members"
 import { WorkspaceSwitcher } from "@/components/workspace-switcher"
+import { useProjects } from "@/hooks/use-projects"
 import { useWorkspaces } from "@/hooks/use-workspaces"
 import { signOut, useSession } from "@/lib/auth-client"
 
@@ -28,6 +31,16 @@ function WorkspaceShell() {
     useWorkspaces()
   const canManageMembers =
     selected?.role === "Owner" || selected?.role === "Admin"
+  const {
+    projects,
+    selectedId: selectedProjectId,
+    selected: selectedProject,
+    select: selectProject,
+    loading: projectsLoading,
+    error: projectsError,
+    refresh: refreshProjects,
+    replace: replaceProject,
+  } = useProjects(selected?.id ?? null)
 
   return (
     <div className="mx-auto flex min-h-svh w-full max-w-3xl flex-col gap-6 p-6">
@@ -75,6 +88,50 @@ function WorkspaceShell() {
             <p className="text-muted-foreground text-sm">
               Only Owners and Admins can invite members.
             </p>
+          )}
+          <div className="flex flex-col gap-2">
+            <h3 className="font-medium text-sm">Projects</h3>
+            {projectsLoading && (
+              <p className="text-muted-foreground text-sm">Loading projects…</p>
+            )}
+            {projectsError && (
+              <p className="text-destructive text-sm">{projectsError}</p>
+            )}
+            {!projectsLoading && !projectsError && projects.length === 0 && (
+              <p className="text-muted-foreground text-sm">
+                No projects yet — create one to get started.
+              </p>
+            )}
+            {projects.map((project) => (
+              <Button
+                key={project.id}
+                variant={
+                  project.id === selectedProjectId ? "default" : "outline"
+                }
+                aria-pressed={project.id === selectedProjectId}
+                onClick={() => selectProject(project.id)}
+                className="justify-between"
+              >
+                <span>{project.name}</span>
+                <span className="text-xs opacity-70">{project.key}</span>
+              </Button>
+            ))}
+            {canManageMembers && (
+              <CreateProjectForm
+                workspaceId={selected.id}
+                onCreated={(project) => {
+                  void refreshProjects().then(() => selectProject(project.id))
+                }}
+              />
+            )}
+          </div>
+          {selectedProject && (
+            <ProjectPage
+              key={selectedProject.id}
+              project={selectedProject}
+              canManage={canManageMembers}
+              onProjectUpdated={replaceProject}
+            />
           )}
         </section>
       )}
