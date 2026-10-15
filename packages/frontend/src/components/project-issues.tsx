@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { CreateIssueForm } from "@/components/create-issue-form"
 import { IssueActions } from "@/components/issue-actions"
+import { IssueDetail } from "@/components/issue-detail"
 import {
   emptyIssueFilters,
   IssueFilterBar,
@@ -77,6 +78,7 @@ export function ProjectIssues({
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [subtasks, setSubtasks] = useState<Record<string, Issue[]>>({})
   const [toast, setToast] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -202,6 +204,31 @@ export function ProjectIssues({
     }
   }
 
+  const selectedIssue = issues.find((item) => item.id === selectedId) ?? null
+
+  useEffect(() => {
+    if (!selectedIssue || subtasks[selectedIssue.id] !== undefined) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const children = await api.listSubtasks(selectedIssue.identifier)
+        if (!cancelled) {
+          setSubtasks((current) => ({
+            ...current,
+            [selectedIssue.id]: children,
+          }))
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setActionError(err instanceof Error ? err.message : "Update failed")
+        }
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [selectedIssue, subtasks])
+
   return (
     <div className="flex flex-col gap-4">
       <h3 className="font-medium text-sm">Issues</h3>
@@ -254,7 +281,28 @@ export function ProjectIssues({
           {toast}
         </p>
       )}
-      {!loading && !error && view === "list" && (
+      {!loading && !error && selectedIssue !== null && (
+        <IssueDetail
+          issue={selectedIssue}
+          statuses={statuses}
+          members={members}
+          labels={labels}
+          subtasks={subtasks[selectedIssue.id] ?? []}
+          canEdit={canWrite}
+          canAdmin={canAdmin}
+          onBack={() => setSelectedId(null)}
+          onStatusChange={(issue, statusId) =>
+            void handleStatusChange(issue, statusId)
+          }
+          onUpdate={(issue, input) => void handleUpdate(issue, input)}
+          onArchivedChanged={handleArchivedChanged}
+          onDeleted={(deleted) => {
+            handleDeleted(deleted)
+            setSelectedId(null)
+          }}
+        />
+      )}
+      {!loading && !error && selectedIssue === null && view === "list" && (
         <IssueList
           issues={issues}
           statuses={statuses}
@@ -277,6 +325,14 @@ export function ProjectIssues({
                 <button
                   type="button"
                   className="rounded-md border border-input px-2 py-1 text-xs"
+                  aria-label={`Open detail for ${issue.identifier}`}
+                  onClick={() => setSelectedId(issue.id)}
+                >
+                  Detail
+                </button>
+                <button
+                  type="button"
+                  className="rounded-md border border-input px-2 py-1 text-xs"
                   aria-expanded={expanded[issue.id] ?? false}
                   onClick={() => void toggleSubtasks(issue)}
                 >
@@ -293,7 +349,7 @@ export function ProjectIssues({
           )}
         />
       )}
-      {!loading && !error && view === "table" && (
+      {!loading && !error && selectedIssue === null && view === "table" && (
         <IssueTable
           issues={issues}
           statuses={statuses}
@@ -303,7 +359,7 @@ export function ProjectIssues({
           onUpdate={(issue, input) => void handleUpdate(issue, input)}
         />
       )}
-      {!loading && !error && view === "kanban" && (
+      {!loading && !error && selectedIssue === null && view === "kanban" && (
         <KanbanBoard
           issues={issues}
           statuses={statuses}

@@ -29,11 +29,13 @@ export function KanbanCard({
   const colorFor = (name: string) =>
     labels.find((label) => label.name === name)?.color
 
+  const showFooter = issue.assigneeId != null || issue.dueDate != null
+
   return (
     <article
       ref={setNodeRef}
       data-testid={`kanban-card-${issue.identifier}`}
-      className="rounded-md border bg-background p-2"
+      className="rounded-lg border bg-background p-3.5 shadow-sm"
       style={
         transform
           ? {
@@ -45,10 +47,13 @@ export function KanbanCard({
     >
       <div
         {...(canEdit ? { ...attributes, ...listeners } : {})}
-        className="flex flex-col gap-1"
+        className="flex flex-col gap-1.5"
       >
         <span className="font-mono text-xs">{issue.identifier}</span>
         <span className="font-medium text-sm">{issue.title}</span>
+        <span className="line-clamp-2 text-muted-foreground text-xs">
+          {issue.description ?? "No description yet."}
+        </span>
         <span className="text-muted-foreground text-xs">{issue.priority}</span>
         {issue.labels.length > 0 && (
           <span className="flex flex-wrap items-center gap-1">
@@ -73,11 +78,19 @@ export function KanbanCard({
             })}
           </span>
         )}
+        {showFooter && (
+          <span className="mt-2.5 flex items-center gap-2 border-t pt-2.5 text-muted-foreground text-xs">
+            {issue.assigneeId && (
+              <span className="max-w-28 truncate">{issue.assigneeId}</span>
+            )}
+            {issue.dueDate && <span className="ml-auto">{issue.dueDate}</span>}
+          </span>
+        )}
       </div>
       {canEdit && (
         <select
           aria-label={`Move ${issue.identifier} to status`}
-          className="mt-1 w-full rounded-md border border-input bg-background px-2 py-1 text-sm"
+          className="mt-2.5 w-full rounded-md border border-input bg-background px-2 py-1 text-sm"
           value={issue.statusId}
           onChange={(e) => {
             if (e.target.value !== issue.statusId) {

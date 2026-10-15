@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest"
-import { applyRemoteIssue, type Issue, matchesIssueFilters } from "./api.js"
+import {
+  applyRemoteIssue,
+  type Issue,
+  matchesIssueFilters,
+  type Priority,
+} from "./api.js"
 
 const base: Issue = {
   id: "is-1",
@@ -79,12 +84,17 @@ describe("matchesIssueFilters", () => {
   })
 
   test("text matches identifier or title case-insensitively", () => {
-    const byTitle = {
+    const byTitle: {
+      statusIds: string[]
+      priorities: Priority[]
+      assigneeId: undefined
+      text: string
+    } = {
       statusIds: [],
       priorities: [],
       assigneeId: undefined,
       text: "login",
-    } as const
+    }
     expect(matchesIssueFilters(base, { ...byTitle })).toBe(true)
     expect(
       matchesIssueFilters(base, {

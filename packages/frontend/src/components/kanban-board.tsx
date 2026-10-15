@@ -52,11 +52,13 @@ function KanbanColumn({
       ref={setNodeRef}
       data-testid={`kanban-column-${status.id}`}
       aria-label={status.name}
-      className={`flex min-w-60 flex-col gap-2 rounded-md border p-2 ${isOver ? "ring-2 ring-ring" : ""}`}
+      className={`flex min-w-72 shrink-0 flex-col gap-3 rounded-xl border bg-card p-4 ${isOver ? "ring-2 ring-ring" : ""}`}
     >
-      <h4 className="font-medium text-sm">
+      <h4 className="flex items-center gap-2 px-1 pt-1 pb-1 font-medium text-sm">
         {status.name}{" "}
-        <span className="text-muted-foreground text-xs">{issues.length}</span>
+        <span className="rounded-full bg-accent px-1.5 text-muted-foreground text-xs">
+          {issues.length}
+        </span>
       </h4>
       {issues.map((issue) => (
         <KanbanCard
@@ -125,7 +127,7 @@ export function KanbanBoard({
       onDragEnd={handleDragEnd}
       onDragCancel={() => setActiveId(null)}
     >
-      <div className="flex gap-2 overflow-x-auto">
+      <div className="flex gap-4 overflow-x-auto">
         {ordered.map((status) => (
           <KanbanColumn
             key={status.id}

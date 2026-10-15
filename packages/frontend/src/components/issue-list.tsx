@@ -15,6 +15,9 @@ const CATEGORY_ORDER: StatusCategory[] = ["Todo", "In Progress", "Done"]
  * color from the T5 workspace registry when `labels` is provided (story 14
  * "workspace-shared Labels with color"); names without a registry entry
  * render as plain text.
+ *
+ * Dense Issues1 rows: one single-line row per issue with a sticky
+ * category subheader carrying the per-group count.
  */
 export function IssueList({
   issues,
@@ -49,10 +52,12 @@ export function IssueList({
   const categoryOf = (issue: Issue) =>
     statuses.find((s) => s.id === issue.statusId)?.category
 
-  const groups = CATEGORY_ORDER.map((category) => ({
-    category,
-    rows: issues.filter((issue) => categoryOf(issue) === category),
-  })).filter((group) => group.rows.length > 0)
+  const groups: { category: string; rows: Issue[] }[] = CATEGORY_ORDER.map(
+    (category) => ({
+      category,
+      rows: issues.filter((issue) => categoryOf(issue) === category),
+    })
+  ).filter((group) => group.rows.length > 0)
   const orphaned = issues.filter((issue) => categoryOf(issue) === undefined)
   if (orphaned.length > 0) {
     groups.push({ category: "Unknown", rows: orphaned })
@@ -62,58 +67,69 @@ export function IssueList({
     <div className="flex flex-col gap-4">
       {groups.map((group) => (
         <section key={group.category} aria-label={group.category}>
-          <h3 className="mb-1 font-medium text-muted-foreground text-xs">
-            {group.category}
-          </h3>
-          <ul className="flex flex-col gap-2">
+          <header className="sticky top-0 z-10 flex h-8 items-center gap-2 border-b bg-background/95 px-3 backdrop-blur">
+            <h3 className="font-medium text-muted-foreground text-xs">
+              {group.category}
+            </h3>
+            <span className="text-[11px] text-muted-foreground">
+              {group.rows.length}
+            </span>
+          </header>
+          <ul className="flex flex-col divide-y divide-border">
             {group.rows.map((issue) => (
               <li
                 key={issue.id}
                 data-testid={`issue-${issue.identifier}`}
-                className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border p-3"
+                className="px-3 py-1.5 hover:bg-accent/60"
               >
-                <span className="font-mono text-xs">{issue.identifier}</span>
-                <span className="font-medium text-sm">{issue.title}</span>
-                <span className="text-muted-foreground text-xs">
-                  {issue.priority}
-                </span>
-                {issue.labels.map((name) => {
-                  const color = colorFor(name)
-                  return (
-                    <span
-                      key={name}
-                      className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs"
-                    >
-                      {color && (
-                        <span
-                          data-testid={`label-dot-${name}`}
-                          aria-hidden="true"
-                          className="inline-block size-2.5 rounded-full"
-                          style={{ backgroundColor: color }}
-                        />
-                      )}
-                      {name}
-                    </span>
-                  )
-                })}
-                {canEdit ? (
-                  <select
-                    aria-label={`Status for ${issue.identifier}`}
-                    className="rounded-md border border-input bg-background px-2 py-1 text-sm"
-                    value={issue.statusId}
-                    onChange={(e) => onStatusChange(issue, e.target.value)}
-                  >
-                    {statuses.map((status) => (
-                      <option key={status.id} value={status.id}>
-                        {status.name}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <span className="text-muted-foreground text-xs">
-                    {statusName(issue.statusId)}
+                <div className="flex items-center gap-2 whitespace-nowrap text-xs">
+                  <span className="shrink-0 font-mono text-xs">
+                    {issue.identifier}
                   </span>
-                )}
+                  <span className="min-w-0 flex-1 truncate text-sm">
+                    {issue.title}
+                  </span>
+                  <span className="shrink-0 text-muted-foreground text-xs">
+                    {issue.priority}
+                  </span>
+                  {issue.labels.map((name) => {
+                    const color = colorFor(name)
+                    return (
+                      <span
+                        key={name}
+                        className="inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-px text-[11px]"
+                      >
+                        {color && (
+                          <span
+                            data-testid={`label-dot-${name}`}
+                            aria-hidden="true"
+                            className="inline-block size-2 rounded-full"
+                            style={{ backgroundColor: color }}
+                          />
+                        )}
+                        {name}
+                      </span>
+                    )
+                  })}
+                  {canEdit ? (
+                    <select
+                      aria-label={`Status for ${issue.identifier}`}
+                      className="shrink-0 rounded-md border border-input bg-background px-1.5 py-0.5 text-xs"
+                      value={issue.statusId}
+                      onChange={(e) => onStatusChange(issue, e.target.value)}
+                    >
+                      {statuses.map((status) => (
+                        <option key={status.id} value={status.id}>
+                          {status.name}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span className="shrink-0 text-muted-foreground text-xs">
+                      {statusName(issue.statusId)}
+                    </span>
+                  )}
+                </div>
                 {actions?.(issue)}
               </li>
             ))}
