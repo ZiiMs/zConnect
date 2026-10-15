@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { CreateIssueForm } from "@/components/create-issue-form"
 import {
   emptyIssueFilters,
@@ -8,19 +8,41 @@ import {
   saveIssueFilters,
 } from "@/components/issue-filter-bar"
 import { IssueList } from "@/components/issue-list"
+import { IssueTable } from "@/components/issue-table"
+import { KanbanBoard } from "@/components/kanban-board"
+import { useIssueSubscription } from "@/hooks/use-issue-subscription"
 import {
   api,
+  applyRemoteIssue,
   type Issue,
   type Member,
+  matchesIssueFilters,
   type Project,
   type Status,
+  type UpdateIssueInput,
 } from "@/lib/api"
+
+type IssueView = "list" | "table" | "kanban"
+
+const VIEWS: { id: IssueView; label: string }[] = [
+  { id: "list", label: "List" },
+  { id: "table", label: "Table" },
+  { id: "kanban", label: "Kanban" },
+]
 
 /**
  * List view container: the same filtered Issue query later views reuse,
  * with a shared filter bar persisted per user per project (localStorage;
  * see `issue-filter-bar`). Status changes and creation run through the
  * Issue API so the Todo-through-Done lifecycle completes from the List.
+ *
+ * T4 renders that same query as a Table (inline status/priority/assignee
+ * edits) and a Kanban board (drag cards between Status columns with an
+ * optimistic update). A per-project realtime subscription merges remote
+ * inserts/updates last-write-wins; a move the server resolves elsewhere (or
+ * a stale remote write) surfaces a conflict toast instead of silently
+ * forking the view. No presence or locking: concurrent writers simply see
+ * the latest write win.
  */
 export function ProjectIssues({
   project,
@@ -37,9 +59,11 @@ export function ProjectIssues({
   const [filters, setFilters] = useState<IssueFilterValue>(
     () => loadIssueFilters(userId, project.id) ?? emptyIssueFilters()
   )
+  const [view, setView] = useState<IssueView>("list")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -69,19 +93,64 @@ export function ProjectIssues({
     void refresh()
   }, [refresh])
 
+  const issuesRef = useRef(issues)
+  issuesRef.current = issues
+
+  useIssueSubscription(project.id, (event) => {
+    if (event.type === "INSERT" && !matchesIssueFilters(event.issue, filters)) {
+      return
+    }
+    const { issues: next, applied } = applyRemoteIssue(
+      issuesRef.current,
+      event.issue
+    )
+    if (!applied) {
+      setToast("Conflict resolved: kept the latest change.")
+      return
+    }
+    setIssues(next)
+  })
+
   function handleFilters(next: IssueFilterValue) {
     setFilters(next)
     saveIssueFilters(userId, project.id, next)
   }
 
-  async function handleStatusChange(issue: Issue, statusId: string) {
+  async function handleUpdate(issue: Issue, input: UpdateIssueInput) {
     setActionError(null)
+    try {
+      const updated = await api.updateIssue(issue.identifier, input)
+      setIssues((current) =>
+        current.map((item) => (item.id === updated.id ? updated : item))
+      )
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Update failed")
+    }
+  }
+
+  async function handleStatusChange(issue: Issue, statusId: string) {
+    await handleUpdate(issue, { statusId })
+  }
+
+  async function handleMove(issue: Issue, statusId: string) {
+    setActionError(null)
+    setToast(null)
+    const previous = issuesRef.current
+    setIssues((current) =>
+      current.map((item) =>
+        item.id === issue.id ? { ...item, statusId } : item
+      )
+    )
     try {
       const updated = await api.updateIssue(issue.identifier, { statusId })
       setIssues((current) =>
         current.map((item) => (item.id === updated.id ? updated : item))
       )
+      if (updated.statusId !== statusId) {
+        setToast("Conflict resolved: kept the latest change.")
+      }
     } catch (err) {
+      setIssues(previous)
       setActionError(err instanceof Error ? err.message : "Update failed")
     }
   }
@@ -95,6 +164,20 @@ export function ProjectIssues({
         value={filters}
         onChange={handleFilters}
       />
+      <div role="tablist" aria-label="Issue views" className="flex gap-2">
+        {VIEWS.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            role="tab"
+            aria-selected={view === option.id}
+            onClick={() => setView(option.id)}
+            className="rounded-md border px-3 py-1 text-sm"
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
       {canWrite && statuses.length > 0 && (
         <CreateIssueForm
           projectId={project.id}
@@ -112,7 +195,12 @@ export function ProjectIssues({
       )}
       {error && <p className="text-destructive text-sm">{error}</p>}
       {actionError && <p className="text-destructive text-sm">{actionError}</p>}
-      {!loading && !error && (
+      {toast && (
+        <p role="status" className="text-sm">
+          {toast}
+        </p>
+      )}
+      {!loading && !error && view === "list" && (
         <IssueList
           issues={issues}
           statuses={statuses}
@@ -120,6 +208,23 @@ export function ProjectIssues({
           onStatusChange={(issue, statusId) =>
             void handleStatusChange(issue, statusId)
           }
+        />
+      )}
+      {!loading && !error && view === "table" && (
+        <IssueTable
+          issues={issues}
+          statuses={statuses}
+          members={members}
+          canEdit={canWrite}
+          onUpdate={(issue, input) => void handleUpdate(issue, input)}
+        />
+      )}
+      {!loading && !error && view === "kanban" && (
+        <KanbanBoard
+          issues={issues}
+          statuses={statuses}
+          canEdit={canWrite}
+          onMove={(issue, statusId) => void handleMove(issue, statusId)}
         />
       )}
     </div>
