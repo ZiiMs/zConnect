@@ -72,6 +72,10 @@ Shared on purpose: the glyphs and the small domain marks (priority, label, statu
 due chip). Everything structural is owned by each variant, so the layouts are free to disagree
 about hierarchy rather than converge on one grid.
 
+One side effect while this branch lives: Tailwind scans all of `src`, so the utilities used only
+by the prototypes (`line-clamp-2`, the arbitrary grids, …) also land in the app's production CSS
+build. Harmless, and it disappears with the branch.
+
 ## When a variant wins
 
 1. Capture the answer where the next reader will look for it — which layout, which theme, and
