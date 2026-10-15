@@ -1,29 +1,22 @@
 {
-  "name": "zConnect",
+  "name": "zconnect",
+  "module": "index.ts",
+  "type": "module",
   "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
-    "build": "turbo run build",
-    "dev": "turbo run dev",
-    "lint": "turbo run lint",
-    "format": "prettier --write \"**/*.{ts,tsx,md}\"",
-    "check-types": "turbo run check-types"
+    "dev:backend": "bun run --cwd packages/backend dev",
+    "dev:frontend": "bun run --cwd packages/frontend dev",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write ."
   },
   "devDependencies": {
-    "prettier": "3.9.6",
-    "turbo": "^2.11.8",
-    "typescript": "7.0.2"
+    "@biomejs/biome": "^2.5.15",
+    "@types/bun": "latest"
   },
-  "engines": {
-    "node": ">=24"
-  },
-  "devEngines": {
-    "packageManager": {
-      "name": "bun",
-      "version": "1.3.5"
-    }
-  },
-  "workspaces": [
-    "apps/*",
-    "packages/*"
-  ]
+  "peerDependencies": {
+    "typescript": "^5"
+  }
 }

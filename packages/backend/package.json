@@ -1,0 +1,31 @@
+{
+  "name": "backend",
+  "scripts": {
+    "dev": "bun run --hot src/index.ts",
+    "worker": "bun run src/worker.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio",
+    "auth:schema": "bun x auth@latest generate --config ./src/lib/auth.ts --output ./src/db/auth-schema.ts -y",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write ."
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1152.0",
+    "@aws-sdk/s3-request-presigner": "^3.1152.0",
+    "@better-auth/drizzle-adapter": "^1.7.9",
+    "@supabase/supabase-js": "^2.117.3",
+    "better-auth": "^1.7.9",
+    "bullmq": "^6.3.15",
+    "drizzle-orm": "^0.45.4",
+    "hono": "^4.13.13",
+    "ioredis": "^6.0.0",
+    "postgres": "^3.4.9",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "drizzle-kit": "^0.31.11"
+  }
+}
