@@ -106,6 +106,23 @@ with the branch.
 3. Delete the losers, the switcher, `prototype.html` and `src/prototype-main.tsx` from
    `main`. Keep the full set of variants on this branch as the primary source.
 
+## Verdict (2026-10-15, user pick)
+
+Nav **1** (Wide rail) · Issues **1** (Dense grouped) · Board **2** (Roomy) · Detail **4**
+(Two column) · Settings **2** (Top tabs) · Sign in **2** (Centred card) · Style **terminal** ·
+Color **neutral** · Mode **dark** (mode was unspecified; dark assumed as terminal's native —
+say the word if light was meant).
+
+Shareable entry points (all other axes pinned):
+
+```
+/prototype.html?screen=issues&nav=1&issues=1&board=2&detail=4&settings=2&signin=2&style=terminal&color=neutral&mode=dark
+```
+
+Swap `screen=` for `board` / `issue` / `settings` / `signin` to review each picked
+surface. Fold-in has NOT happened yet: the real app still renders its current design;
+rewriting the real components against this verdict is the next step when confirmed.
+
 ## Not decided yet
 
 - Whether nav and content are picked independently (assumed yes here) or curated as pairs.
