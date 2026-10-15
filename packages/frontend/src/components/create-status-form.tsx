@@ -1,11 +1,16 @@
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
-import { api, type Status, type StatusCategory } from "@/lib/api"
+import {
+  api,
+  STATUS_CATEGORIES,
+  type Status,
+  type StatusCategory,
+} from "@/lib/api"
 
 const inputClass =
   "w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
 
-const categories: StatusCategory[] = ["Todo", "In Progress", "Done"]
+const categories: StatusCategory[] = [...STATUS_CATEGORIES]
 
 /** Define an ordered status with its Status Category for a project. */
 export function CreateStatusForm({
@@ -16,7 +21,7 @@ export function CreateStatusForm({
   onCreated: (status: Status) => void
 }) {
   const [name, setName] = useState("")
-  const [category, setCategory] = useState<StatusCategory>("Todo")
+  const [category, setCategory] = useState<StatusCategory>("Backlog")
   const [error, setError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
 

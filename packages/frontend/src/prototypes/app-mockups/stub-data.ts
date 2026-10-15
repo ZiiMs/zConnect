@@ -9,15 +9,16 @@
  * `NOW` is frozen so relative timestamps and "overdue" read the same on every
  * reload, whatever day the mockups are reviewed.
  */
-import type {
-  Issue,
-  Label,
-  Member,
-  Priority,
-  Project,
-  Status,
-  StatusCategory,
-  Workspace,
+import {
+  type Issue,
+  issueProgress,
+  type Label,
+  type Member,
+  type Priority,
+  type Project,
+  type Status,
+  type StatusCategory,
+  type Workspace,
 } from "@/lib/api"
 
 /** Frozen clock the mockups format against (2026-10-15, mid-morning). */
@@ -101,14 +102,14 @@ export const statuses: Status[] = [
     id: "s-backlog",
     projectId: "p-zc",
     name: "Backlog",
-    category: "Todo",
+    category: "Backlog",
     position: 0,
   },
   {
     id: "s-todo",
     projectId: "p-zc",
     name: "Todo",
-    category: "Todo",
+    category: "Unstarted",
     position: 1,
   },
   {
@@ -129,7 +130,7 @@ export const statuses: Status[] = [
     id: "s-done",
     projectId: "p-zc",
     name: "Done",
-    category: "Done",
+    category: "Completed",
     position: 4,
   },
 ]
@@ -520,7 +521,7 @@ export function countsByStatus(): Record<string, number> {
 
 export const projectProgress = {
   total: topLevelIssues.length,
-  done: topLevelIssues.filter((item) => item.statusId === "s-done").length,
+  done: issueProgress(topLevelIssues, statuses).done,
   urgent: topLevelIssues.filter((item) => item.priority === "Urgent").length,
   unassigned: topLevelIssues.filter((item) => item.assigneeId === null).length,
 }
@@ -562,9 +563,12 @@ export function isOverdue(iso: string | null): boolean {
 }
 
 export const categoryLabel: Record<StatusCategory, string> = {
-  Todo: "Todo",
+  Backlog: "Backlog",
+  Unstarted: "Unstarted",
   "In Progress": "In Progress",
-  Done: "Done",
+  Completed: "Completed",
+  Canceled: "Canceled",
+  Duplicate: "Duplicate",
 }
 
 export const priorityOrder: Priority[] = [

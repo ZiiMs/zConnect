@@ -40,7 +40,7 @@ const VIEWS: { id: IssueView; label: string }[] = [
  * List view container: the same filtered Issue query later views reuse,
  * with a shared filter bar persisted per user per project (localStorage;
  * see `issue-filter-bar`). Status changes and creation run through the
- * Issue API so the Todo-through-Done lifecycle completes from the List.
+ * Issue API so status changes complete the lifecycle from the List.
  * T5 adds the workspace Label registry to the filter bar and creation
  * form, per-row archive controls, expandable subtasks, and the gentle
  * completion guardrail (warn-but-allow) as an alert banner.
