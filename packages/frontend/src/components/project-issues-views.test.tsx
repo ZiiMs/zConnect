@@ -114,7 +114,12 @@ describe("project issues views", () => {
     setup()
     await screen.findByText("WEB-1")
 
-    expect(screen.getByRole("tablist")).toBeInTheDocument()
+    expect(
+      screen.getByRole("tablist", { name: "Issue views" })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole("tablist", { name: "Issue filter presets" })
+    ).toBeInTheDocument()
     expect(screen.getByLabelText("Issue filters")).toBeInTheDocument()
 
     await user.click(screen.getByRole("tab", { name: "Table" }))
@@ -132,6 +137,8 @@ describe("project issues views", () => {
     await screen.findByText("WEB-1")
     listIssues.mockResolvedValue([baseIssue])
 
+    // Widen to All Issues, then narrow to the Backlog status by hand.
+    await user.click(screen.getByRole("tab", { name: "All Issues" }))
     await user.click(screen.getByRole("checkbox", { name: "Backlog" }))
     await waitFor(() =>
       expect(listIssues).toHaveBeenLastCalledWith(
@@ -248,10 +255,30 @@ describe("project issues views", () => {
     expect(subscription.projectId).toBe("pr-1")
     const calls = listIssues.mock.calls.length
 
-    subscription.handler?.({ type: "INSERT", issue: secondIssue })
+    subscription.handler?.({
+      type: "INSERT",
+      issue: { ...secondIssue, statusId: "st-1" },
+    })
 
     expect(await screen.findByText("WEB-2")).toBeInTheDocument()
     expect(listIssues.mock.calls.length).toBe(calls)
+  })
+
+  test("a realtime insert outside the active preset stays out", async () => {
+    const user = userEvent.setup()
+    setup([baseIssue])
+    await screen.findByText("WEB-1")
+
+    // WEB-2 sits in the terminal Completed status, which Active leaves out.
+    subscription.handler?.({ type: "INSERT", issue: secondIssue })
+
+    expect(screen.queryByText("Ship homepage")).not.toBeInTheDocument()
+
+    // The server still has it; widening the preset brings it back.
+    listIssues.mockResolvedValue([baseIssue, secondIssue])
+    await user.click(screen.getByRole("tab", { name: "All Issues" }))
+
+    expect(await screen.findByText("Ship homepage")).toBeInTheDocument()
   })
 
   test("a realtime update rewrites the row without a refresh", async () => {

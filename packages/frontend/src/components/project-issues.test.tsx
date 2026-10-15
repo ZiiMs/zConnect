@@ -92,10 +92,11 @@ describe("project issues list view", () => {
     setup()
 
     expect(await screen.findByText("WEB-1")).toBeInTheDocument()
+    // A first visit lands on the Active preset: the open categories only.
     await waitFor(() =>
-      expect(listIssues).toHaveBeenCalledWith(
+      expect(listIssues).toHaveBeenLastCalledWith(
         "pr-1",
-        expect.objectContaining({ statusIds: [], text: "" })
+        expect.objectContaining({ statusIds: ["st-1"], text: "" })
       )
     )
   })
@@ -104,13 +105,15 @@ describe("project issues list view", () => {
     const user = userEvent.setup()
     setup()
     await screen.findByText("WEB-1")
+    listIssues.mockResolvedValue([issues[0]])
 
-    await user.click(screen.getByRole("checkbox", { name: "Backlog" }))
+    await user.click(screen.getByRole("tab", { name: "All Issues" }))
+    await user.click(screen.getByRole("checkbox", { name: "Shipped" }))
 
     await waitFor(() =>
       expect(listIssues).toHaveBeenLastCalledWith(
         "pr-1",
-        expect.objectContaining({ statusIds: ["st-1"] })
+        expect.objectContaining({ statusIds: ["st-2"] })
       )
     )
   })
@@ -120,12 +123,13 @@ describe("project issues list view", () => {
     setup()
     await screen.findByText("WEB-1")
 
-    await user.click(screen.getByRole("checkbox", { name: "Backlog" }))
+    await user.click(screen.getByRole("tab", { name: "All Issues" }))
+    await user.click(screen.getByRole("checkbox", { name: "Shipped" }))
 
     await waitFor(() =>
       expect(
         localStorage.getItem("zconnect:issue-filters:user-a:pr-1")
-      ).toContain("st-1")
+      ).toContain("st-2")
     )
   })
 
@@ -273,5 +277,176 @@ describe("project issues list view", () => {
     )
     expect(await screen.findByText("WEB-2")).toBeInTheDocument()
     expect(screen.queryByLabelText(/issue title/i)).not.toBeInTheDocument()
+  })
+})
+
+describe("issue filter presets and breadcrumb", () => {
+  const storageKey = "zconnect:issue-filters:user-a:pr-1"
+  const breadcrumb = () =>
+    screen.getByRole("navigation", { name: /breadcrumb/i })
+  const crumbs = () =>
+    within(breadcrumb())
+      .getAllByRole("button")
+      .map((crumb) => crumb.textContent)
+
+  beforeEach(() => {
+    localStorage.clear()
+    vi.clearAllMocks()
+  })
+
+  test("a first visit lands on Active without freezing it into storage", async () => {
+    setup()
+    await screen.findByText("WEB-1")
+
+    expect(screen.getByRole("tab", { name: "Active" })).toHaveAttribute(
+      "aria-selected",
+      "true"
+    )
+    await waitFor(() =>
+      expect(listIssues).toHaveBeenLastCalledWith(
+        "pr-1",
+        expect.objectContaining({ statusIds: ["st-1"] })
+      )
+    )
+    // The default is derived from the project's statuses, not a stored choice.
+    expect(localStorage.getItem(storageKey)).toBeNull()
+  })
+
+  test("a stored preference wins over the Active default", async () => {
+    localStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        statusIds: [],
+        priorities: [],
+        labels: [],
+        text: "fix",
+      })
+    )
+    setup()
+    await screen.findByText("WEB-1")
+
+    expect(listIssues).toHaveBeenLastCalledWith(
+      "pr-1",
+      expect.objectContaining({ statusIds: [], text: "fix" })
+    )
+    expect(screen.getByRole("tab", { name: "All Issues" })).toHaveAttribute(
+      "aria-selected",
+      "true"
+    )
+    expect(screen.getByRole("tab", { name: "Active" })).toHaveAttribute(
+      "aria-selected",
+      "false"
+    )
+  })
+
+  test("All Issues drops the status constraint and keeps the archived default", async () => {
+    const user = userEvent.setup()
+    setup()
+    await screen.findByText("WEB-1")
+
+    await user.click(screen.getByRole("tab", { name: "All Issues" }))
+
+    await waitFor(() =>
+      expect(listIssues).toHaveBeenLastCalledWith(
+        "pr-1",
+        expect.objectContaining({ statusIds: [] })
+      )
+    )
+    // Never a client-side archived override: the query keeps archived=false.
+    expect(listIssues.mock.calls.at(-1)?.[1]).not.toHaveProperty("archived")
+  })
+
+  test("Backlog narrows the query to the Backlog category", async () => {
+    const user = userEvent.setup()
+    setup()
+    await screen.findByText("WEB-1")
+
+    await user.click(screen.getByRole("tab", { name: "Backlog" }))
+
+    await waitFor(() =>
+      expect(listIssues).toHaveBeenLastCalledWith(
+        "pr-1",
+        expect.objectContaining({ statusIds: ["st-1"] })
+      )
+    )
+  })
+
+  test("the breadcrumb names the project, Issues, and the current view", async () => {
+    const user = userEvent.setup()
+    setup()
+    await screen.findByText("WEB-1")
+
+    expect(crumbs()).toEqual(["Web", "Issues", "List"])
+
+    await user.click(screen.getByRole("tab", { name: "Kanban" }))
+
+    expect(crumbs()).toEqual(["Web", "Issues", "Kanban"])
+  })
+
+  test("the View crumb keeps that view", async () => {
+    const user = userEvent.setup()
+    setup()
+    await screen.findByText("WEB-1")
+    await user.click(screen.getByRole("tab", { name: "Table" }))
+    await screen.findByTestId("issue-row-WEB-1")
+
+    await user.click(
+      within(breadcrumb()).getByRole("button", { name: "Table" })
+    )
+
+    expect(screen.getByTestId("issue-row-WEB-1")).toBeInTheDocument()
+    expect(screen.getByRole("tab", { name: "Table" })).toHaveAttribute(
+      "aria-selected",
+      "true"
+    )
+  })
+
+  test("the breadcrumb extends to the identifier on detail and navigates back", async () => {
+    const user = userEvent.setup()
+    setup()
+    await screen.findByText("WEB-1")
+
+    await user.click(
+      screen.getByRole("button", { name: /open detail for WEB-1/i })
+    )
+
+    expect(crumbs()).toEqual(["Web", "Issues", "WEB-1"])
+    expect(screen.getByTestId("issue-detail-WEB-1")).toBeInTheDocument()
+
+    await user.click(
+      within(breadcrumb()).getByRole("button", { name: "Issues" })
+    )
+
+    expect(screen.queryByTestId("issue-detail-WEB-1")).not.toBeInTheDocument()
+    expect(screen.getByTestId("issue-WEB-1")).toBeInTheDocument()
+  })
+
+  test("the project crumb returns to the issues root from detail", async () => {
+    const user = userEvent.setup()
+    setup()
+    await screen.findByText("WEB-1")
+    await user.click(
+      screen.getByRole("button", { name: /open detail for WEB-1/i })
+    )
+
+    await user.click(within(breadcrumb()).getByRole("button", { name: "Web" }))
+
+    expect(screen.queryByTestId("issue-detail-WEB-1")).not.toBeInTheDocument()
+    expect(screen.getByTestId("issue-WEB-1")).toBeInTheDocument()
+  })
+
+  test("the identifier crumb keeps the detail it names", async () => {
+    const user = userEvent.setup()
+    setup()
+    await screen.findByText("WEB-1")
+    await user.click(
+      screen.getByRole("button", { name: /open detail for WEB-1/i })
+    )
+
+    await user.click(
+      within(breadcrumb()).getByRole("button", { name: "WEB-1" })
+    )
+
+    expect(screen.getByTestId("issue-detail-WEB-1")).toBeInTheDocument()
   })
 })
