@@ -9,6 +9,7 @@
   "scripts": {
     "dev:backend": "bun run --cwd packages/backend dev",
     "dev:frontend": "bun run --cwd packages/frontend dev",
+    "test": "bun run --cwd packages/backend test && bun run --cwd packages/frontend test",
     "lint": "biome check .",
     "lint:fix": "biome check --write ."
   },
