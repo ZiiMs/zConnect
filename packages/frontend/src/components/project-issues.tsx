@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
+import { Breadcrumb, type BreadcrumbItem } from "@/components/breadcrumb"
 import { CreateIssueForm } from "@/components/create-issue-form"
 import { IssueActions } from "@/components/issue-actions"
 import { IssueDetail } from "@/components/issue-detail"
@@ -9,6 +10,7 @@ import {
   loadIssueFilters,
   saveIssueFilters,
 } from "@/components/issue-filter-bar"
+import { IssueFilterPresetTabs } from "@/components/issue-filter-preset-tabs"
 import { IssueList } from "@/components/issue-list"
 import { IssueTable } from "@/components/issue-table"
 import { KanbanBoard } from "@/components/kanban-board"
@@ -27,6 +29,7 @@ import {
   type Status,
   type UpdateIssueInput,
 } from "@/lib/api"
+import { activeStatusIds } from "@/lib/issue-filter-presets"
 
 type IssueView = "list" | "table" | "kanban"
 
@@ -52,6 +55,12 @@ const VIEWS: { id: IssueView; label: string }[] = [
  * a stale remote write) surfaces a conflict toast instead of silently
  * forking the view. No presence or locking: concurrent writers simply see
  * the latest write win.
+ *
+ * T6 adds the filter row above the view row — Active (the open categories,
+ * the first visit's landing), Backlog, and All Issues — and the breadcrumb
+ * `{Project} › Issues[ › View | › WEB-123]`. The presets are status-id sets
+ * on the shared filter value, so they keep composing with the filter bar and
+ * its localStorage persistence.
  */
 export function ProjectIssues({
   project,
@@ -69,9 +78,19 @@ export function ProjectIssues({
   const [members, setMembers] = useState<Member[]>([])
   const [labels, setLabels] = useState<Label[]>([])
   const [issues, setIssues] = useState<Issue[]>([])
-  const [filters, setFilters] = useState<IssueFilterValue>(
-    () => loadIssueFilters(userId, project.id) ?? emptyIssueFilters()
-  )
+  const [{ initialFilters, hasStoredFilters }] = useState(() => {
+    const stored = loadIssueFilters(userId, project.id)
+    return {
+      initialFilters: stored ?? emptyIssueFilters(),
+      hasStoredFilters: stored !== null,
+    }
+  })
+  const [filters, setFilters] = useState<IssueFilterValue>(initialFilters)
+  /**
+   * False until the first visit's Active preset has been computed from the
+   * project's statuses, so that landing query is the only one issued.
+   */
+  const [presetResolved, setPresetResolved] = useState(hasStoredFilters)
   const [view, setView] = useState<IssueView>("list")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -83,37 +102,71 @@ export function ProjectIssues({
   const [composerOpen, setComposerOpen] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
+  const filtersRef = useRef(filters)
+  filtersRef.current = filters
+  /** A filter the user touched by hand outranks the first-visit preset. */
+  const userChangedFiltersRef = useRef(false)
+
+  /**
+   * The project's workflow loads once per project: a filter change only
+   * re-queries issues. On a first visit (nothing stored for this user and
+   * project) this is also what lands the screen on Active — derived from the
+   * statuses and deliberately not persisted, so a status added to the
+   * project later still joins the preset.
+   */
+  const loadWorkflow = useCallback(async () => {
+    setError(null)
+    try {
+      const [loadedStatuses, loadedMembers, loadedLabels] = await Promise.all([
+        api.listStatuses(project.id),
+        api.listMembers(project.workspaceId).catch(() => [] as Member[]),
+        api.listLabels(project.workspaceId).catch(() => [] as Label[]),
+      ])
+      const sorted = [...loadedStatuses].sort((a, b) => a.position - b.position)
+      setStatuses(sorted)
+      setMembers(loadedMembers)
+      setLabels(loadedLabels)
+      if (!hasStoredFilters && !userChangedFiltersRef.current) {
+        setFilters({
+          ...filtersRef.current,
+          statusIds: activeStatusIds(sorted),
+        })
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load")
+    } finally {
+      setPresetResolved(true)
+    }
+  }, [project.id, project.workspaceId, hasStoredFilters])
+
+  useEffect(() => {
+    void loadWorkflow()
+  }, [loadWorkflow])
+
   const refresh = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const [loadedStatuses, loadedIssues, loadedMembers, loadedLabels] =
-        await Promise.all([
-          api.listStatuses(project.id),
-          api.listIssues(project.id, {
-            statusIds: filters.statusIds,
-            priorities: filters.priorities,
-            assigneeId: filters.assigneeId,
-            labels: filters.labels,
-            text: filters.text,
-          }),
-          api.listMembers(project.workspaceId).catch(() => [] as Member[]),
-          api.listLabels(project.workspaceId).catch(() => [] as Label[]),
-        ])
-      setStatuses([...loadedStatuses].sort((a, b) => a.position - b.position))
-      setIssues(loadedIssues)
-      setMembers(loadedMembers)
-      setLabels(loadedLabels)
+      setIssues(
+        await api.listIssues(project.id, {
+          statusIds: filters.statusIds,
+          priorities: filters.priorities,
+          assigneeId: filters.assigneeId,
+          labels: filters.labels,
+          text: filters.text,
+        })
+      )
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load")
     } finally {
       setLoading(false)
     }
-  }, [project.id, project.workspaceId, filters])
+  }, [project.id, filters])
 
   useEffect(() => {
+    if (!presetResolved) return
     void refresh()
-  }, [refresh])
+  }, [presetResolved, refresh])
 
   const issuesRef = useRef(issues)
   issuesRef.current = issues
@@ -134,6 +187,7 @@ export function ProjectIssues({
   })
 
   function handleFilters(next: IssueFilterValue) {
+    userChangedFiltersRef.current = true
     setFilters(next)
     saveIssueFilters(userId, project.id, next)
   }
@@ -208,6 +262,39 @@ export function ProjectIssues({
   }
 
   const selectedIssue = issues.find((item) => item.id === selectedId) ?? null
+  const viewLabel = VIEWS.find((option) => option.id === view)?.label ?? "List"
+
+  /**
+   * Both the project crumb and the Issues crumb land on the project's issues
+   * screen — the shell hosts the project page and its issues screen at the
+   * same level — so they share the destination: close whatever the user
+   * drilled into and keep the chosen View.
+   */
+  function showIssuesRoot() {
+    setSelectedId(null)
+  }
+
+  const breadcrumbItems: BreadcrumbItem[] =
+    selectedIssue === null
+      ? [
+          { label: project.name, onClick: showIssuesRoot },
+          { label: "Issues", onClick: showIssuesRoot },
+          {
+            label: viewLabel,
+            onClick: () => setView(view),
+            current: true,
+          },
+        ]
+      : [
+          { label: project.name, onClick: showIssuesRoot },
+          { label: "Issues", onClick: showIssuesRoot },
+          {
+            label: selectedIssue.identifier,
+            onClick: () => setSelectedId(selectedIssue.id),
+            mono: true,
+            current: true,
+          },
+        ]
 
   useEffect(() => {
     if (!selectedIssue || subtasks[selectedIssue.id] !== undefined) return
@@ -234,7 +321,16 @@ export function ProjectIssues({
 
   return (
     <div className="flex flex-col gap-4">
-      <h3 className="font-medium text-sm">Issues</h3>
+      <Breadcrumb items={breadcrumbItems} />
+      {/* Hidden until the first-visit preset is resolved: before the statuses
+          arrive no preset describes the query, and "All Issues" would blink. */}
+      {presetResolved && (
+        <IssueFilterPresetTabs
+          statuses={statuses}
+          value={filters.statusIds}
+          onChange={(statusIds) => handleFilters({ ...filters, statusIds })}
+        />
+      )}
       <IssueFilterBar
         statuses={statuses}
         members={members}
