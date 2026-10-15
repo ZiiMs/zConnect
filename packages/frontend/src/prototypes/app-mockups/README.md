@@ -16,81 +16,100 @@ bun run --cwd packages/frontend dev
 
 Open **http://localhost:5173/prototype.html** (the real app stays at `/`).
 
-## Three axes
+## Axes
 
 | Axis | Keys | How to switch |
 | --- | --- | --- |
-| Layout | `A` `B` `C` `D` | ← / → arrows, or the switcher label |
-| Screen | `issues` `board` `issue` `settings` `signin` | chips in the switcher, or the in-app nav |
-| Theme | `neutral` `slate` `violet` `sand` `mono` × light/dark | swatches and mode buttons in the switcher |
+| Screen | `issues` `board` `issue` `settings` `signin` | chips in the switcher bar, or the in-app nav |
+| Nav | `1`–`8` | Tune panel → Nav |
+| Issues | `1`–`8` | ← / → on the Issues screen, or Tune panel |
+| Board | `1`–`8` | ← / → on the Board screen, or Tune panel |
+| Detail | `1`–`8` | ← / → on the Detail screen, or Tune panel |
+| Settings | `1`–`8` | ← / → on the Settings screen, or Tune panel |
+| Sign in | `1`–`8` | ← / → on the Sign in screen, or Tune panel |
+| Style | 8 structural styles | Tune panel → Style |
+| Color | 8 palettes | Tune panel → Color |
+| Mode | `light` `dark` | Tune panel → Color row |
 
 Everything is in the query string, so any combination is shareable and reload-stable:
 
 ```
-/prototype.html?layout=C&screen=issue&theme=mono&mode=dark
+/prototype.html?screen=issues&nav=1&issues=3&style=mono&color=rose&mode=dark
 ```
 
-On the **Sign in** screen the arrows walk `S1`–`S5` instead of the layouts: a signed-out screen
-has no rail, board or detail pane for a layout to own, so it carries five variants of its own.
+First-round URLs (`?layout=C&theme=mono&signin=S3`) still resolve: `layout` maps onto the
+per-surface pickers, `theme` onto style+color, `S3` onto `signin=3`.
 
-### Layouts
+### Surfaces (8 variants each, names in `prototype-config.ts`)
 
-- **A — Rail + dense list.** Linear-ish master–detail. Rail owns nav, the main column owns the
-  query, detail slides in as a third column. Single-line 28px rows.
-- **B — Top bar + board first.** No rail; horizontal nav and the board *as* the home screen.
-  Roomy cards, two-line list rows, full-bleed content.
-- **C — Three panes.** Project rail, wide data table, detail pane that never closes, plus a
-  status bar. Spreadsheet energy; nothing hides behind a click.
-- **D — Dashboard first.** Icon rail, stat tiles, needs-attention, team load, activity timeline.
-  Settings becomes a setting-rows list instead of a tabbed form grid.
+- **Nav** — Wide rail, Top bar, Project rail, Icon rail, Double rail, Collapsible, Command
+  bar, People-first rail. Keys `2` and `7` are top bars (root stacks vertically); the rest
+  are left columns.
+- **Issues** — Dense grouped, Roomy cards, Table, Compact rows (working filter), Swimlanes,
+  Priority stacks, Timeline, Master–detail (working selection).
+- **Board** — Compact, Roomy, Swimlanes by priority, WIP-count header, Minimal, Rich cards,
+  Horizontal swimlanes, Grouped by assignee.
+- **Detail** — Side pane, Full page, Hero header, Two column, Timeline first, Properties
+  rail, Minimal, Split checklist. Each has an issue picker (except Minimal).
+- **Settings** — Tabbed form, Top tabs, Master–detail, Setting rows, Cards grid, Sections,
+  Dense table, Wizard.
+- **Sign in** — Split panel, Centred card, Card over preview, Single column, Prompt, Side
+  sheet, Stacked steps, Branded gradient.
 
-### Themes
+### Theme: style × color × mode (8 × 8 × 2, fully independent)
 
-`neutral` is the app as it ships today (the baseline). The other four move more than colour —
-`mono` swaps the base font to monospace, `sand` uses serif headings, `violet` softens radii,
-`slate` tightens them. Tokens live in `themes.css`, scoped to `html[data-proto-theme=…]`, so the
-real `index.css` is untouched.
+**Styles** (radius/type/grid only, never color): `neutral`, `slate`, `violet`, `sand`
+(serif + square grid), `mono` (monospace everything), `rounded` (extra-soft), `compact`
+(dense), `minimal` (quiet). **Colors** (every color token): `neutral` (zinc), `blue`,
+`violet`, `clay` (warm), `forest` (green), `ocean` (teal), `rose` (pink), `terminal`
+(green phosphor). Any style works with any color in either mode — e.g. Terminal style +
+Rose color is monospace rose. Tokens live in `themes.css`: `data-proto-style` owns
+`--radius`/fonts/grid, `data-proto-color`+`data-proto-mode` owns the palette.
 
 ## Files
 
 ```
 prototype.html                     second Vite entry (never built for production)
-src/prototype-main.tsx             boots the theme, mounts PrototypeRoot
+src/prototype-main.tsx             boots style/color/mode, mounts PrototypeRoot
 src/prototypes/app-mockups/
-  prototype-config.ts              the three axes and their labels
-  use-proto-params.ts              URL as the state store
-  prototype-root.tsx               axis → component
-  prototype-switcher.tsx           floating dev-only switcher bar
-  themes.css                       5 themes × light/dark
+  prototype-config.ts              axes + the 8-names-per-surface
+  use-proto-params.ts              URL as the state store (+ legacy mapping)
+  prototype-root.tsx               nav + content composition
+  prototype-switcher.tsx           pill bar + Tune panel (dev-only)
+  themes.css                       8 styles + 8 colors × light/dark
   atoms.tsx                        inline-SVG glyphs + domain marks only
   stub-data.ts                     fixtures in `@/lib/api` shapes
-  variants/layout-{a,b,c,d}-*.tsx  the four shells
-  variants/signin-variants.tsx     S1–S5
+  variants/navs.tsx                Nav1–Nav8
+  variants/issues-panels.tsx       Issues1–Issues8
+  variants/boards.tsx              Board1–Board8
+  variants/details.tsx             Detail1–Detail8
+  variants/settings-panels.tsx     Settings1–Settings8
+  variants/signins.tsx             Signin1–Signin8
 ```
 
 Shared on purpose: the glyphs and the small domain marks (priority, label, status, assignee,
-due chip). Everything structural is owned by each variant, so the layouts are free to disagree
-about hierarchy rather than converge on one grid.
+due chip). Everything structural is owned by each variant, so variants are free to disagree
+about hierarchy rather than converge on one grid. (First-round monoliths A–D live in this
+branch's history before the composable rewrite.)
 
-One side effect while this branch lives: Tailwind scans all of `src`, so the utilities used only
-by the prototypes (`line-clamp-2`, the arbitrary grids, …) also land in the app's production CSS
-build. Harmless, and it disappears with the branch.
+One side effect while this branch lives: Tailwind scans all of `src`, so utilities used only
+by the prototypes also land in the app's production CSS build. Harmless, and it disappears
+with the branch.
 
 ## When a variant wins
 
-1. Capture the answer where the next reader will look for it — which layout, which theme, and
-   what tipped it — on the implementation issue.
+1. Capture the answer where the next reader will look for it — which nav + surface variants,
+   which style, which color, and what tipped it — on the implementation issue.
 2. Fold the winner into the real code: rewrite it against real data (`useProjects`,
-   `api.listIssues`), the real `Button`, real mutations. Nothing here was written to production
-   standards.
-3. Delete the losers, the switcher, `prototype.html` and `src/prototype-main.tsx` from `main`.
-   Keep the full set of variants on this branch as the primary source for what was considered.
+   `api.listIssues`), the real `Button`, real mutations. Nothing here was written to
+   production standards.
+3. Delete the losers, the switcher, `prototype.html` and `src/prototype-main.tsx` from
+   `main`. Keep the full set of variants on this branch as the primary source.
 
 ## Not decided yet
 
-- Whether the layout axis and the theme axis are independent choices (assumed yes here) or a
-  single pick like "Linear-style dark".
-- Whether the board deserves to be the home screen (B) or a view you switch to (A, C, D).
-- Whether the detail should be a pane (A, C) or a page (B, D).
-- The switcher bar covers the bottom ~40px of every variant, which is exactly where C puts its
-  status bar. Judge C with that in mind.
+- Whether nav and content are picked independently (assumed yes here) or curated as pairs.
+- Whether the board deserves to be the home screen or a view you switch to.
+- Whether the detail should be a pane or a page (now both exist as Detail1 vs Detail2–4).
+- The switcher bar covers the bottom ~40px of every variant. Judge bottom-anchored content
+  with that in mind.

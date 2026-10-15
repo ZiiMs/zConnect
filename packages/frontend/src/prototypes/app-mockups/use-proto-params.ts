@@ -1,39 +1,74 @@
 /**
  * PROTOTYPE (throwaway) — URL as the state store.
  *
- * There is no router in this app, so the mockups read their axes straight from
- * the query string and write back with `history.replaceState`. Every variant
- * is therefore reload-stable and shareable: send someone
- * `?layout=C&screen=issue&theme=mono&mode=dark`.
+ * No router in this app, so the mockups read their axes straight from the
+ * query string and write back with `history.replaceState`. Every combination
+ * is reload-stable and shareable, e.g.
+ * `?screen=issues&nav=1&issues=3&style=mono&color=forest&mode=dark`.
+ *
+ * Legacy URLs from the first round (`?layout=A&theme=mono&signin=S1`) still
+ * resolve: `layout` maps onto the per-surface pickers, `theme` onto both
+ * style and color, `signin=S3` onto `signin=3`.
  */
 import { useCallback, useEffect, useRef, useState } from "react"
 import {
-  DEFAULT_LAYOUT,
+  DEFAULT_BOARD,
+  DEFAULT_COLOR,
+  DEFAULT_DETAIL,
+  DEFAULT_ISSUES,
   DEFAULT_MODE,
+  DEFAULT_NAV,
   DEFAULT_SCREEN,
+  DEFAULT_SETTINGS,
   DEFAULT_SIGNIN,
-  DEFAULT_THEME,
-  LAYOUTS,
-  type LayoutKey,
+  DEFAULT_STYLE,
   MODES,
   type ModeKey,
   SCREENS,
   type ScreenKey,
-  SIGNIN_VARIANTS,
-  type SigninKey,
-  THEMES,
-  type ThemeKey,
+  THEME_COLORS,
+  THEME_STYLES,
+  type ThemeColorKey,
+  type ThemeStyleKey,
+  type VariantKey,
 } from "./prototype-config"
 
 export interface ProtoState {
-  layout: LayoutKey
   screen: ScreenKey
-  theme: ThemeKey
+  nav: VariantKey
+  issues: VariantKey
+  board: VariantKey
+  detail: VariantKey
+  settings: VariantKey
+  signin: VariantKey
+  style: ThemeStyleKey
+  color: ThemeColorKey
   mode: ModeKey
-  signin: SigninKey
 }
 
-const KEYS = ["layout", "screen", "theme", "mode", "signin"] as const
+const KEYS = [
+  "screen",
+  "nav",
+  "issues",
+  "board",
+  "detail",
+  "settings",
+  "signin",
+  "style",
+  "color",
+  "mode",
+] as const
+
+const VARIANT_KEYS: readonly VariantKey[] = [
+  "1",
+  "2",
+  "3",
+  "4",
+  "5",
+  "6",
+  "7",
+  "8",
+]
 
 function pick<T extends string>(
   values: readonly T[],
@@ -46,19 +81,68 @@ function pick<T extends string>(
   return fallback
 }
 
-const layoutKeys = LAYOUTS.map((item) => item.key)
 const screenKeys = SCREENS.map((item) => item.key)
-const themeKeys = THEMES.map((item) => item.key)
-const signinKeys = SIGNIN_VARIANTS.map((item) => item.key)
+const styleKeys = THEME_STYLES.map((item) => item.key)
+const colorKeys = THEME_COLORS.map((item) => item.key)
+
+const LEGACY_LAYOUT: Record<string, Partial<ProtoState>> = {
+  A: { nav: "1", issues: "1", board: "1", detail: "1", settings: "1" },
+  B: { nav: "2", issues: "2", board: "2", detail: "2", settings: "2" },
+  C: { nav: "3", issues: "3", board: "3", detail: "3", settings: "3" },
+  D: { nav: "4", issues: "4", board: "4", detail: "4", settings: "4" },
+}
+
+const LEGACY_THEME: Record<string, Partial<ProtoState>> = {
+  neutral: { style: "neutral", color: "neutral" },
+  slate: { style: "slate", color: "blue" },
+  violet: { style: "violet", color: "violet" },
+  sand: { style: "sand", color: "clay" },
+  mono: { style: "mono", color: "terminal" },
+}
 
 export function readProtoState(): ProtoState {
   const params = new URLSearchParams(window.location.search)
+  const legacyLayout = params.get("layout")
+  const legacyTheme = params.get("theme")
+  const legacySignin = params.get("signin")
+  const legacy: Partial<ProtoState> = {
+    ...(legacyLayout !== null ? (LEGACY_LAYOUT[legacyLayout] ?? {}) : {}),
+    ...(legacyTheme !== null ? (LEGACY_THEME[legacyTheme] ?? {}) : {}),
+  }
+  if (legacySignin !== null && /^S[1-8]$/.test(legacySignin)) {
+    legacy.signin = legacySignin.slice(1) as VariantKey
+  }
   return {
-    layout: pick(layoutKeys, params.get("layout"), DEFAULT_LAYOUT),
     screen: pick(screenKeys, params.get("screen"), DEFAULT_SCREEN),
-    theme: pick(themeKeys, params.get("theme"), DEFAULT_THEME),
+    nav: pick(VARIANT_KEYS, params.get("nav"), legacy.nav ?? DEFAULT_NAV),
+    issues: pick(
+      VARIANT_KEYS,
+      params.get("issues"),
+      legacy.issues ?? DEFAULT_ISSUES
+    ),
+    board: pick(
+      VARIANT_KEYS,
+      params.get("board"),
+      legacy.board ?? DEFAULT_BOARD
+    ),
+    detail: pick(
+      VARIANT_KEYS,
+      params.get("detail"),
+      legacy.detail ?? DEFAULT_DETAIL
+    ),
+    settings: pick(
+      VARIANT_KEYS,
+      params.get("settings"),
+      legacy.settings ?? DEFAULT_SETTINGS
+    ),
+    signin: pick(
+      VARIANT_KEYS,
+      params.get("signin"),
+      legacy.signin ?? DEFAULT_SIGNIN
+    ),
+    style: pick(styleKeys, params.get("style"), legacy.style ?? DEFAULT_STYLE),
+    color: pick(colorKeys, params.get("color"), legacy.color ?? DEFAULT_COLOR),
     mode: pick(MODES, params.get("mode"), DEFAULT_MODE),
-    signin: pick(signinKeys, params.get("signin"), DEFAULT_SIGNIN),
   }
 }
 
@@ -70,7 +154,7 @@ function toQuery(state: ProtoState): string {
   return params.toString()
 }
 
-/** A link that switches one axis while keeping the rest. */
+/** A link that switches axes while keeping the rest. */
 export function protoHref(patch: Partial<ProtoState>): string {
   return `?${toQuery({ ...readProtoState(), ...patch })}`
 }
@@ -85,18 +169,26 @@ export function cycleKey<T extends string>(
   return values[next] as T
 }
 
-const layoutByIndex = layoutKeys
-const signinByIndex = signinKeys
+/**
+ * The variant axis the ← / → arrows walk: whatever surface the current
+ * screen shows (issues/board/detail/settings/signin).
+ */
+export function activeVariantKey(state: ProtoState): keyof ProtoState {
+  if (state.screen === "issues") return "issues"
+  if (state.screen === "board") return "board"
+  if (state.screen === "issue") return "detail"
+  if (state.screen === "settings") return "settings"
+  return "signin"
+}
 
-/** The primary axis the ← / → arrows walk: layout, or sign-in on that screen. */
 export function stepVariant(
   state: ProtoState,
   delta: number
 ): Partial<ProtoState> {
-  if (state.screen === "signin") {
-    return { signin: cycleKey(signinByIndex, state.signin, delta) }
-  }
-  return { layout: cycleKey(layoutByIndex, state.layout, delta) }
+  const axis = activeVariantKey(state)
+  return {
+    [axis]: cycleKey(VARIANT_KEYS, state[axis] as VariantKey, delta),
+  } as Partial<ProtoState>
 }
 
 export function useProtoState(): [

@@ -17,7 +17,8 @@ import { readProtoState } from "./prototypes/app-mockups/use-proto-params"
 // Apply the theme before the first paint so there is no unstyled flash.
 const state = readProtoState()
 const root = document.documentElement
-root.dataset.protoTheme = state.theme
+root.dataset.protoStyle = state.style
+root.dataset.protoColor = state.color
 root.dataset.protoMode = state.mode
 root.classList.toggle("dark", state.mode === "dark")
 root.style.colorScheme = state.mode

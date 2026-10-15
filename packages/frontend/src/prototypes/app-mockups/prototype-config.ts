@@ -1,42 +1,16 @@
 /**
- * PROTOTYPE (throwaway) — the three axes the mockups are reviewed on.
+ * PROTOTYPE (throwaway) — the axes the mockups are reviewed on.
  *
- *   layout  A–D   four structurally different shells for the signed-in app
- *   screen        which surface inside that shell (four in-app + sign-in)
- *   theme   ×2    five token sets, each light and dark
+ *   screen                  which surface (issues, board, detail, settings, signin)
+ *   nav/issues/board/detail/settings/signin   per-surface variant, 8 each (1-8)
+ *   style                   structural theme style, 8 keys (radius/type/grid only)
+ *   color                   palette, 8 keys (all color tokens)
+ *   mode                    light / dark
  *
- * Sign-in has its own five variants (`SIGNIN_VARIANTS`), because a
- * signed-out screen has no rail, board or detail pane for a layout to own.
+ * Style and color are fully independent: any style composes with any color in
+ * either mode (8 × 8 × 2 = 128 combos). Style owns radius, type and grid;
+ * color owns every color token. See `themes.css`.
  */
-
-export const LAYOUTS = [
-  {
-    key: "A",
-    name: "Rail + dense list",
-    blurb:
-      "Narrow left rail, master–detail list, detail slides in on the right. Highest information density, closest to the app today.",
-  },
-  {
-    key: "B",
-    name: "Top bar + board first",
-    blurb:
-      "Horizontal nav, no rail, the board is the home screen. Wide columns, full-bleed content, generous hit areas.",
-  },
-  {
-    key: "C",
-    name: "Three panes",
-    blurb:
-      "Project rail, a wide data table, and a detail pane that is always open. Spreadsheet energy; nothing is hidden behind a click.",
-  },
-  {
-    key: "D",
-    name: "Dashboard first",
-    blurb:
-      "Icon rail, stat tiles, 'needs attention' and an activity timeline. Answers what is on fire before showing the list.",
-  },
-] as const
-
-export type LayoutKey = (typeof LAYOUTS)[number]["key"]
 
 export const SCREENS = [
   { key: "issues", name: "Issues" },
@@ -48,44 +22,128 @@ export const SCREENS = [
 
 export type ScreenKey = (typeof SCREENS)[number]["key"]
 
-export const THEMES = [
-  { key: "neutral", name: "Neutral", note: "the app as it ships today" },
-  { key: "slate", name: "Slate Blue", note: "cool SaaS blue, tighter radii" },
-  { key: "violet", name: "Violet", note: "deep indigo, soft radii" },
-  { key: "sand", name: "Paper & Clay", note: "warm, serif headings" },
-  { key: "mono", name: "Terminal", note: "monospace, square, green" },
+/** Per-surface variant keys: "1".."8" for every pickable surface. */
+const VARIANT_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8"] as const
+
+export type VariantKey = (typeof VARIANT_KEYS)[number]
+
+export const VARIANTS: readonly {
+  key: VariantKey
+  name: string
+}[] = [
+  { key: "1", name: "1" },
+  { key: "2", name: "2" },
+  { key: "3", name: "3" },
+  { key: "4", name: "4" },
+  { key: "5", name: "5" },
+  { key: "6", name: "6" },
+  { key: "7", name: "7" },
+  { key: "8", name: "8" },
+]
+
+export const NAV_VARIANTS: readonly { key: VariantKey; name: string }[] = [
+  { key: "1", name: "Wide rail" },
+  { key: "2", name: "Top bar" },
+  { key: "3", name: "Project rail" },
+  { key: "4", name: "Icon rail" },
+  { key: "5", name: "Double rail" },
+  { key: "6", name: "Collapsible" },
+  { key: "7", name: "Command bar" },
+  { key: "8", name: "Bottom tabs" },
+]
+
+export const ISSUES_VARIANTS: readonly { key: VariantKey; name: string }[] = [
+  { key: "1", name: "Dense grouped" },
+  { key: "2", name: "Roomy cards" },
+  { key: "3", name: "Table" },
+  { key: "4", name: "Compact rows" },
+  { key: "5", name: "Kanban-ish swimlanes" },
+  { key: "6", name: "Priority stacks" },
+  { key: "7", name: "Timeline" },
+  { key: "8", name: "Master–detail" },
+]
+
+export const BOARD_VARIANTS: readonly { key: VariantKey; name: string }[] = [
+  { key: "1", name: "Compact" },
+  { key: "2", name: "Roomy" },
+  { key: "3", name: "Swimlanes by priority" },
+  { key: "4", name: "WIP-count header" },
+  { key: "5", name: "Minimal cards" },
+  { key: "6", name: "Rich cards" },
+  { key: "7", name: "Horizontal swimlanes" },
+  { key: "8", name: "Grouped by assignee" },
+]
+
+export const DETAIL_VARIANTS: readonly { key: VariantKey; name: string }[] = [
+  { key: "1", name: "Side pane" },
+  { key: "2", name: "Full page" },
+  { key: "3", name: "Hero header" },
+  { key: "4", name: "Two column" },
+  { key: "5", name: "Timeline first" },
+  { key: "6", name: "Properties rail" },
+  { key: "7", name: "Minimal" },
+  { key: "8", name: "Split checklist" },
+]
+
+export const SETTINGS_VARIANTS: readonly { key: VariantKey; name: string }[] = [
+  { key: "1", name: "Tabbed form" },
+  { key: "2", name: "Top tabs" },
+  { key: "3", name: "Master–detail" },
+  { key: "4", name: "Setting rows" },
+  { key: "5", name: "Cards grid" },
+  { key: "6", name: "Sidebar sections" },
+  { key: "7", name: "Dense table" },
+  { key: "8", name: "Wizard" },
+]
+
+export const SIGNIN_VARIANTS: readonly { key: VariantKey; name: string }[] = [
+  { key: "1", name: "Split panel" },
+  { key: "2", name: "Centred card" },
+  { key: "3", name: "Card over preview" },
+  { key: "4", name: "Single column" },
+  { key: "5", name: "Prompt" },
+  { key: "6", name: "Side sheet" },
+  { key: "7", name: "Stacked steps" },
+  { key: "8", name: "Branded gradient" },
+]
+
+export const THEME_STYLES = [
+  { key: "neutral", name: "Neutral", note: "base radius, Inter, no grid" },
+  { key: "slate", name: "Slate", note: "tight radii, dotted grid" },
+  { key: "violet", name: "Violet", note: "soft radii, tight tracking" },
+  { key: "sand", name: "Paper", note: "serif headings, square grid" },
+  { key: "mono", name: "Terminal", note: "monospace, square, line grid" },
+  { key: "rounded", name: "Rounded", note: "extra-soft radii, airy" },
+  { key: "compact", name: "Compact", note: "small radii, dense" },
+  { key: "minimal", name: "Minimal", note: "quiet, thin, almost borderless" },
 ] as const
 
-export type ThemeKey = (typeof THEMES)[number]["key"]
+export type ThemeStyleKey = (typeof THEME_STYLES)[number]["key"]
+
+export const THEME_COLORS = [
+  { key: "neutral", name: "Neutral", note: "zinc" },
+  { key: "blue", name: "Blue", note: "cool SaaS blue" },
+  { key: "violet", name: "Violet", note: "deep indigo" },
+  { key: "clay", name: "Clay", note: "warm paper" },
+  { key: "forest", name: "Forest", note: "green" },
+  { key: "ocean", name: "Ocean", note: "teal cyan" },
+  { key: "rose", name: "Rose", note: "pink red" },
+  { key: "terminal", name: "Terminal", note: "green phosphor" },
+] as const
+
+export type ThemeColorKey = (typeof THEME_COLORS)[number]["key"]
 
 export const MODES = ["light", "dark"] as const
 
 export type ModeKey = (typeof MODES)[number]
 
-export const SIGNIN_VARIANTS = [
-  { key: "S1", name: "Split panel", blurb: "Copy left, form right." },
-  {
-    key: "S2",
-    name: "Centred card",
-    blurb: "One centred card, quiet background.",
-  },
-  {
-    key: "S3",
-    name: "Card over preview",
-    blurb: "Form floats over a faded app screenshot.",
-  },
-  {
-    key: "S4",
-    name: "Single column",
-    blurb: "Borderless, inline labels, no card at all.",
-  },
-  { key: "S5", name: "Prompt", blurb: "Terminal-style provider buttons." },
-] as const
-
-export type SigninKey = (typeof SIGNIN_VARIANTS)[number]["key"]
-
-export const DEFAULT_LAYOUT: LayoutKey = "A"
 export const DEFAULT_SCREEN: ScreenKey = "issues"
-export const DEFAULT_THEME: ThemeKey = "neutral"
+export const DEFAULT_NAV: VariantKey = "1"
+export const DEFAULT_ISSUES: VariantKey = "1"
+export const DEFAULT_BOARD: VariantKey = "2"
+export const DEFAULT_DETAIL: VariantKey = "1"
+export const DEFAULT_SETTINGS: VariantKey = "1"
+export const DEFAULT_SIGNIN: VariantKey = "1"
+export const DEFAULT_STYLE: ThemeStyleKey = "neutral"
+export const DEFAULT_COLOR: ThemeColorKey = "neutral"
 export const DEFAULT_MODE: ModeKey = "light"
-export const DEFAULT_SIGNIN: SigninKey = "S1"
