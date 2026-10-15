@@ -4,11 +4,11 @@ The skills speak in terms of five canonical triage roles. This file maps those r
 
 | Label in mattpocock/skills | Label in our tracker | GitCafe label ID | Meaning                                  |
 | -------------------------- | -------------------- | ---------------- | ---------------------------------------- |
-| `needs-triage`             | `needs-triage`       | _not yet recorded_ | Maintainer needs to evaluate this issue  |
-| `needs-info`               | `needs-info`         | _not yet recorded_ | Waiting on reporter for more information |
-| `ready-for-agent`          | `ready-for-agent`    | _not yet recorded_ | Fully specified, ready for an AFK agent  |
-| `ready-for-human`          | `ready-for-human`    | _not yet recorded_ | Requires human implementation            |
-| `wontfix`                  | `wontfix`            | _not yet recorded_ | Will not be actioned                     |
+| `needs-triage`             | `needs-triage`       | `label_01m4z8aqq1eaha1f3ce4ceqwdt` | Maintainer needs to evaluate this issue  |
+| `needs-info`               | `needs-info`         | `label_01m4z8bc2jf4cbpzqd1py3jrj4` | Waiting on reporter for more information |
+| `ready-for-agent`          | `ready-for-agent`    | `label_01m4z8bke0fjc9pqxacd7re4py` | Fully specified, ready for an AFK agent  |
+| `ready-for-human`          | `ready-for-human`    | `label_01m4z8bs24ejcreh853rza75pd` | Requires human implementation            |
+| `wontfix`                  | `wontfix`            | `label_01m4z8c8gdfk3r43ceqy39q0wm` | Will not be actioned                     |
 
 When a skill mentions a role (e.g. "apply the AFK-ready triage label"), use the corresponding label from this table.
 

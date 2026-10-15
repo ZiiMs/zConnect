@@ -1,6 +1,6 @@
 # T5 — Frontend: rail IA (dropdown, accordion projects, dead Home)
 
-Implements ADR-0001 (rail slice).
+GitCafe: #16 (`ready-for-agent`). Implements ADR-0001 (rail slice).
 
 ## Background
 

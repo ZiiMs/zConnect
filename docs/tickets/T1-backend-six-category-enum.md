@@ -1,6 +1,6 @@
 # T1 — Backend: six-category enum + migration
 
-Implements ADR-0001 (domain slice 1).
+GitCafe: #12 (`ready-for-agent`). Implements ADR-0001 (domain slice 1).
 
 ## Background
 

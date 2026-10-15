@@ -1,6 +1,6 @@
 # T4 — Frontend: six-category domain (schema, grouping, progress)
 
-Implements ADR-0001 (frontend domain slice).
+GitCafe: #15 (`ready-for-agent`). Implements ADR-0001 (frontend domain slice).
 
 ## Background
 

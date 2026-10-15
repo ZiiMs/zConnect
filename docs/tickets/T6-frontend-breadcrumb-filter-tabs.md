@@ -1,6 +1,6 @@
 # T6 — Frontend: breadcrumb + Active/Backlog/All tabs
 
-Implements ADR-0001 (issues-screen slice).
+GitCafe: #17 (`ready-for-agent`). Implements ADR-0001 (issues-screen slice).
 
 ## Background
 
