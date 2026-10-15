@@ -33,7 +33,7 @@ A named step in a project's workflow (e.g. In Review), ordered for Kanban displa
 _Avoid_: State, Column
 
 **Status Category**:
-The fixed bucket a status rolls up to: Todo, In Progress, or Done.
+The fixed bucket a status rolls up to: Backlog, Unstarted, In Progress, Completed, Canceled, or Duplicate. Completed, Canceled, and Duplicate are terminal: they count as done everywhere (grouping, progress, guardrails).
 _Avoid_: Group, Phase
 
 **Project Key**:
