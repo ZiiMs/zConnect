@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test"
 import { createWorkspacesApp } from "./routes.js"
 import type { Session } from "./session.js"
 import { createMemoryWorkspaceStore } from "./store.js"
+import { clearSeededTracker } from "./test-support.js"
 
 const owner = { id: "user-owner", email: "owner@example.com" }
 const member = { id: "user-member", email: "member@example.com" }
@@ -104,6 +105,8 @@ describe("issue label links", () => {
         }
       )
       const id = ((await project.json()) as { id: string }).id
+      // T2: every new project arrives seeded; this describe wants clean ones.
+      await clearSeededTracker(fresh.store, id)
       const created = await app.request(`/api/projects/${id}/statuses`, {
         method: "POST",
         headers: { "content-type": "application/json", ...auth(owner.id) },
@@ -157,8 +160,8 @@ describe("issue label links", () => {
       labels: ["bug"],
     })
     expect(await labelNames(workspaceId)).toHaveLength(1)
-    expect(await issueLabels("WEB-1")).toEqual(["bug"])
-    expect(await issueLabels("API-1")).toEqual(["bug"])
+    expect(await issueLabels("WEB-7")).toEqual(["bug"])
+    expect(await issueLabels("API-7")).toEqual(["bug"])
   })
 
   test("updating labels replaces the set; AND filter keeps working", async () => {
@@ -188,7 +191,7 @@ describe("issue label links", () => {
         (i) => i.identifier
       )
     }
-    expect(await listIds("?label=feature&label=auth")).toEqual(["WEB-1"])
+    expect(await listIds("?label=feature&label=auth")).toEqual(["WEB-7"])
     expect(await listIds("?label=feature&label=bug")).toEqual([])
   })
 
@@ -216,7 +219,7 @@ describe("issue label links", () => {
     )
     expect(
       ((await res.json()) as { identifier: string }[]).map((i) => i.identifier)
-    ).toEqual(["WEB-1"])
+    ).toEqual(["WEB-7"])
   })
 
   test("deleting a label scrubs it from linked issues", async () => {

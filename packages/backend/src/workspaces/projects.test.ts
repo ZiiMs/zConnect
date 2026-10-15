@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test"
 import { createWorkspacesApp } from "./routes.js"
 import type { Session } from "./session.js"
 import { createMemoryWorkspaceStore } from "./store.js"
+import { clearSeededTracker } from "./test-support.js"
 
 const owner = { id: "user-owner", email: "owner@example.com" }
 const member = { id: "user-member", email: "member@example.com" }
@@ -59,18 +60,18 @@ describe("project sequence and status reads", () => {
     return (await res.json()) as { id: string }
   }
 
-  test("creating a project starts its per-project issue sequence at 1", async () => {
+  test("creating a project leaves its sequence after the six seed issues", async () => {
     const { id } = await createProject()
-    expect(await store.getNextIssueNumber(id)).toBe(1)
+    expect(await store.getNextIssueNumber(id)).toBe(7)
   })
 
-  test("a new project has no statuses", async () => {
+  test("a new project opens with the seeded workflow, not an empty one", async () => {
     const { id } = await createProject()
     const res = await app.request(`/api/projects/${id}/statuses`, {
       headers: auth(owner.id),
     })
     expect(res.status).toBe(200)
-    expect(await res.json()).toEqual([])
+    expect(await res.json()).toHaveLength(7)
   })
 
   test("getting a project returns it; unknown id returns 404", async () => {
@@ -96,6 +97,183 @@ describe("project sequence and status reads", () => {
     expect(denied.status).toBe(403)
     const anonymous = await app.request(`/api/projects/${id}`)
     expect(anonymous.status).toBe(401)
+  })
+})
+
+/** ADR-0001 default roster, in insertion (position) order. */
+const SEEDED_ROSTER = [
+  ["Backlog", "Backlog", 0],
+  ["Todo", "Unstarted", 1],
+  ["In Progress", "In Progress", 2],
+  ["In Review", "In Progress", 3],
+  ["Done", "Completed", 4],
+  ["Canceled", "Canceled", 5],
+  ["Duplicate", "Duplicate", 6],
+] as const
+
+/** ADR-0001 tutorial issues: identifier, title, status name. */
+const SEEDED_ISSUES = [
+  ["WEB-1", "Tour the List, Table, and Kanban views", "Todo"],
+  ["WEB-2", "Invite your teammates to this workspace", "Backlog"],
+  ["WEB-3", "Define statuses that match your workflow", "Backlog"],
+  ["WEB-4", "Break a large issue into subtasks", "Todo"],
+  ["WEB-5", "Link a pull request by its issue identifier", "In Progress"],
+  ["WEB-6", "Archive work you no longer need", "In Progress"],
+] as const
+
+describe("project seeding waterfall", () => {
+  let app: ReturnType<typeof setup>["app"]
+  let workspaceId: string
+
+  function createProject() {
+    return app.request(`/api/workspaces/${workspaceId}/projects`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...auth(owner.id) },
+      body: JSON.stringify({ name: "Web", key: "WEB" }),
+    })
+  }
+
+  async function listStatuses(projectId: string) {
+    const res = await app.request(`/api/projects/${projectId}/statuses`, {
+      headers: auth(owner.id),
+    })
+    expect(res.status).toBe(200)
+    return (await res.json()) as {
+      id: string
+      name: string
+      category: string
+      position: number
+    }[]
+  }
+
+  async function listIssues(projectId: string, query = "") {
+    const res = await app.request(`/api/projects/${projectId}/issues${query}`, {
+      headers: auth(owner.id),
+    })
+    expect(res.status).toBe(200)
+    return (await res.json()) as {
+      identifier: string
+      title: string
+      description: string | null
+      statusId: string
+      priority: string
+      assigneeId: string | null
+      dueDate: string | null
+      archived: boolean
+      labels: string[]
+      parentId: string | null
+    }[]
+  }
+
+  beforeEach(async () => {
+    app = setup().app
+    const workspace = await app.request("/api/workspaces", {
+      method: "POST",
+      headers: { "content-type": "application/json", ...auth(owner.id) },
+      body: JSON.stringify({ name: "Acme" }),
+    })
+    workspaceId = ((await workspace.json()) as { id: string }).id
+  })
+
+  test("POST project seeds the seven default statuses in roster order", async () => {
+    const project = await createProject()
+    expect(project.status).toBe(201)
+    const { id } = (await project.json()) as { id: string }
+
+    const statuses = await listStatuses(id)
+    expect(statuses.map((s) => [s.name, s.category, s.position])).toEqual(
+      SEEDED_ROSTER.map((entry) => [...entry])
+    )
+  })
+
+  test("POST project seeds the six tutorial issues verbatim", async () => {
+    const project = await createProject()
+    const { id } = (await project.json()) as { id: string }
+    const statuses = await listStatuses(id)
+    const statusName = new Map(statuses.map((s) => [s.id, s.name]))
+
+    const issues = await listIssues(id)
+    expect(
+      issues.map((issue) => [
+        issue.identifier,
+        issue.title,
+        statusName.get(issue.statusId),
+      ])
+    ).toEqual(SEEDED_ISSUES.map((entry) => [...entry]))
+    for (const issue of issues) {
+      expect(issue).toMatchObject({
+        description: null,
+        priority: "None",
+        assigneeId: null,
+        dueDate: null,
+        archived: false,
+        labels: [],
+        parentId: null,
+      })
+    }
+  })
+
+  test("the first user-created issue continues the sequence at WEB-7", async () => {
+    const project = await createProject()
+    const { id } = (await project.json()) as { id: string }
+    const todo = (await listStatuses(id)).find((s) => s.name === "Todo")
+    if (!todo) throw new Error("seeded Todo status missing")
+
+    const res = await app.request(`/api/projects/${id}/issues`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...auth(owner.id) },
+      body: JSON.stringify({ title: "Fix login", statusId: todo.id }),
+    })
+    expect(res.status).toBe(201)
+    expect(await res.json()).toMatchObject({ identifier: "WEB-7", number: 7 })
+
+    expect((await listIssues(id)).map((i) => i.identifier)).toEqual([
+      "WEB-1",
+      "WEB-2",
+      "WEB-3",
+      "WEB-4",
+      "WEB-5",
+      "WEB-6",
+      "WEB-7",
+    ])
+  })
+
+  test("a mid-waterfall failure leaves no orphan statuses or issues", async () => {
+    let projectId = ""
+    let injected = false
+    const store = createMemoryWorkspaceStore({
+      onSeedStep: (step) => {
+        projectId = step.projectId
+        if (step.kind === "issue" && step.index === 2 && !injected) {
+          injected = true
+          const error = new Error("Injected seed failure")
+          ;(error as { code?: string }).code = "conflict"
+          throw error
+        }
+      },
+    })
+    const workspace = await store.createWorkspace(owner.id, "Acme")
+
+    await expect(
+      store.createProject(workspace.id, { name: "Web", key: "WEB" })
+    ).rejects.toThrow("Injected seed failure")
+
+    // Nothing from the failed waterfall survives: no project, no statuses,
+    // no issues, and no consumed sequence.
+    expect(await store.listProjects(workspace.id)).toEqual([])
+    expect(await store.listStatuses(projectId)).toEqual([])
+    expect(await store.listIssues(projectId)).toEqual([])
+    expect(await store.getIssue("WEB-1")).toBeNull()
+    expect(await store.getIssue("WEB-7")).toBeNull()
+
+    // The same key creates cleanly afterwards with the full roster.
+    const project = await store.createProject(workspace.id, {
+      name: "Web",
+      key: "WEB",
+    })
+    expect(await store.listStatuses(project.id)).toHaveLength(7)
+    expect(await store.listIssues(project.id)).toHaveLength(6)
+    expect(await store.getNextIssueNumber(project.id)).toBe(7)
   })
 })
 
@@ -156,6 +334,8 @@ describe("project key editing", () => {
       }
     )
     projectId = (await project.json()).id
+    // T2: clear the seeded roster/issues so key edits still start empty.
+    await clearSeededTracker(store, projectId)
   })
 
   test("admin renames a project and edits its key before the first issue", async () => {
@@ -171,6 +351,26 @@ describe("project key editing", () => {
   test("key edit with an invalid shape returns 400", async () => {
     const res = await patchProject(owner.id, { key: "w!" })
     expect(res.status).toBe(400)
+  })
+
+  test("the seeded issues lock the project key from creation", async () => {
+    // A project that keeps its seeded tracker is never "pre-issue".
+    const seeded = await app.request(
+      `/api/workspaces/${workspaceId}/projects`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", ...auth(owner.id) },
+        body: JSON.stringify({ name: "Seeded", key: "SEED" }),
+      }
+    )
+    const seededId = ((await seeded.json()) as { id: string }).id
+    const res = await app.request(`/api/projects/${seededId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", ...auth(owner.id) },
+      body: JSON.stringify({ key: "NEW" }),
+    })
+    expect(res.status).toBe(409)
+    expect(((await res.json()) as { error: string }).error).toMatch(/locked/i)
   })
 
   test("key edit after the first issue is locked (409)", async () => {
@@ -276,6 +476,9 @@ describe("project statuses", () => {
       }
     )
     projectId = (await project.json()).id
+    // T2: start from an empty tracker; the seeded roster is covered by the
+    // seeding-waterfall describe above.
+    await clearSeededTracker(fresh.store, projectId)
   })
 
   test("admin defines ordered statuses across all six categories", async () => {
@@ -510,6 +713,8 @@ describe("status deletion", () => {
       }
     )
     projectId = ((await project.json()) as { id: string }).id
+    // T2: start from an empty tracker so test status names stay available.
+    await clearSeededTracker(store, projectId)
   })
 
   async function defineStatus(name: string, category = "Unstarted") {

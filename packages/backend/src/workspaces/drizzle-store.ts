@@ -33,6 +33,8 @@ import type {
 } from "./store.js"
 import {
   DEFAULT_LABEL_COLOR,
+  DEFAULT_SEED_ISSUES,
+  DEFAULT_STATUS_ROSTER,
   isValidLabelColor,
   normalizeLabelNames,
 } from "./store.js"
@@ -55,6 +57,20 @@ function invalid(message: string): Error {
   const error = new Error(message)
   ;(error as { code?: string }).code = "invalid"
   return error
+}
+
+/** True for a Postgres unique-violation, however drizzle wraps it. */
+function isUniqueViolation(error: unknown): boolean {
+  let current: unknown = error
+  for (
+    let depth = 0;
+    depth < 3 && current !== null && current !== undefined;
+    depth += 1
+  ) {
+    if ((current as { code?: unknown }).code === "23505") return true
+    current = (current as { cause?: unknown }).cause
+  }
+  return false
 }
 
 function parseDueDate(dueDate: string | null | undefined): Date | null {
@@ -284,14 +300,63 @@ export function createDrizzleWorkspaceStore(
       const db = resolveDb()
       const key = input.key.toUpperCase()
       try {
-        const [row] = await db
-          .insert(project)
-          .values({ workspaceId, name: input.name, key })
-          .returning()
-        await db.insert(projectSequence).values({ projectId: row.id })
+        // ADR-0001 seeding: project + sequence + the default roster + the six
+        // sample issues go in one transaction, so a failure anywhere leaves
+        // no half-seeded project behind.
+        const row = await db.transaction(async (tx) => {
+          const [projectRow] = await tx
+            .insert(project)
+            .values({ workspaceId, name: input.name, key })
+            .returning()
+          await tx.insert(projectSequence).values({ projectId: projectRow.id })
+          const statusRows = await tx
+            .insert(status)
+            .values(
+              DEFAULT_STATUS_ROSTER.map((entry, position) => ({
+                projectId: projectRow.id,
+                name: entry.name,
+                category: entry.category,
+                position,
+              }))
+            )
+            .returning()
+          const statusIdByName = new Map(
+            statusRows.map((s) => [s.name, s.id] as const)
+          )
+          let nextNumber = 1
+          for (const seed of DEFAULT_SEED_ISSUES) {
+            const statusId = statusIdByName.get(seed.statusName)
+            if (!statusId) {
+              throw invalid(`Seed status ${seed.statusName} is missing`)
+            }
+            await tx.insert(issue).values({
+              projectId: projectRow.id,
+              number: nextNumber,
+              keyPrefix: projectRow.key,
+              identifier: `${projectRow.key}-${nextNumber}`,
+              title: seed.title,
+              description: null,
+              statusId,
+              priority: "None",
+              assigneeId: null,
+              dueDate: null,
+              labels: [],
+              parentId: null,
+            })
+            nextNumber += 1
+          }
+          await tx
+            .update(projectSequence)
+            .set({ nextNumber })
+            .where(eq(projectSequence.projectId, projectRow.id))
+          return projectRow
+        })
         return toProject(row)
-      } catch {
-        throw conflict("Project key already exists")
+      } catch (error) {
+        if (isUniqueViolation(error)) {
+          throw conflict("Project key already exists")
+        }
+        throw error
       }
     },
 

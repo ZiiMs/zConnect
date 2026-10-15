@@ -46,6 +46,49 @@ export const STATUS_CATEGORIES = [
 
 export type StatusCategory = (typeof STATUS_CATEGORIES)[number]
 
+/**
+ * Default Status roster every new Project opens with, in Kanban order
+ * (ADR-0001). `createProject` seeds these before any sample Issue.
+ */
+export const DEFAULT_STATUS_ROSTER: readonly {
+  name: string
+  category: StatusCategory
+}[] = [
+  { name: "Backlog", category: "Backlog" },
+  { name: "Todo", category: "Unstarted" },
+  { name: "In Progress", category: "In Progress" },
+  { name: "In Review", category: "In Progress" },
+  { name: "Done", category: "Completed" },
+  { name: "Canceled", category: "Canceled" },
+  { name: "Duplicate", category: "Duplicate" },
+]
+
+/**
+ * Sample Issues every new Project opens with (ADR-0001 seeding). Titles and
+ * statuses are verbatim; they are created through the normal issue path, so
+ * they consume the project sequence and the first real Issue is `KEY-7`.
+ */
+export const DEFAULT_SEED_ISSUES: readonly {
+  title: string
+  statusName: string
+}[] = [
+  { title: "Tour the List, Table, and Kanban views", statusName: "Todo" },
+  {
+    title: "Invite your teammates to this workspace",
+    statusName: "Backlog",
+  },
+  {
+    title: "Define statuses that match your workflow",
+    statusName: "Backlog",
+  },
+  { title: "Break a large issue into subtasks", statusName: "Todo" },
+  {
+    title: "Link a pull request by its issue identifier",
+    statusName: "In Progress",
+  },
+  { title: "Archive work you no longer need", statusName: "In Progress" },
+]
+
 /** Priority urgency per GLOSSARY.md. */
 export const PRIORITIES = ["Urgent", "High", "Medium", "Low", "None"] as const
 
@@ -180,6 +223,13 @@ export interface WorkspaceStore {
   }): Promise<Invitation>
   listInvitationsForEmail(email: string): Promise<Invitation[]>
   acceptInvitation(invitationId: string, userId: string): Promise<Membership>
+  /**
+   * Creates the Project already seeded (ADR-0001), always, in one atomic
+   * step: the 7 default statuses in roster order, then the 6 sample Issues
+   * through the normal issue path as `KEY-1`…`KEY-6`. A failure anywhere
+   * fails the whole request, so no half-seeded Project is ever left behind.
+   * The first user-created Issue is therefore `KEY-7`.
+   */
   createProject(
     workspaceId: string,
     input: { name: string; key: string }
@@ -246,7 +296,26 @@ export interface WorkspaceStore {
   ): Promise<boolean>
 }
 
-export function createMemoryWorkspaceStore(): WorkspaceStore {
+/**
+ * Test-only fault injection for the `createProject` seeding waterfall. The
+ * contract tests use it to prove the waterfall is atomic; production callers
+ * pass nothing.
+ */
+export interface MemoryWorkspaceStoreOptions {
+  /**
+   * Called as each seeded row is staged, before anything is committed.
+   * Throwing aborts the whole waterfall with no orphan statuses or issues.
+   */
+  onSeedStep?: (step: {
+    kind: "status" | "issue"
+    index: number
+    projectId: string
+  }) => void
+}
+
+export function createMemoryWorkspaceStore(
+  options: MemoryWorkspaceStoreOptions = {}
+): WorkspaceStore {
   const workspaces = new Map<string, Workspace>()
   const members = new Map<string, Membership>()
   const invitations = new Map<string, Invitation>()
@@ -362,6 +431,34 @@ export function createMemoryWorkspaceStore(): WorkspaceStore {
     return assigneeId
   }
 
+  /**
+   * Shape one Issue row the way CreateIssue always does. Shared with the
+   * `createProject` waterfall so a seeded Issue is indistinguishable from a
+   * user-created one.
+   */
+  function newIssueRow(
+    project: Project,
+    number: number,
+    input: CreateIssueInput
+  ): Issue {
+    return {
+      id: crypto.randomUUID(),
+      projectId: project.id,
+      number,
+      keyPrefix: project.key,
+      identifier: `${project.key}-${number}`,
+      title: input.title.trim(),
+      description: input.description ?? null,
+      statusId: input.statusId,
+      priority: input.priority ?? "Medium",
+      assigneeId: input.assigneeId ?? null,
+      dueDate: normalizeDueDate(input.dueDate),
+      archived: false,
+      labels: normalizeLabelNames(input.labels ?? []),
+      parentId: input.parentId ?? null,
+    }
+  }
+
   return {
     async createWorkspace(ownerId, name) {
       const workspace = { id: crypto.randomUUID(), name, createdBy: ownerId }
@@ -469,8 +566,50 @@ export function createMemoryWorkspaceStore(): WorkspaceStore {
         name: input.name,
         key,
       }
+      // ADR-0001 seeding: build the whole waterfall against the new project
+      // in staging and commit only once every step succeeded, so a failure
+      // anywhere leaves no orphan statuses or issues behind.
+      const stagedStatuses: Status[] = []
+      for (const [position, entry] of DEFAULT_STATUS_ROSTER.entries()) {
+        options.onSeedStep?.({
+          kind: "status",
+          index: position,
+          projectId: project.id,
+        })
+        stagedStatuses.push({
+          id: crypto.randomUUID(),
+          projectId: project.id,
+          name: entry.name,
+          category: entry.category,
+          position,
+        })
+      }
+      const statusIdByName = new Map(
+        stagedStatuses.map((s) => [s.name, s.id] as const)
+      )
+      const stagedIssues: Issue[] = []
+      let nextNumber = 1
+      for (const [index, seed] of DEFAULT_SEED_ISSUES.entries()) {
+        options.onSeedStep?.({ kind: "issue", index, projectId: project.id })
+        const statusId = statusIdByName.get(seed.statusName)
+        if (!statusId) {
+          throw invalid(`Seed status ${seed.statusName} is missing`)
+        }
+        // Same path as CreateIssue: consumes the sequence and KEY-N
+        // identifiers, unassigned with no due date and priority None.
+        stagedIssues.push(
+          newIssueRow(project, nextNumber, {
+            title: seed.title,
+            statusId,
+            priority: "None",
+          })
+        )
+        nextNumber += 1
+      }
       projects.set(project.id, project)
-      sequences.set(project.id, 1)
+      sequences.set(project.id, nextNumber)
+      for (const staged of stagedStatuses) statuses.set(staged.id, staged)
+      for (const staged of stagedIssues) issues.set(staged.id, staged)
       return project
     },
 
@@ -641,22 +780,16 @@ export function createMemoryWorkspaceStore(): WorkspaceStore {
       sequences.set(projectId, number + 1)
       const labelRows = ensureLabelRows(project.workspaceId, input.labels ?? [])
       const parentId = resolveParentId(projectId, null, input.parentId) ?? null
-      const issue: Issue = {
-        id: crypto.randomUUID(),
-        projectId,
-        number,
-        keyPrefix: project.key,
-        identifier: `${project.key}-${number}`,
+      const issue = newIssueRow(project, number, {
+        ...input,
         title,
-        description: input.description ?? null,
         statusId: status.id,
         priority,
         assigneeId,
         dueDate,
-        archived: false,
         labels: labelRows.map((row) => row.name),
         parentId,
-      }
+      })
       issues.set(issue.id, issue)
       relinkIssue(issue.id, labelRows)
       return { ...issue, labels: [...issue.labels] }
