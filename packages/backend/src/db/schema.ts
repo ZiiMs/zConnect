@@ -136,9 +136,7 @@ export const issue = pgTable(
     statusId: uuid("status_id")
       .notNull()
       .references(() => status.id, { onDelete: "restrict" }),
-    priority: varchar("priority", { length: 16 })
-      .notNull()
-      .$type<Priority>(),
+    priority: varchar("priority", { length: 16 }).notNull().$type<Priority>(),
     assigneeId: text("assignee_id"),
     dueDate: timestamp("due_date", { withTimezone: true }),
     archived: boolean("archived").notNull().default(false),
@@ -150,9 +148,7 @@ export const issue = pgTable(
       .defaultNow()
       .notNull(),
   },
-  (table) => [
-    uniqueIndex("issue_identifier_unique").on(table.identifier),
-  ]
+  (table) => [uniqueIndex("issue_identifier_unique").on(table.identifier)]
 )
 
 export const invitation = pgTable(
@@ -176,6 +172,64 @@ export const invitation = pgTable(
     ),
   ]
 )
+
+/**
+ * GitHub App installs + External Links (T6). Vocabulary per GLOSSARY.md:
+ * External Link (never Integration/Sync). An install is workspace-level and
+ * scoped to chosen `owner/repo` names; links cache PR title/state from
+ * webhook payloads only (no live GitHub reads); merge is badge-only.
+ */
+export const githubInstall = pgTable("github_install", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspace.id, { onDelete: "cascade" }),
+  repos: text("repos").array().notNull().default([]),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+})
+
+export const externalLink = pgTable(
+  "external_link",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    issueId: uuid("issue_id")
+      .notNull()
+      .references(() => issue.id, { onDelete: "cascade" }),
+    provider: varchar("provider", { length: 16 }).notNull().default("github"),
+    kind: varchar("kind", { length: 16 }).notNull(),
+    url: text("url").notNull(),
+    title: text("title"),
+    state: varchar("state", { length: 16 }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("external_link_issue_url_unique").on(table.issueId, table.url),
+  ]
+)
+
+export const timelineEvent = pgTable("timeline_event", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  issueId: uuid("issue_id")
+    .notNull()
+    .references(() => issue.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull(),
+  body: text("body").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+})
+
+/** Processed webhook delivery ids for idempotent redelivery handling. */
+export const webhookDelivery = pgTable("webhook_delivery", {
+  deliveryId: text("delivery_id").primaryKey(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+})
 
 export type WorkspaceRole = "Owner" | "Admin" | "Member"
 
