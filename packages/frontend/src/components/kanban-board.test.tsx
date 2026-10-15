@@ -188,4 +188,24 @@ describe("kanban board", () => {
     )
     expect(screen.getByText(/no issues match/i)).toBeInTheDocument()
   })
+
+  test("cards render the registry color as a swatch on label chips", () => {
+    const labeled: Issue[] = [{ ...issues[0], labels: ["bug"] }]
+    render(
+      <KanbanBoard
+        issues={labeled}
+        statuses={statuses}
+        labels={[
+          { id: "lb-1", workspaceId: "ws-1", name: "bug", color: "#ef4444" },
+        ]}
+        canEdit={true}
+        onMove={() => {}}
+      />
+    )
+    const card = screen.getByTestId("kanban-card-WEB-1")
+    expect(within(card).getByText("bug")).toBeInTheDocument()
+    expect(within(card).getByTestId("label-dot-bug")).toHaveStyle({
+      backgroundColor: "#ef4444",
+    })
+  })
 })

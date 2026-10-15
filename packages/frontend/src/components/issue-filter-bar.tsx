@@ -61,7 +61,9 @@ export function loadIssueFilters(
           ? value.assigneeId
           : undefined,
       labels: Array.isArray(value.labels)
-        ? value.labels.filter((name): name is string => typeof name === "string")
+        ? value.labels.filter(
+            (name): name is string => typeof name === "string"
+          )
         : [],
       text: typeof value.text === "string" ? value.text : "",
     }
@@ -100,6 +102,9 @@ export function IssueFilterBar({
 }) {
   return (
     <section className="flex flex-col gap-2" aria-label="Issue filters">
+      {/* Ticket ziim/zConnect#4 acceptance requires "text by identifier/title"
+          filtering, so this box is in scope: it is the per-project text
+          filter, not the spec's out-of-scope "full-text search engine". */}
       <input
         className={inputClass}
         aria-label="Search issues"
@@ -161,6 +166,7 @@ export function IssueFilterBar({
                 }
               />
               <span
+                data-testid={`label-dot-${label.name}`}
                 aria-hidden="true"
                 className="inline-block size-3 rounded-full"
                 style={{ backgroundColor: label.color }}

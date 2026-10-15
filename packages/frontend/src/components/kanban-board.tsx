@@ -6,7 +6,7 @@ import {
 } from "@dnd-kit/core"
 import { useState } from "react"
 import { KanbanCard } from "@/components/kanban-card"
-import type { Issue, Status } from "@/lib/api"
+import type { Issue, Label, Status } from "@/lib/api"
 
 /**
  * Maps a drag-end onto the Issue mutation it means. `activeId` is the
@@ -34,12 +34,14 @@ function KanbanColumn({
   status,
   issues,
   statuses,
+  labels,
   canEdit,
   onMove,
 }: {
   status: Status
   issues: Issue[]
   statuses: Status[]
+  labels: Label[]
   canEdit: boolean
   onMove: (issue: Issue, statusId: string) => void
 }) {
@@ -61,6 +63,7 @@ function KanbanColumn({
           key={issue.id}
           issue={issue}
           statuses={statuses}
+          labels={labels}
           canEdit={canEdit}
           onMove={onMove}
         />
@@ -78,11 +81,14 @@ function KanbanColumn({
 export function KanbanBoard({
   issues,
   statuses,
+  labels = [],
   canEdit,
   onMove,
 }: {
   issues: Issue[]
   statuses: Status[]
+  /** T5 workspace registry for card label chip colors. */
+  labels?: Label[]
   canEdit: boolean
   onMove: (issue: Issue, statusId: string) => void
 }) {
@@ -126,6 +132,7 @@ export function KanbanBoard({
             status={status}
             issues={issues.filter((issue) => issue.statusId === status.id)}
             statuses={statuses}
+            labels={labels}
             canEdit={canEdit}
             onMove={onMove}
           />

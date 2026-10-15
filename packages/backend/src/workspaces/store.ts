@@ -283,10 +283,7 @@ export function createMemoryWorkspaceStore(): WorkspaceStore {
   }
 
   function relinkIssue(issueId: string, rows: Label[]): string[] {
-    issueLinks.set(
-      issueId,
-      new Set(rows.map((row) => row.id))
-    )
+    issueLinks.set(issueId, new Set(rows.map((row) => row.id)))
     return rows.map((row) => row.name)
   }
 
@@ -685,7 +682,8 @@ export function createMemoryWorkspaceStore(): WorkspaceStore {
         )
         .filter(
           (issue) =>
-            !labels || [...labels].every((label) => issue.labels.includes(label))
+            !labels ||
+            [...labels].every((label) => issue.labels.includes(label))
         )
         .filter(
           (issue) =>
@@ -723,7 +721,10 @@ export function createMemoryWorkspaceStore(): WorkspaceStore {
         throw error
       }
       let projectId = stored.projectId
-      if (input.projectId !== undefined && input.projectId !== stored.projectId) {
+      if (
+        input.projectId !== undefined &&
+        input.projectId !== stored.projectId
+      ) {
         const target = projects.get(input.projectId)
         if (!target) {
           const error = new Error("Project not found")
@@ -763,7 +764,8 @@ export function createMemoryWorkspaceStore(): WorkspaceStore {
         if (!title) throw invalid("Invalid title")
         stored.title = title
       }
-      if (input.description !== undefined) stored.description = input.description
+      if (input.description !== undefined)
+        stored.description = input.description
       if (input.priority !== undefined) stored.priority = input.priority
       if (input.assigneeId !== undefined) {
         const project = projects.get(stored.projectId)
@@ -777,7 +779,8 @@ export function createMemoryWorkspaceStore(): WorkspaceStore {
           input.assigneeId
         )
       }
-      if (input.dueDate !== undefined) stored.dueDate = normalizeDueDate(input.dueDate)
+      if (input.dueDate !== undefined)
+        stored.dueDate = normalizeDueDate(input.dueDate)
       if (input.archived !== undefined) stored.archived = input.archived
       if (input.labels !== undefined) {
         const project = projects.get(stored.projectId)
@@ -800,7 +803,9 @@ export function createMemoryWorkspaceStore(): WorkspaceStore {
       const color = input.color ?? DEFAULT_LABEL_COLOR
       if (!isValidLabelColor(color)) throw invalid("Invalid label color")
       const duplicate = [...labels.values()].some(
-        (l) => l.workspaceId === workspaceId && l.name.toLowerCase() === name.toLowerCase()
+        (l) =>
+          l.workspaceId === workspaceId &&
+          l.name.toLowerCase() === name.toLowerCase()
       )
       if (duplicate) {
         const error = new Error("Label already exists")
@@ -850,7 +855,8 @@ export function createMemoryWorkspaceStore(): WorkspaceStore {
         label.name = name
       }
       if (input.color !== undefined) {
-        if (!isValidLabelColor(input.color)) throw invalid("Invalid label color")
+        if (!isValidLabelColor(input.color))
+          throw invalid("Invalid label color")
         label.color = input.color
       }
       if (oldName !== undefined && oldName !== label.name) {

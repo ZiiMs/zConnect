@@ -1,5 +1,5 @@
 import { Queue } from "bullmq"
-import { GITHUB_WEBHOOK_JOB, type GitHubWebhookJob } from "../github/job.js"
+import { GITHUB_WEBHOOK_JOB, type GitHubWebhookPayload } from "../github/job.js"
 import { redis } from "./redis.js"
 
 /** Every queue in the app. Add new ones here so producers and workers agree. */
@@ -23,5 +23,5 @@ export const queues = {
 
 export type JobPayloads = {
   [QUEUES.default]: { task: string }
-  [QUEUES.githubWebhook]: GitHubWebhookJob
+  [QUEUES.githubWebhook]: GitHubWebhookPayload
 }

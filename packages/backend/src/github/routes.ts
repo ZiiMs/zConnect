@@ -2,7 +2,11 @@ import { Hono } from "hono"
 import { z } from "zod"
 import type { GetSession } from "../workspaces/session.js"
 import type { WorkspaceStore } from "../workspaces/store.js"
-import type { GitHubWebhookJob } from "./job.js"
+import type {
+  GitHubPushJob,
+  GitHubWebhookJob,
+  GitHubWebhookPayload,
+} from "./job.js"
 import { parseExternalUrl } from "./parse.js"
 import type { GitHubStore } from "./store.js"
 
@@ -24,7 +28,7 @@ export interface GitHubDeps {
   workspaces: WorkspaceStore
   github: GitHubStore
   getSession: GetSession
-  enqueue: (job: GitHubWebhookJob) => Promise<void>
+  enqueue: (job: GitHubWebhookPayload) => Promise<void>
   /**
    * When set, `POST /api/webhooks/github` requires a valid
    * `x-hub-signature-256` HMAC. When unset (local/dev), deliveries are
@@ -192,6 +196,46 @@ export function createGitHubApp({
     }
     const event = c.req.header("x-github-event")
     const deliveryId = c.req.header("x-github-delivery") ?? crypto.randomUUID()
+    // Push deliveries auto-link kind=commit External Links for commits whose
+    // message contains KEY-N (story 23 follow-up). The HMAC gate above and
+    // the handler's delivery-id idempotency apply unchanged; deliveries with
+    // no usable commits acknowledge without enqueueing.
+    if (event === "push") {
+      let payload: {
+        repository?: { full_name?: string }
+        commits?: {
+          id?: string
+          sha?: string
+          message?: string
+          url?: string
+        }[]
+      }
+      try {
+        payload = JSON.parse(raw || "{}")
+      } catch {
+        return c.json({ error: "Invalid payload" }, 400)
+      }
+      const repoFullName = payload.repository?.full_name
+      const commits: GitHubPushJob["commits"] = []
+      if (repoFullName) {
+        for (const commit of payload.commits ?? []) {
+          const sha = commit.id ?? commit.sha ?? ""
+          const message = commit.message ?? ""
+          if (sha === "" || message === "") continue
+          commits.push({
+            sha,
+            message,
+            url:
+              commit.url ?? `https://github.com/${repoFullName}/commit/${sha}`,
+          })
+        }
+      }
+      if (!repoFullName || commits.length === 0) {
+        return c.json({ ignored: true }, 202)
+      }
+      await enqueue({ kind: "push", deliveryId, repoFullName, commits })
+      return c.json({ enqueued: true }, 202)
+    }
     if (event !== "pull_request") return c.json({ ignored: true }, 202)
     let payload: {
       action?: string
@@ -218,6 +262,7 @@ export function createGitHubApp({
       return c.json({ error: "Invalid payload" }, 400)
     }
     await enqueue({
+      kind: "pull_request",
       deliveryId,
       action: payload.action as GitHubWebhookJob["action"],
       repoFullName: payload.repository.full_name,

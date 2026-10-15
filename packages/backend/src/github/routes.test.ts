@@ -7,7 +7,7 @@ import {
   type WorkspaceStore,
 } from "../workspaces/store.js"
 import { handlePullRequestEvent } from "./handler.js"
-import type { GitHubWebhookJob } from "./job.js"
+import type { GitHubWebhookPayload } from "./job.js"
 import { createGitHubApp } from "./routes.js"
 import { createMemoryGitHubStore } from "./store.js"
 
@@ -28,7 +28,7 @@ function auth(userId?: string): Record<string, string> {
 function setup(webhookSecret?: string) {
   const workspaces = createMemoryWorkspaceStore()
   const github = createMemoryGitHubStore()
-  const enqueued: GitHubWebhookJob[] = []
+  const enqueued: GitHubWebhookPayload[] = []
   const app = new Hono()
   const getSession = async (req: Request) => {
     const match = /^Bearer (.+)$/.exec(req.headers.get("authorization") ?? "")
@@ -235,6 +235,60 @@ describe("webhook intake", () => {
       method: "POST",
       headers: webhookHeaders({ "x-github-event": "push" }),
       body: JSON.stringify({}),
+    })
+    expect(res.status).toBe(202)
+    expect(enqueued).toHaveLength(0)
+  })
+
+  test("push deliveries with KEY-N commits enqueue a push job", async () => {
+    const { app, workspaces, enqueued } = setup()
+    await seed(app, workspaces)
+    const res = await app.request("/api/webhooks/github", {
+      method: "POST",
+      headers: webhookHeaders({
+        "x-github-event": "push",
+        "x-github-delivery": "push-1",
+      }),
+      body: JSON.stringify({
+        repository: { full_name: "acme/web" },
+        commits: [
+          {
+            id: "abc123def456",
+            message: "Fix WEB-1 login redirect",
+            url: "https://github.com/acme/web/commit/abc123def456",
+          },
+        ],
+      }),
+    })
+    expect(res.status).toBe(202)
+    expect(enqueued).toHaveLength(1)
+    expect(enqueued[0]).toMatchObject({
+      kind: "push",
+      deliveryId: "push-1",
+      repoFullName: "acme/web",
+      commits: [
+        {
+          sha: "abc123def456",
+          message: "Fix WEB-1 login redirect",
+          url: "https://github.com/acme/web/commit/abc123def456",
+        },
+      ],
+    })
+  })
+
+  test("push deliveries without usable commits are ignored", async () => {
+    const { app, workspaces, enqueued } = setup()
+    await seed(app, workspaces)
+    const res = await app.request("/api/webhooks/github", {
+      method: "POST",
+      headers: webhookHeaders({
+        "x-github-event": "push",
+        "x-github-delivery": "push-2",
+      }),
+      body: JSON.stringify({
+        repository: { full_name: "acme/web" },
+        commits: [{ id: "abc123", message: "", url: "https://x" }],
+      }),
     })
     expect(res.status).toBe(202)
     expect(enqueued).toHaveLength(0)

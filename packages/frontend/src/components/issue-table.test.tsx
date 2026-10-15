@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react"
+import { fireEvent, render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, test, vi } from "vitest"
 import type { Issue, Status } from "@/lib/api"
@@ -52,7 +52,7 @@ const issues: Issue[] = [
     assigneeId: "user-member",
     dueDate: null,
     archived: false,
-    labels: [],
+    labels: ["feature"],
   },
 ]
 
@@ -76,7 +76,9 @@ describe("issue table", () => {
     setup()
 
     expect(screen.getByText("WEB-1")).toBeInTheDocument()
-    expect(screen.getByText("Ship homepage")).toBeInTheDocument()
+    expect(screen.getByLabelText(/title for WEB-2/i)).toHaveValue(
+      "Ship homepage"
+    )
     expect(screen.getAllByRole("row")).toHaveLength(3)
   })
 
@@ -162,5 +164,97 @@ describe("issue table", () => {
       screen.queryByLabelText(/assignee for WEB-1/i)
     ).not.toBeInTheDocument()
     expect(screen.getByText("Backlog")).toBeInTheDocument()
+  })
+
+  test("editing the title cell calls through with the new title", async () => {
+    const user = userEvent.setup()
+    const onUpdate = vi.fn()
+    setup(true, onUpdate)
+
+    const row = screen.getByTestId("issue-row-WEB-1")
+    const input = within(row).getByLabelText(/title for WEB-1/i)
+    await user.clear(input)
+    await user.type(input, "Fix login faster")
+    await user.tab()
+
+    expect(onUpdate).toHaveBeenCalledWith(issues[0], {
+      title: "Fix login faster",
+    })
+  })
+
+  test("editing the due date cell calls through with the new date", async () => {
+    const onUpdate = vi.fn()
+    setup(true, onUpdate)
+
+    const row = screen.getByTestId("issue-row-WEB-1")
+    const input = within(row).getByLabelText(/due date for WEB-1/i)
+    fireEvent.change(input, { target: { value: "2026-11-01" } })
+    fireEvent.blur(input)
+
+    expect(onUpdate).toHaveBeenCalledWith(issues[0], {
+      dueDate: "2026-11-01",
+    })
+  })
+
+  test("clearing the due date cell sends null", async () => {
+    const dated: Issue = { ...issues[0], dueDate: "2026-10-01" }
+    const onUpdate = vi.fn()
+    render(
+      <IssueTable
+        issues={[dated]}
+        statuses={statuses}
+        members={members}
+        canEdit={true}
+        onUpdate={onUpdate}
+      />
+    )
+
+    const row = screen.getByTestId("issue-row-WEB-1")
+    const input = within(row).getByLabelText(/due date for WEB-1/i)
+    expect(input).toHaveValue("2026-10-01")
+    fireEvent.change(input, { target: { value: "" } })
+    fireEvent.blur(input)
+
+    expect(onUpdate).toHaveBeenCalledWith(dated, { dueDate: null })
+  })
+
+  test("column toggles hide and reshow optional columns", async () => {
+    const user = userEvent.setup()
+    setup()
+
+    expect(screen.getByLabelText(/due date for WEB-1/i)).toBeInTheDocument()
+    await user.click(screen.getByRole("checkbox", { name: "Due date" }))
+
+    expect(
+      screen.queryByLabelText(/due date for WEB-1/i)
+    ).not.toBeInTheDocument()
+    expect(screen.getByLabelText(/title for WEB-1/i)).toBeInTheDocument()
+
+    await user.click(screen.getByRole("checkbox", { name: "Due date" }))
+    expect(screen.getByLabelText(/due date for WEB-1/i)).toBeInTheDocument()
+  })
+
+  test("renders the registry color as a swatch on label chips", () => {
+    render(
+      <IssueTable
+        issues={issues}
+        statuses={statuses}
+        members={members}
+        labels={[
+          {
+            id: "lb-1",
+            workspaceId: "ws-1",
+            name: "feature",
+            color: "#22c55e",
+          },
+        ]}
+        canEdit={true}
+        onUpdate={() => {}}
+      />
+    )
+    const row = screen.getByTestId("issue-row-WEB-2")
+    const swatch = within(row).getByTestId("label-dot-feature")
+    expect(swatch).toBeInTheDocument()
+    expect(swatch).toHaveStyle({ backgroundColor: "#22c55e" })
   })
 })
