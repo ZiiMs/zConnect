@@ -205,3 +205,85 @@ describe("project api client", () => {
     expect((failure as Error).message).toMatch(/holds issues/i)
   })
 })
+
+describe("issue api client", () => {
+  const issuePayload = {
+    id: "is-1",
+    projectId: "pr-1",
+    number: 1,
+    keyPrefix: "WEB",
+    identifier: "WEB-1",
+    title: "Fix login",
+    description: "Session expires too fast",
+    statusId: "st-1",
+    priority: "High",
+    assigneeId: null,
+    dueDate: null,
+    archived: false,
+    labels: ["bug"],
+  }
+
+  test("createIssue posts title, status and options", async () => {
+    const fetchMock = mockFetchOnce(issuePayload)
+
+    await api.createIssue("pr-1", {
+      title: "Fix login",
+      statusId: "st-1",
+      priority: "High",
+    })
+
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/projects/pr-1/issues")
+    expect(options.method).toBe("POST")
+    expect(JSON.parse(options.body as string)).toMatchObject({
+      title: "Fix login",
+      statusId: "st-1",
+      priority: "High",
+    })
+  })
+
+  test("listIssues encodes filters as query params", async () => {
+    const fetchMock = mockFetchOnce([issuePayload])
+
+    const result = await api.listIssues("pr-1", {
+      statusIds: ["st-1"],
+      priorities: ["High"],
+      text: "fix",
+    })
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/projects/pr-1/issues")
+    expect(url).toContain("status=st-1")
+    expect(url).toContain("priority=High")
+    expect(url).toContain("q=fix")
+    expect(result).toHaveLength(1)
+    expect(result[0]?.identifier).toBe("WEB-1")
+  })
+
+  test("getIssue resolves by human identifier", async () => {
+    const fetchMock = mockFetchOnce(issuePayload)
+
+    const result = await api.getIssue("WEB-1")
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/issues/WEB-1")
+    expect(result.identifier).toBe("WEB-1")
+  })
+
+  test("updateIssue patches the status", async () => {
+    const fetchMock = mockFetchOnce({ ...issuePayload, statusId: "st-2" })
+
+    const result = await api.updateIssue("WEB-1", { statusId: "st-2" })
+
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/issues/WEB-1")
+    expect(options.method).toBe("PATCH")
+    expect(result.statusId).toBe("st-2")
+  })
+
+  test("malformed issue payloads throw", async () => {
+    mockFetchOnce([{ id: 42 }])
+
+    await expect(api.listIssues("pr-1")).rejects.toThrow()
+  })
+})

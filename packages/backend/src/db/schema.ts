@@ -1,4 +1,5 @@
 import {
+  boolean,
   integer,
   pgTable,
   primaryKey,
@@ -111,6 +112,49 @@ export const projectSequence = pgTable("project_sequence", {
   nextNumber: integer("next_number").notNull().default(1),
 })
 
+/**
+ * Issue lifecycle (T3 – Issue lifecycle + List view). Vocabulary per
+ * GLOSSARY.md: Issue (never Task/Ticket), Priority
+ * (Urgent|High|Medium|Low|None), single nullable assignee.
+ *
+ * `keyPrefix` + `number` + `identifier` (KEY-N) are frozen at creation:
+ * moving the Issue between Projects updates `projectId` only, so the
+ * human identifier stays stable for Git references.
+ */
+export const issue = pgTable(
+  "issue",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => project.id, { onDelete: "cascade" }),
+    number: integer("number").notNull(),
+    keyPrefix: varchar("key_prefix", { length: 16 }).notNull(),
+    identifier: text("identifier").notNull(),
+    title: text("title").notNull(),
+    description: text("description"),
+    statusId: uuid("status_id")
+      .notNull()
+      .references(() => status.id, { onDelete: "restrict" }),
+    priority: varchar("priority", { length: 16 })
+      .notNull()
+      .$type<Priority>(),
+    assigneeId: text("assignee_id"),
+    dueDate: timestamp("due_date", { withTimezone: true }),
+    archived: boolean("archived").notNull().default(false),
+    labels: text("labels").array().notNull().default([]),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("issue_identifier_unique").on(table.identifier),
+  ]
+)
+
 export const invitation = pgTable(
   "invitation",
   {
@@ -137,3 +181,6 @@ export type WorkspaceRole = "Owner" | "Admin" | "Member"
 
 /** Fixed Status Category buckets per GLOSSARY.md. */
 export type StatusCategory = "Todo" | "In Progress" | "Done"
+
+/** Priority urgency per GLOSSARY.md. */
+export type Priority = "Urgent" | "High" | "Medium" | "Low" | "None"

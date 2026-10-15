@@ -39,12 +39,69 @@ export const STATUS_CATEGORIES = ["Todo", "In Progress", "Done"] as const
 
 export type StatusCategory = (typeof STATUS_CATEGORIES)[number]
 
+/** Priority urgency per GLOSSARY.md. */
+export const PRIORITIES = ["Urgent", "High", "Medium", "Low", "None"] as const
+
+export type Priority = (typeof PRIORITIES)[number]
+
 export interface Status {
   id: string
   projectId: string
   name: string
   category: StatusCategory
   position: number
+}
+
+export interface Issue {
+  id: string
+  projectId: string
+  number: number
+  /** Original Project Key prefix, frozen at creation (identifier stability). */
+  keyPrefix: string
+  /** Human identifier KEY-N, immutable across Project moves. */
+  identifier: string
+  title: string
+  description: string | null
+  statusId: string
+  priority: Priority
+  /** Single assignee user id, null when unassigned. */
+  assigneeId: string | null
+  dueDate: string | null
+  archived: boolean
+  /** Free-form Labels per GLOSSARY.md (workspace-shared registry deferred). */
+  labels: string[]
+}
+
+export interface CreateIssueInput {
+  title: string
+  description?: string | null
+  statusId: string
+  priority?: Priority
+  assigneeId?: string | null
+  dueDate?: string | null
+  labels?: string[]
+}
+
+export interface UpdateIssueInput {
+  title?: string
+  description?: string | null
+  statusId?: string
+  priority?: Priority
+  assigneeId?: string | null
+  dueDate?: string | null
+  archived?: boolean
+  labels?: string[]
+  /** Move target: identifier, keyPrefix and number stay frozen. */
+  projectId?: string
+}
+
+export interface IssueFilters {
+  statusIds?: string[]
+  priorities?: Priority[]
+  assigneeId?: string | null
+  labels?: string[]
+  archived?: boolean
+  text?: string
 }
 
 /**
@@ -91,10 +148,15 @@ export interface WorkspaceStore {
     input: { name?: string; category?: StatusCategory; position?: number }
   ): Promise<Status>
   deleteStatus(statusId: string): Promise<void>
+  createIssue(projectId: string, input: CreateIssueInput): Promise<Issue>
+  listIssues(projectId: string, filters?: IssueFilters): Promise<Issue[]>
+  /** Resolve by human identifier (KEY-N, case-insensitive) or row id. */
+  getIssue(ref: string): Promise<Issue | null>
+  updateIssue(ref: string, input: UpdateIssueInput): Promise<Issue>
   /**
-   * Minimal issue-presence probe until T3 backs it with the full issue
-   * model: consumes the next sequence number for the status. Contract tests
-   * seed through it; production routes never call it directly.
+   * Minimal issue-presence probe: consumes the next sequence number for the
+   * status. T2 contract tests seed through it; T3's real issue creation
+   * consumes the same sequence. Production routes never call it directly.
    */
   recordIssue(projectId: string, statusId: string): Promise<{ number: number }>
   countIssuesInStatus(statusId: string): Promise<number>
@@ -114,6 +176,7 @@ export function createMemoryWorkspaceStore(): WorkspaceStore {
   const projectViewers = new Set<string>()
   const sequences = new Map<string, number>()
   const statuses = new Map<string, Status>()
+  const issues = new Map<string, Issue>()
   const issueRefs: { id: string; projectId: string; statusId: string }[] = []
 
   const memberKey = (workspaceId: string, userId: string) =>
@@ -123,6 +186,28 @@ export function createMemoryWorkspaceStore(): WorkspaceStore {
     const error = new Error(message)
     ;(error as { code?: string }).code = "locked"
     return error
+  }
+
+  function invalid(message: string): Error {
+    const error = new Error(message)
+    ;(error as { code?: string }).code = "invalid"
+    return error
+  }
+
+  function normalizeDueDate(dueDate: string | null | undefined): string | null {
+    if (dueDate === undefined || dueDate === null) return null
+    const parsed = new Date(dueDate)
+    if (Number.isNaN(parsed.getTime())) throw invalid("Invalid due date")
+    return parsed.toISOString()
+  }
+
+  async function checkedAssignee(
+    getMember: (userId: string) => boolean,
+    assigneeId: string | null | undefined
+  ): Promise<string | null> {
+    if (assigneeId === undefined || assigneeId === null) return null
+    if (!getMember(assigneeId)) throw invalid("Assignee is not a member")
+    return assigneeId
   }
 
   return {
@@ -247,7 +332,7 @@ export function createMemoryWorkspaceStore(): WorkspaceStore {
       if (input.key !== undefined) {
         const key = input.key.toUpperCase()
         if (key !== project.key) {
-          if (issueRefs.some((r) => r.projectId === projectId)) {
+          if (await this.hasIssues(projectId)) {
             throw locked("Project key is locked once issues exist")
           }
           const duplicate = [...projects.values()].some(
@@ -279,7 +364,11 @@ export function createMemoryWorkspaceStore(): WorkspaceStore {
     },
 
     async hasIssues(projectId) {
-      return issueRefs.some((r) => r.projectId === projectId)
+      if (issueRefs.some((r) => r.projectId === projectId)) return true
+      for (const issue of issues.values()) {
+        if (issue.projectId === projectId) return true
+      }
+      return false
     },
 
     async createStatus(projectId, input) {
@@ -365,7 +454,7 @@ export function createMemoryWorkspaceStore(): WorkspaceStore {
         ;(error as { code?: string }).code = "not_found"
         throw error
       }
-      if (issueRefs.some((r) => r.statusId === statusId)) {
+      if ((await this.countIssuesInStatus(statusId)) > 0) {
         throw locked("Cannot delete a status that holds issues")
       }
       statuses.delete(statusId)
@@ -375,6 +464,163 @@ export function createMemoryWorkspaceStore(): WorkspaceStore {
         .forEach((s, index) => {
           s.position = index
         })
+    },
+
+    async createIssue(projectId, input: CreateIssueInput): Promise<Issue> {
+      const project = projects.get(projectId)
+      if (!project) {
+        const error = new Error("Project not found")
+        ;(error as { code?: string }).code = "not_found"
+        throw error
+      }
+      const title = input.title.trim()
+      if (!title) throw invalid("Invalid title")
+      const status = statuses.get(input.statusId)
+      if (!status || status.projectId !== projectId) {
+        throw invalid("Invalid status")
+      }
+      const priority: Priority = input.priority ?? "Medium"
+      const assigneeId = await checkedAssignee(
+        (userId) => members.has(memberKey(project.workspaceId, userId)),
+        input.assigneeId
+      )
+      const dueDate = normalizeDueDate(input.dueDate)
+      const number = sequences.get(projectId) ?? 1
+      sequences.set(projectId, number + 1)
+      const issue: Issue = {
+        id: crypto.randomUUID(),
+        projectId,
+        number,
+        keyPrefix: project.key,
+        identifier: `${project.key}-${number}`,
+        title,
+        description: input.description ?? null,
+        statusId: status.id,
+        priority,
+        assigneeId,
+        dueDate,
+        archived: false,
+        labels: input.labels ? [...input.labels] : [],
+      }
+      issues.set(issue.id, issue)
+      return { ...issue, labels: [...issue.labels] }
+    },
+
+    async listIssues(projectId, filters?: IssueFilters): Promise<Issue[]> {
+      const statusIds =
+        filters?.statusIds !== undefined && filters.statusIds.length > 0
+          ? new Set(filters.statusIds)
+          : undefined
+      const priorities =
+        filters?.priorities !== undefined && filters.priorities.length > 0
+          ? new Set(filters.priorities)
+          : undefined
+      const labels =
+        filters?.labels !== undefined && filters.labels.length > 0
+          ? new Set(filters.labels)
+          : undefined
+      const text = filters?.text?.toLowerCase()
+      const archived = filters?.archived ?? false
+      return [...issues.values()]
+        .filter((issue) => issue.projectId === projectId)
+        .filter((issue) => issue.archived === archived)
+        .filter((issue) => !statusIds || statusIds.has(issue.statusId))
+        .filter((issue) => !priorities || priorities.has(issue.priority))
+        .filter(
+          (issue) =>
+            filters?.assigneeId === undefined ||
+            issue.assigneeId === filters.assigneeId
+        )
+        .filter(
+          (issue) =>
+            !labels || [...labels].every((label) => issue.labels.includes(label))
+        )
+        .filter(
+          (issue) =>
+            !text ||
+            issue.identifier.toLowerCase().includes(text) ||
+            issue.title.toLowerCase().includes(text)
+        )
+        .sort((a, b) => a.number - b.number)
+        .map((issue) => ({ ...issue, labels: [...issue.labels] }))
+    },
+
+    async getIssue(ref): Promise<Issue | null> {
+      const direct = issues.get(ref)
+      if (direct) return { ...direct, labels: [...direct.labels] }
+      const upper = ref.toUpperCase()
+      for (const issue of issues.values()) {
+        if (issue.identifier.toUpperCase() === upper) {
+          return { ...issue, labels: [...issue.labels] }
+        }
+      }
+      return null
+    },
+
+    async updateIssue(ref, input: UpdateIssueInput): Promise<Issue> {
+      const issue = issues.get(ref) ?? (await this.getIssue(ref))
+      if (!issue) {
+        const error = new Error("Issue not found")
+        ;(error as { code?: string }).code = "not_found"
+        throw error
+      }
+      const stored = issues.get(issue.id)
+      if (!stored) {
+        const error = new Error("Issue not found")
+        ;(error as { code?: string }).code = "not_found"
+        throw error
+      }
+      let projectId = stored.projectId
+      if (input.projectId !== undefined && input.projectId !== stored.projectId) {
+        const target = projects.get(input.projectId)
+        if (!target) {
+          const error = new Error("Project not found")
+          ;(error as { code?: string }).code = "not_found"
+          throw error
+        }
+        const current = projects.get(stored.projectId)
+        if (!current || current.workspaceId !== target.workspaceId) {
+          throw invalid("Cannot move an issue to another workspace")
+        }
+        projectId = target.id
+      }
+      const statusTarget = projectId
+      if (input.statusId !== undefined) {
+        const status = statuses.get(input.statusId)
+        if (!status || status.projectId !== statusTarget) {
+          throw invalid("Invalid status")
+        }
+        stored.statusId = status.id
+      } else if (projectId !== stored.projectId) {
+        const status = statuses.get(stored.statusId)
+        if (!status || status.projectId !== projectId) {
+          throw invalid("A status in the target project is required")
+        }
+      }
+      stored.projectId = projectId
+      if (input.title !== undefined) {
+        const title = input.title.trim()
+        if (!title) throw invalid("Invalid title")
+        stored.title = title
+      }
+      if (input.description !== undefined) stored.description = input.description
+      if (input.priority !== undefined) stored.priority = input.priority
+      if (input.assigneeId !== undefined) {
+        const project = projects.get(stored.projectId)
+        if (!project) {
+          const error = new Error("Project not found")
+          ;(error as { code?: string }).code = "not_found"
+          throw error
+        }
+        stored.assigneeId = await checkedAssignee(
+          (userId) => members.has(memberKey(project.workspaceId, userId)),
+          input.assigneeId
+        )
+      }
+      if (input.dueDate !== undefined) stored.dueDate = normalizeDueDate(input.dueDate)
+      if (input.archived !== undefined) stored.archived = input.archived
+      if (input.labels !== undefined) stored.labels = [...input.labels]
+      return { ...stored, labels: [...stored.labels] }
     },
 
     async recordIssue(projectId, statusId) {
@@ -392,7 +638,12 @@ export function createMemoryWorkspaceStore(): WorkspaceStore {
     },
 
     async countIssuesInStatus(statusId) {
-      return issueRefs.filter((r) => r.statusId === statusId).length
+      const probed = issueRefs.filter((r) => r.statusId === statusId).length
+      let stored = 0
+      for (const issue of issues.values()) {
+        if (issue.statusId === statusId) stored += 1
+      }
+      return probed + stored
     },
 
     async listProjects(workspaceId) {

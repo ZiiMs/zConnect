@@ -42,6 +42,64 @@ export const statusSchema = z.object({
   position: z.number(),
 })
 
+export const prioritySchema = z.enum([
+  "Urgent",
+  "High",
+  "Medium",
+  "Low",
+  "None",
+])
+
+export const issueSchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  number: z.number(),
+  keyPrefix: z.string(),
+  identifier: z.string(),
+  title: z.string(),
+  description: z.string().nullable(),
+  statusId: z.string(),
+  priority: prioritySchema,
+  assigneeId: z.string().nullable(),
+  dueDate: z.string().nullable(),
+  archived: z.boolean(),
+  labels: z.array(z.string()),
+})
+
+export type Priority = z.infer<typeof prioritySchema>
+export type Issue = z.infer<typeof issueSchema>
+
+export interface IssueFilters {
+  statusIds?: string[]
+  priorities?: Priority[]
+  assigneeId?: string | null
+  labels?: string[]
+  text?: string
+  archived?: boolean
+}
+
+export interface CreateIssueInput {
+  title: string
+  description?: string | null
+  statusId: string
+  priority?: Priority
+  assigneeId?: string | null
+  dueDate?: string | null
+  labels?: string[]
+}
+
+export interface UpdateIssueInput {
+  title?: string
+  description?: string | null
+  statusId?: string
+  priority?: Priority
+  assigneeId?: string | null
+  dueDate?: string | null
+  archived?: boolean
+  labels?: string[]
+  projectId?: string
+}
+
 export type Workspace = z.infer<typeof workspaceSchema>
 export type Member = z.infer<typeof memberSchema>
 export type Invitation = z.infer<typeof invitationSchema>
@@ -173,5 +231,52 @@ export const api = {
       z.void(),
       { method: "DELETE" }
     )
+  },
+
+  listIssues(projectId: string, filters?: IssueFilters): Promise<Issue[]> {
+    const params = new URLSearchParams()
+    for (const statusId of filters?.statusIds ?? []) {
+      params.append("status", statusId)
+    }
+    for (const priority of filters?.priorities ?? []) {
+      params.append("priority", priority)
+    }
+    if (filters?.assigneeId !== undefined) {
+      params.append(
+        "assignee",
+        filters.assigneeId === null ? "none" : filters.assigneeId
+      )
+    }
+    for (const label of filters?.labels ?? []) {
+      params.append("label", label)
+    }
+    if (filters?.text) params.append("q", filters.text)
+    if (filters?.archived !== undefined) {
+      params.append("archived", String(filters.archived))
+    }
+    const query = params.toString()
+    const path = `/api/projects/${projectId}/issues${query ? `?${query}` : ""}`
+    return request(path, z.array(issueSchema))
+  },
+
+  createIssue(projectId: string, input: CreateIssueInput): Promise<Issue> {
+    return request(`/api/projects/${projectId}/issues`, issueSchema, {
+      method: "POST",
+      body: input,
+    })
+  },
+
+  getIssue(ref: string): Promise<Issue> {
+    return request(
+      `/api/issues/${encodeURIComponent(ref)}`,
+      issueSchema
+    )
+  },
+
+  updateIssue(ref: string, input: UpdateIssueInput): Promise<Issue> {
+    return request(`/api/issues/${encodeURIComponent(ref)}`, issueSchema, {
+      method: "PATCH",
+      body: input,
+    })
   },
 }

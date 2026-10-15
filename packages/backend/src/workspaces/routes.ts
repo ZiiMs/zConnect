@@ -2,6 +2,8 @@ import { Hono } from "hono"
 import { z } from "zod"
 import type { GetSession } from "./session.js"
 import {
+  PRIORITIES,
+  type Priority,
   STATUS_CATEGORIES,
   WORKSPACE_ROLES,
   type WorkspaceStore,
@@ -55,6 +57,39 @@ const updateStatusBody = z
     { message: "Nothing to update" }
   )
 
+const createIssueBody = z.object({
+  title: z.string().trim().min(1),
+  description: z.string().nullable().optional(),
+  statusId: z.string().trim().min(1),
+  priority: z.enum(PRIORITIES).optional(),
+  assigneeId: z.string().trim().min(1).nullable().optional(),
+  dueDate: z.string().trim().min(1).nullable().optional(),
+  labels: z.array(z.string().trim().min(1).max(64)).max(20).optional(),
+})
+
+const updateIssueBody = z
+  .object({
+    title: z.string().trim().min(1).optional(),
+    description: z.string().nullable().optional(),
+    statusId: z.string().trim().min(1).optional(),
+    priority: z.enum(PRIORITIES).optional(),
+    assigneeId: z.string().trim().min(1).nullable().optional(),
+    dueDate: z.string().trim().min(1).nullable().optional(),
+    archived: z.boolean().optional(),
+    labels: z.array(z.string().trim().min(1).max(64)).max(20).optional(),
+    projectId: z.string().trim().min(1).optional(),
+  })
+  .refine((body) => Object.values(body).some((v) => v !== undefined), {
+    message: "Nothing to update",
+  })
+
+function queryList(getAll: (name: string) => string[], name: string): string[] {
+  return getAll(name)
+    .flatMap((v) => v.split(","))
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+  }
+
 function isConflict(error: unknown) {
   return (
     typeof error === "object" &&
@@ -76,6 +111,14 @@ function isLocked(error: unknown) {
     typeof error === "object" &&
     error !== null &&
     (error as { code?: string }).code === "locked"
+  )
+}
+
+function isInvalid(error: unknown) {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: string }).code === "invalid"
   )
 }
 
@@ -293,6 +336,15 @@ export function createWorkspacesApp({ store, getSession }: WorkspacesDeps) {
     return project
   }
 
+  /** Any workspace membership (Owner/Admin/Member) may write issues. */
+  async function writableProject(projectId: string, userId: string) {
+    const project = await store.getProject(projectId)
+    if (!project) return null
+    const membership = await store.getMembership(project.workspaceId, userId)
+    if (!membership) return null
+    return project
+  }
+
   app.post("/api/projects/:id/statuses", async (c) => {
     const session = await getSession(c.req.raw)
     if (!session) return c.json({ error: "Unauthorized" }, 401)
@@ -366,6 +418,93 @@ export function createWorkspacesApp({ store, getSession }: WorkspacesDeps) {
       if (isNotFound(error)) return c.json({ error: "Not found" }, 404)
       if (isLocked(error))
         return c.json({ error: (error as Error).message }, 409)
+      throw error
+    }
+  })
+
+  app.post("/api/projects/:id/issues", async (c) => {
+    const session = await getSession(c.req.raw)
+    if (!session) return c.json({ error: "Unauthorized" }, 401)
+    const project = await store.getProject(c.req.param("id"))
+    if (!project) return c.json({ error: "Not found" }, 404)
+    if (!(await writableProject(project.id, session.user.id))) {
+      return c.json({ error: "Forbidden" }, 403)
+    }
+    const parsed = createIssueBody.safeParse(await c.req.json())
+    if (!parsed.success) return c.json({ error: "Invalid issue" }, 400)
+    try {
+      const issue = await store.createIssue(project.id, parsed.data)
+      return c.json(issue, 201)
+    } catch (error) {
+      if (isInvalid(error))
+        return c.json({ error: (error as Error).message }, 400)
+      if (isNotFound(error)) return c.json({ error: "Not found" }, 404)
+      throw error
+    }
+  })
+
+  app.get("/api/projects/:id/issues", async (c) => {
+    const session = await getSession(c.req.raw)
+    if (!session) return c.json({ error: "Unauthorized" }, 401)
+    const project = await readableProject(c.req.param("id"), session.user.id)
+    if (!project) {
+      const exists = await store.getProject(c.req.param("id"))
+      return c.json(
+        { error: exists ? "Forbidden" : "Not found" },
+        exists ? 403 : 404
+      )
+    }
+    const getAll = (name: string) => c.req.queries(name) ?? []
+    const assignee = c.req.query("assignee")
+    const priorities = queryList(getAll, "priority").filter((p) =>
+      (PRIORITIES as readonly string[]).includes(p)
+    ) as Priority[]
+    return c.json(
+      await store.listIssues(project.id, {
+        statusIds: queryList(getAll, "status"),
+        priorities,
+        ...(assignee !== undefined
+          ? { assigneeId: assignee === "none" ? null : assignee }
+          : {}),
+        labels: queryList(getAll, "label"),
+        archived: c.req.query("archived") === "true",
+        text: c.req.query("q") ?? c.req.query("text"),
+      })
+    )
+  })
+
+  app.get("/api/issues/:key", async (c) => {
+    const session = await getSession(c.req.raw)
+    if (!session) return c.json({ error: "Unauthorized" }, 401)
+    const issue = await store.getIssue(c.req.param("key"))
+    if (!issue) return c.json({ error: "Not found" }, 404)
+    const project = await readableProject(issue.projectId, session.user.id)
+    if (!project) return c.json({ error: "Forbidden" }, 403)
+    return c.json(issue)
+  })
+
+  app.patch("/api/issues/:key", async (c) => {
+    const session = await getSession(c.req.raw)
+    if (!session) return c.json({ error: "Unauthorized" }, 401)
+    const issue = await store.getIssue(c.req.param("key"))
+    if (!issue) return c.json({ error: "Not found" }, 404)
+    if (!(await writableProject(issue.projectId, session.user.id))) {
+      return c.json({ error: "Forbidden" }, 403)
+    }
+    const parsed = updateIssueBody.safeParse(await c.req.json())
+    if (!parsed.success) return c.json({ error: "Invalid issue" }, 400)
+    if (
+      parsed.data.projectId !== undefined &&
+      !(await store.getProject(parsed.data.projectId))
+    ) {
+      return c.json({ error: "Not found" }, 404)
+    }
+    try {
+      return c.json(await store.updateIssue(issue.id, parsed.data))
+    } catch (error) {
+      if (isInvalid(error))
+        return c.json({ error: (error as Error).message }, 400)
+      if (isNotFound(error)) return c.json({ error: "Not found" }, 404)
       throw error
     }
   })

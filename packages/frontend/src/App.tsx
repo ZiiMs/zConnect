@@ -26,11 +26,12 @@ function SignedOut() {
   )
 }
 
-function WorkspaceShell() {
+function WorkspaceShell({ userId }: { userId: string }) {
   const { workspaces, selectedId, selected, select, loading, error, refresh } =
     useWorkspaces()
   const canManageMembers =
     selected?.role === "Owner" || selected?.role === "Admin"
+  const canWriteIssues = selected !== null && selected.role !== "Viewer"
   const {
     projects,
     selectedId: selectedProjectId,
@@ -130,6 +131,8 @@ function WorkspaceShell() {
               key={selectedProject.id}
               project={selectedProject}
               canManage={canManageMembers}
+              canWriteIssues={canWriteIssues}
+              userId={userId}
               onProjectUpdated={replaceProject}
             />
           )}
@@ -150,7 +153,7 @@ export function App() {
     )
   }
 
-  return session ? <WorkspaceShell /> : <SignedOut />
+  return session ? <WorkspaceShell userId={session.user.id} /> : <SignedOut />
 }
 
 export default App
