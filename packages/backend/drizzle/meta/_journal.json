@@ -15,6 +15,13 @@
       "when": 1792047491946,
       "tag": "0001_dusty_ezekiel",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792082129193,
+      "tag": "0002_workspace_foundation",
+      "breakpoints": true
     }
   ]
 }
