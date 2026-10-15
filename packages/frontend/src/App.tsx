@@ -92,24 +92,35 @@ function WorkspaceShell({
                 type="button"
                 aria-current={view === "project" ? "page" : undefined}
                 onClick={() => setView("project")}
-                className="flex items-center rounded-md px-2 py-1.5 text-left text-sm"
+                className={`flex items-center rounded-md px-2 py-1.5 text-left text-sm ${
+                  view === "project" ? "bg-accent font-medium" : ""
+                }`}
               >
                 Project
-                <span className="ml-auto text-muted-foreground text-xs">
-                  {projects.length}
-                </span>
+                {selectedProject && (
+                  <span className="ml-auto font-mono text-muted-foreground text-xs">
+                    {selectedProject.key}
+                  </span>
+                )}
               </button>
               <button
                 type="button"
                 aria-current={view === "settings" ? "page" : undefined}
                 onClick={() => setView("settings")}
-                className="flex items-center rounded-md px-2 py-1.5 text-left text-sm"
+                className={`flex items-center rounded-md px-2 py-1.5 text-left text-sm ${
+                  view === "settings" ? "bg-accent font-medium" : ""
+                }`}
               >
                 Settings
               </button>
             </nav>
             <section className="flex flex-col gap-2">
-              <h2 className="font-medium text-sm">Projects</h2>
+              <h2 className="font-medium text-sm">
+                Projects{" "}
+                <span className="text-muted-foreground text-xs">
+                  {projects.length}
+                </span>
+              </h2>
               {projectsLoading && (
                 <p className="text-muted-foreground text-sm">
                   Loading projects…
@@ -158,53 +169,52 @@ function WorkspaceShell({
         </div>
       </aside>
       <main className="min-w-0 flex-1 p-6">
-        {!selected ? (
-          <div className="flex max-w-md flex-col gap-2">
-            <h2 className="font-medium text-sm">Workspaces</h2>
-            {!loading && !error && (
-              <CreateWorkspaceForm
-                onCreated={(workspace) => {
-                  void refresh().then(() => select(workspace.id))
-                }}
-              />
-            )}
-          </div>
-        ) : view === "settings" ? (
-          <WorkspaceSettings
-            workspace={selected}
-            project={selectedProject}
-            canManage={canManageMembers}
-            onProjectUpdated={replaceProject}
-            onWorkspaceCreated={(workspace) => {
-              void refresh().then(() => select(workspace.id))
-            }}
-          />
-        ) : (
-          <section className="flex flex-col gap-4">
-            <h2 className="font-medium text-sm">
-              {selected.name}{" "}
-              <span className="text-muted-foreground">({selected.role})</span>
-            </h2>
-            {selectedProject ? (
-              <ProjectPage
-                key={selectedProject.id}
-                project={selectedProject}
-                canManage={canManageMembers}
-                canWriteIssues={canWriteIssues}
-                userId={userId}
-                onProjectUpdated={replaceProject}
-              />
-            ) : (
-              !projectsLoading &&
-              !projectsError &&
-              projects.length > 0 && (
-                <p className="text-muted-foreground text-sm">
-                  Select a project to view its issues.
-                </p>
-              )
-            )}
-          </section>
-        )}
+        <div className="mx-auto flex w-full max-w-5xl flex-col">
+          {!selected ? (
+            <div className="flex max-w-md flex-col gap-2">
+              <h2 className="font-medium text-sm">Workspaces</h2>
+              {!loading && !error && (
+                <CreateWorkspaceForm
+                  onCreated={(workspace) => {
+                    void refresh().then(() => select(workspace.id))
+                  }}
+                />
+              )}
+            </div>
+          ) : view === "settings" ? (
+            <WorkspaceSettings
+              workspace={selected}
+              project={selectedProject}
+              canManage={canManageMembers}
+              onProjectUpdated={replaceProject}
+              onWorkspaceCreated={(workspace) => {
+                void refresh().then(() => select(workspace.id))
+              }}
+            />
+          ) : (
+            <section className="flex flex-col gap-4">
+              {selectedProject ? (
+                <ProjectPage
+                  key={selectedProject.id}
+                  project={selectedProject}
+                  canManage={canManageMembers}
+                  canWriteIssues={canWriteIssues}
+                  userId={userId}
+                  onProjectUpdated={replaceProject}
+                  onOpenSettings={() => setView("settings")}
+                />
+              ) : (
+                !projectsLoading &&
+                !projectsError &&
+                projects.length > 0 && (
+                  <p className="text-muted-foreground text-sm">
+                    Select a project to view its issues.
+                  </p>
+                )
+              )}
+            </section>
+          )}
+        </div>
       </main>
     </div>
   )

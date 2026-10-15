@@ -101,7 +101,13 @@ export function IssueFilterBar({
   onChange: (value: IssueFilterValue) => void
 }) {
   return (
-    <section className="flex flex-col gap-2" aria-label="Issue filters">
+    <section
+      className="flex flex-col gap-2 rounded-md border bg-card p-3"
+      aria-label="Issue filters"
+    >
+      <h4 className="font-medium text-muted-foreground text-xs uppercase tracking-wider">
+        Filters
+      </h4>
       {/* Ticket ziim/zConnect#4 acceptance requires "text by identifier/title"
           filtering, so this box is in scope: it is the per-project text
           filter, not the spec's out-of-scope "full-text search engine". */}
@@ -112,24 +118,26 @@ export function IssueFilterBar({
         value={value.text}
         onChange={(e) => onChange({ ...value, text: e.target.value })}
       />
-      <fieldset className={groupClass}>
-        <legend className={labelClass}>Status</legend>
-        {statuses.map((status) => (
-          <label key={status.id} className={checkClass}>
-            <input
-              type="checkbox"
-              checked={value.statusIds.includes(status.id)}
-              onChange={() =>
-                onChange({
-                  ...value,
-                  statusIds: toggle(value.statusIds, status.id),
-                })
-              }
-            />
-            {status.name}
-          </label>
-        ))}
-      </fieldset>
+      {statuses.length > 0 && (
+        <fieldset className={groupClass}>
+          <legend className={labelClass}>Status</legend>
+          {statuses.map((status) => (
+            <label key={status.id} className={checkClass}>
+              <input
+                type="checkbox"
+                checked={value.statusIds.includes(status.id)}
+                onChange={() =>
+                  onChange({
+                    ...value,
+                    statusIds: toggle(value.statusIds, status.id),
+                  })
+                }
+              />
+              {status.name}
+            </label>
+          ))}
+        </fieldset>
+      )}
       <fieldset className={groupClass}>
         <legend className={labelClass}>Priority</legend>
         {PRIORITY_OPTIONS.map((priority) => (
