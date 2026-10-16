@@ -507,6 +507,7 @@ export function ProjectIssues({
           userId={userId}
           projectId={project.id}
           canEdit={canWrite}
+          visibleStatusIds={filters.statusIds}
           onMove={(issue, statusId) => void handleMove(issue, statusId)}
           onAssign={(issue, assigneeId) =>
             void handleUpdate(issue, { assigneeId })

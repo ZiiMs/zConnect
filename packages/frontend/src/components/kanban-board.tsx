@@ -163,7 +163,8 @@ function KanbanColumn({
 
 /**
  * Kanban view: the same filtered Issue query as List and Table, grouped by
- * ordered Status. Drops resolve through `resolveKanbanDrop` into `onMove` so
+ * ordered Status. `visibleStatusIds` hides the filtered-out boards; without
+ * it every status renders a column. Drops resolve through `resolveKanbanDrop` into `onMove` so
  * the container runs the Issue API mutation with its optimistic update and
  * conflict handling; the board keeps no write state of its own.
  *
@@ -180,6 +181,7 @@ export function KanbanBoard({
   userId,
   projectId,
   canEdit,
+  visibleStatusIds,
   onMove,
   onAssign,
   onOpenDetail,
@@ -194,6 +196,12 @@ export function KanbanBoard({
   userId: string
   projectId: string
   canEdit: boolean
+  /**
+   * Status ids the filter keeps visible. A non-empty selection hides every
+   * other board; empty/undefined (All Issues) shows them all. `statuses`
+   * stays complete so card menus can still move issues anywhere.
+   */
+  visibleStatusIds?: string[]
   onMove: (issue: Issue, statusId: string) => void
   /** Card quick-assign; absent means no assign control. */
   onAssign?: (issue: Issue, assigneeId: string | null) => void
@@ -246,6 +254,10 @@ export function KanbanBoard({
   }
 
   const ordered = [...statuses].sort((a, b) => a.position - b.position)
+  const visible =
+    visibleStatusIds !== undefined && visibleStatusIds.length > 0
+      ? ordered.filter((status) => visibleStatusIds.includes(status.id))
+      : ordered
 
   return (
     <DndContext
@@ -255,7 +267,7 @@ export function KanbanBoard({
       onDragCancel={() => setActiveId(null)}
     >
       <div className="flex h-[calc(100svh-5rem)] items-stretch gap-2 overflow-x-auto pb-2">
-        {ordered.map((status) => (
+        {visible.map((status) => (
           <KanbanColumn
             key={status.id}
             status={status}

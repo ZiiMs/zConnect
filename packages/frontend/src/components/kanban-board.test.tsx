@@ -151,6 +151,42 @@ describe("kanban board", () => {
     })
   })
 
+  test("a status filter hides the filtered-out boards", () => {
+    render(
+      <KanbanBoard
+        issues={issues.filter((issue) => issue.statusId === "st-1")}
+        statuses={statuses}
+        members={members}
+        userId="user-a"
+        projectId="pr-1"
+        canEdit={true}
+        visibleStatusIds={["st-1"]}
+        onMove={() => {}}
+      />
+    )
+
+    expect(screen.getByTestId("kanban-column-st-1")).toBeInTheDocument()
+    expect(screen.queryByTestId("kanban-column-st-2")).not.toBeInTheDocument()
+  })
+
+  test("an empty status filter shows every board", () => {
+    render(
+      <KanbanBoard
+        issues={issues}
+        statuses={statuses}
+        members={members}
+        userId="user-a"
+        projectId="pr-1"
+        canEdit={true}
+        visibleStatusIds={[]}
+        onMove={() => {}}
+      />
+    )
+
+    expect(screen.getByTestId("kanban-column-st-1")).toBeInTheDocument()
+    expect(screen.getByTestId("kanban-column-st-2")).toBeInTheDocument()
+  })
+
   test("lanes stretch full height with tight gutters", () => {
     setup()
 
