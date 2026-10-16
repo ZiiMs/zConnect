@@ -1,5 +1,5 @@
-import { StatusDot } from "@/components/status-dot"
 import type { Label, Priority, Status } from "@/lib/api"
+import { StatusIcon } from "@/lib/status-icons"
 
 const PRIORITY_OPTIONS: Priority[] = ["Urgent", "High", "Medium", "Low", "None"]
 
@@ -229,7 +229,7 @@ export function IssueFilterBar({
                   }
                   className={statusOptionClass(selected)}
                 >
-                  <StatusDot status={status} size={8} />
+                  <StatusIcon status={status} size={12} />
                   {status.name}
                 </button>
               )

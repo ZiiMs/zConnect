@@ -250,8 +250,8 @@ export function IssueFilterPopover({
                         onClick={() => toggleDisplay(prop.id)}
                         className={`rounded-md border px-2 py-0.5 text-xs ${
                           selected
-                            ? "border-ring bg-accent font-medium"
-                            : "text-muted-foreground hover:bg-accent"
+                            ? "border-transparent bg-accent font-medium text-accent-foreground"
+                            : "border-transparent text-muted-foreground opacity-50 hover:bg-accent hover:text-accent-foreground hover:opacity-100"
                         }`}
                       >
                         {prop.label}

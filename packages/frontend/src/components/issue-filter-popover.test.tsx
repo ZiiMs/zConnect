@@ -88,6 +88,37 @@ describe("view options", () => {
     )
   })
 
+  test("display properties fade when hidden, no ring outline", async () => {
+    const user = userEvent.setup()
+    render(
+      <IssueFilterPopover
+        statuses={[]}
+        members={[]}
+        value={{
+          ...emptyIssueFilters(),
+          display: { ...emptyIssueFilters().display, priority: false },
+        }}
+        onChange={() => {}}
+        view="list"
+        onViewChange={() => {}}
+      />
+    )
+
+    await user.click(screen.getByRole("button", { name: /^filters/i }))
+
+    const shown = screen.getByRole("button", { name: /display id/i })
+    const hidden = screen.getByRole("button", { name: /display priority/i })
+    expect(shown.getAttribute("aria-pressed")).toBe("true")
+    expect(hidden.getAttribute("aria-pressed")).toBe("false")
+    expect(shown.className).toContain("bg-accent")
+    expect(shown.className).toContain("font-medium")
+    expect(shown.className).not.toContain("border-ring")
+    expect(shown.className).not.toContain("opacity-50")
+    expect(hidden.className).toContain("opacity-50")
+    expect(hidden.className).not.toContain("border-ring")
+    expect(hidden.className).not.toContain("font-medium")
+  })
+
   test("reset restores every default", async () => {
     const user = userEvent.setup()
     const onChange = vi.fn()

@@ -156,9 +156,9 @@ describe("issue filter bar", () => {
     expect(unselected.className).toContain("text-muted-foreground")
     expect(unselected.className).toContain("opacity-50")
     expect(unselected.className).not.toContain("font-medium")
-    // The status color cue stays on the dot, not the button.
+    // The status mark matches everywhere else (category icon in status color).
     expect(
-      within(selected).getByTestId("status-dot-Backlog")
+      within(selected).getByTestId("status-icon-Backlog")
     ).toBeInTheDocument()
   })
 })
