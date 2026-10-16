@@ -161,16 +161,18 @@ const groupClass = "flex flex-wrap items-center gap-2"
 const labelClass = "text-muted-foreground text-xs"
 const pillClass =
   "inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs"
+/** Selected tone shared by the status visibility pills and priority pills. */
+const pillToneClass = (selected: boolean) =>
+  selected
+    ? "border-ring bg-accent font-medium text-accent-foreground"
+    : "border-input text-muted-foreground hover:bg-accent hover:text-accent-foreground"
 /**
- * Status options read as plain text: the dot keeps the status color cue
- * and `aria-pressed` + weight mark the selection. No pill wash.
+ * Status options read as visibility pills: the dot keeps the status color
+ * cue and `aria-pressed` + the accent pill mark which statuses are visible.
+ * Same selected convention as the priority pills below.
  */
 const statusOptionClass = (selected: boolean) =>
-  `inline-flex items-center gap-1.5 rounded px-1 py-0.5 text-xs ${
-    selected
-      ? "font-medium text-foreground"
-      : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-  }`
+  `${pillClass} ${pillToneClass(selected)}`
 const inputClass =
   "rounded-md border border-input bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
 const checkClass = "flex items-center gap-1 text-sm"
@@ -249,11 +251,7 @@ export function IssueFilterBar({
                       : [...value.priorities, priority],
                   })
                 }
-                className={`${pillClass} ${
-                  selected
-                    ? "border-ring bg-accent font-medium text-accent-foreground"
-                    : "border-input text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                }`}
+                className={`${pillClass} ${pillToneClass(selected)}`}
               >
                 {priority}
               </button>

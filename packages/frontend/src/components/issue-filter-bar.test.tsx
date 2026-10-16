@@ -139,16 +139,22 @@ describe("issue filter bar", () => {
     expect(screen.getByLabelText(/search issues/i)).toHaveValue("fix")
   })
 
-  test("selected statuses read as plain text, not a color wash", () => {
+  test("selected statuses highlight as visibility pills", () => {
     renderBar({ ...emptyIssueFilters(), statusIds: ["st-1"] })
     const selected = screen.getByRole("button", { name: "Backlog" })
     const unselected = screen.getByRole("button", { name: "Shipped" })
     expect(selected).toHaveAttribute("aria-pressed", "true")
     expect(unselected).toHaveAttribute("aria-pressed", "false")
-    // Text styling only: no pill background wash either way.
+    // Visibility cue: selected pills highlight, unselected stay muted.
+    // No inline color wash either way.
     expect(selected.getAttribute("style")).toBeNull()
     expect(unselected.getAttribute("style")).toBeNull()
     expect(selected.className).toContain("font-medium")
+    expect(selected.className).toContain("bg-accent")
+    expect(selected.className).toContain("border-ring")
+    expect(unselected.className).toContain("text-muted-foreground")
+    expect(unselected.className).not.toContain("border-ring")
+    expect(unselected.className).not.toContain("font-medium")
     // The status color cue stays on the dot, not the button.
     expect(
       within(selected).getByTestId("status-dot-Backlog")
