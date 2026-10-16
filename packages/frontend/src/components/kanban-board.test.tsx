@@ -320,4 +320,86 @@ describe("kanban board", () => {
       backgroundColor: "#ef4444",
     })
   })
+
+  test("cards carry an icon-only Priority mark after the identifier", () => {
+    setup()
+
+    const card = screen.getByTestId("kanban-card-WEB-1")
+    // No priority text on the card, just the mark.
+    const mark = within(card).getByRole("img", {
+      name: /priority for WEB-1: high/i,
+    })
+    expect(mark).toHaveAttribute("title", "High")
+    expect(within(card).queryByText("High")).not.toBeInTheDocument()
+    // Softened tone (2026-10-16 review): the priority's own token, mixed
+    // toward the muted palette in oklab so the hue survives and only chroma
+    // drops.
+    expect(mark.getAttribute("style")).toContain(
+      "color-mix(in oklab, var(--priority-high) 60%, var(--muted-foreground))"
+    )
+  })
+
+  test("cards cap labels at two and roll the rest into +n", () => {
+    const many: Issue[] = [{ ...issues[0], labels: ["bug", "perf", "a11y"] }]
+    render(
+      <KanbanBoard
+        issues={many}
+        statuses={statuses}
+        labels={[
+          { id: "lb-1", workspaceId: "ws-1", name: "bug", color: "#ef4444" },
+          { id: "lb-2", workspaceId: "ws-1", name: "perf", color: "#22c55e" },
+          { id: "lb-3", workspaceId: "ws-1", name: "a11y", color: "#3b82f6" },
+        ]}
+        canEdit={true}
+        onMove={() => {}}
+      />
+    )
+
+    const card = screen.getByTestId("kanban-card-WEB-1")
+    expect(within(card).getByText("bug")).toBeInTheDocument()
+    expect(within(card).getByText("perf")).toBeInTheDocument()
+    expect(within(card).queryByText("a11y")).not.toBeInTheDocument()
+    // The overflow pill carries the full list as its tooltip.
+    const overflow = within(card).getByTestId("label-overflow-WEB-1")
+    expect(overflow).toHaveTextContent("+1")
+    expect(overflow).toHaveAttribute("title", "bug, perf, a11y")
+  })
+
+  test("the card surface carries no status accent", () => {
+    setup()
+
+    const card = screen.getByTestId("kanban-card-WEB-1")
+    // Status colour was removed from the surface (2026-10-16 review): no 4px
+    // rail in status.color and no color-mix wash, so status reads from the
+    // footer mark and name only.
+    expect(card.style.borderLeft).toBe("")
+    expect(card.style.backgroundColor).toBe("")
+    expect(card.className).toContain("bg-card")
+  })
+
+  test("the clamped title keeps the full text on hover", () => {
+    const long: Issue[] = [
+      {
+        ...issues[0],
+        title: "Realtime subscription leaks when switching projects quickly",
+      },
+    ]
+    render(
+      <KanbanBoard
+        issues={long}
+        statuses={statuses}
+        canEdit={true}
+        onMove={() => {}}
+      />
+    )
+
+    expect(
+      screen.getByText(
+        "Realtime subscription leaks when switching projects quickly"
+      )
+    ).toHaveAttribute(
+      "title",
+      "Realtime subscription leaks when switching projects quickly"
+    )
+  })
 })

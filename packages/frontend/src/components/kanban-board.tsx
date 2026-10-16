@@ -58,12 +58,15 @@ function KanbanColumn({
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: status.id })
 
+  // Fixed width, not `min-w-72`: a lane sized by its content stretches to the
+  // longest unbreakable token in a title, and `break-words` on the card cannot
+  // lower max-content, so the wrap only happens under a bounded width.
   return (
     <section
       ref={setNodeRef}
       data-testid={`kanban-column-${status.id}`}
       aria-label={status.name}
-      className={`flex min-w-72 shrink-0 flex-col gap-3 overflow-y-auto rounded-md border bg-sidebar p-3 ${isOver ? "ring-2 ring-ring" : ""}`}
+      className={`flex w-72 shrink-0 flex-col gap-3 overflow-y-auto rounded-md border bg-sidebar p-3 ${isOver ? "ring-2 ring-ring" : ""}`}
     >
       <h4 className="flex items-center gap-2 px-1 pt-1 pb-1 font-medium text-sm">
         <StatusIcon status={status} />

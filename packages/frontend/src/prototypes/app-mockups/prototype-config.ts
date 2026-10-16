@@ -2,9 +2,7 @@
  * PROTOTYPE (throwaway) — the axes the mockups are reviewed on.
  *
  *   screen                  which surface (issues, board, detail, settings, signin)
- *   nav/issues/board/detail/settings/signin   per-surface variant, 8 each ("9" = the
- *                           Board's real-card board)
- *   cards                   Kanban Issue card density (A/B/C/all), on board "9"
+ *   nav/issues/board/detail/settings/signin   per-surface variant, 8 each
  *   style                   structural theme style, 8 keys (radius/type/grid only)
  *   color                   palette, 11 keys (all color tokens)
  *   mode                    light / dark
@@ -29,9 +27,6 @@ export type ScreenKey = (typeof SCREENS)[number]["key"]
 const VARIANT_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8"] as const
 
 export type VariantKey = (typeof VARIANT_KEYS)[number]
-
-/** Board "9" is the real-card board, whose density is the `cards` axis. */
-export type BoardKey = VariantKey | "9"
 
 export const VARIANTS: readonly {
   key: VariantKey
@@ -69,7 +64,7 @@ export const ISSUES_VARIANTS: readonly { key: VariantKey; name: string }[] = [
   { key: "8", name: "Master–detail" },
 ]
 
-export const BOARD_VARIANTS: readonly { key: BoardKey; name: string }[] = [
+export const BOARD_VARIANTS: readonly { key: VariantKey; name: string }[] = [
   { key: "1", name: "Compact" },
   { key: "2", name: "Roomy" },
   { key: "3", name: "Swimlanes by priority" },
@@ -78,38 +73,7 @@ export const BOARD_VARIANTS: readonly { key: BoardKey; name: string }[] = [
   { key: "6", name: "Rich cards" },
   { key: "7", name: "Horizontal swimlanes" },
   { key: "8", name: "Grouped by assignee" },
-  { key: "9", name: "Issue cards (real, density toggle)" },
 ]
-
-/**
- * The `cards` axis: the three Kanban Issue card densities under review
- * (handoff 2026-10-16, Q5 — density is the only axis), plus `all` to see
- * them side by side. Plugged into board "9". Pad and gap are the whole
- * difference between the three (the status tint was dropped in the
- * 2026-10-16 review); the card layout itself is the locked spec.
- */
-export type DensityKey = "A" | "B" | "C"
-
-export type CardKey = DensityKey | "all"
-
-export const CARD_DENSITIES: readonly {
-  key: DensityKey
-  name: string
-  pad: string
-  gap: string
-}[] = [
-  { key: "A", name: "compact", pad: "p-2", gap: "gap-1" },
-  { key: "B", name: "balanced", pad: "p-3", gap: "gap-1.5" },
-  { key: "C", name: "roomy", pad: "p-4", gap: "gap-2" },
-]
-
-export const CARD_VARIANTS: readonly { key: CardKey; name: string }[] = [
-  ...CARD_DENSITIES,
-  { key: "all", name: "all three, side by side" },
-]
-
-/** Board key whose density comes from the `cards` axis. */
-export const REAL_CARDS_BOARD: BoardKey = "9"
 
 export const DETAIL_VARIANTS: readonly { key: VariantKey; name: string }[] = [
   { key: "1", name: "Side pane" },
@@ -255,7 +219,6 @@ export const DEFAULT_BOARD: VariantKey = "2"
 export const DEFAULT_DETAIL: VariantKey = "1"
 export const DEFAULT_SETTINGS: VariantKey = "1"
 export const DEFAULT_SIGNIN: VariantKey = "1"
-export const DEFAULT_CARDS: CardKey = "B"
 export const DEFAULT_STYLE: ThemeStyleKey = "neutral"
 export const DEFAULT_COLOR: ThemeColorKey = "neutral"
 export const DEFAULT_MODE: ModeKey = "light"

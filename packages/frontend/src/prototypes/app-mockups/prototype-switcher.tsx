@@ -1,9 +1,9 @@
 /**
  * PROTOTYPE (throwaway) — floating variant switcher.
  *
- * Eleven axes now (screen + six per-surface pickers + the Kanban card density +
- * style + color + mode), so the bar is two-tier: a slim pill (arrows, screen
- * chips, tune toggle) and an expandable tune panel with a row per axis.
+ * Ten axes (screen + six per-surface pickers + style + color + mode), so the
+ * bar is two-tier: a slim pill (arrows, screen chips, tune toggle) and an
+ * expandable tune panel with a row per axis.
  * High-contrast pill so it never reads as part of a design being judged.
  * Dev-only.
  */
@@ -13,7 +13,6 @@ import { useState } from "react"
 import { Glyph } from "./atoms"
 import {
   BOARD_VARIANTS,
-  CARD_VARIANTS,
   DETAIL_VARIANTS,
   ISSUES_VARIANTS,
   NAV_VARIANTS,
@@ -60,7 +59,6 @@ function variantName(axis: string, key: string): string {
     detail: DETAIL_VARIANTS,
     settings: SETTINGS_VARIANTS,
     signin: SIGNIN_VARIANTS,
-    cards: CARD_VARIANTS,
   }
   return table[axis]?.find((item) => item.key === key)?.name ?? key
 }
@@ -87,7 +85,7 @@ function VariantButtons({
   current,
   onChange,
 }: {
-  axis: "nav" | "issues" | "board" | "detail" | "settings" | "signin" | "cards"
+  axis: "nav" | "issues" | "board" | "detail" | "settings" | "signin"
   current: string
   onChange: (patch: Partial<ProtoState>) => void
 }) {
@@ -98,7 +96,6 @@ function VariantButtons({
     detail: DETAIL_VARIANTS,
     settings: SETTINGS_VARIANTS,
     signin: SIGNIN_VARIANTS,
-    cards: CARD_VARIANTS,
   }[axis]
   return (
     <>
@@ -134,19 +131,16 @@ export function PrototypeSwitcher({
 }) {
   const [tune, setTune] = useState(false)
   const axis = activeVariantKey(state)
-  /** On the real-card board the surface is still Board; the arrows walk density. */
-  const surfaceAxis = axis === "cards" ? "board" : axis
   const axisLabel =
-    surfaceAxis === "issues"
+    axis === "issues"
       ? "Issues"
-      : surfaceAxis === "board"
+      : axis === "board"
         ? "Board"
-        : surfaceAxis === "detail"
+        : axis === "detail"
           ? "Detail"
-          : surfaceAxis === "settings"
+          : axis === "settings"
             ? "Settings"
             : "Sign in"
-  const pillLabel = axis === "cards" ? "Cards" : axisLabel
 
   return (
     <div className="pointer-events-none fixed inset-x-0 bottom-3 z-50 flex flex-col items-center gap-2 px-3">
@@ -162,21 +156,9 @@ export function PrototypeSwitcher({
           <Row label={axisLabel}>
             <VariantButtons
               axis={
-                surfaceAxis as
-                  | "issues"
-                  | "board"
-                  | "detail"
-                  | "settings"
-                  | "signin"
+                axis as "issues" | "board" | "detail" | "settings" | "signin"
               }
-              current={String(state[surfaceAxis])}
-              onChange={onChange}
-            />
-          </Row>
-          <Row label="Cards">
-            <VariantButtons
-              axis="cards"
-              current={String(state.cards)}
+              current={String(state[axis])}
               onChange={onChange}
             />
           </Row>
@@ -276,7 +258,7 @@ export function PrototypeSwitcher({
           prototype
         </span>
         <button
-          aria-label={`Previous ${pillLabel.toLowerCase()} variant`}
+          aria-label={`Previous ${axisLabel.toLowerCase()} variant`}
           className="grid size-6 place-items-center rounded-full hover:bg-background/15"
           onClick={() => onChange(stepVariant(state, -1))}
           type="button"
@@ -284,40 +266,17 @@ export function PrototypeSwitcher({
           <Glyph className="size-3.5" name="chevronLeft" />
         </button>
         <span className="min-w-40 text-center text-xs">
-          <span className="opacity-60">{pillLabel}: </span>
+          <span className="opacity-60">{axisLabel}: </span>
           {String(state[axis])} · {variantName(axis, String(state[axis]))}
         </span>
         <button
-          aria-label={`Next ${pillLabel.toLowerCase()} variant`}
+          aria-label={`Next ${axisLabel.toLowerCase()} variant`}
           className="grid size-6 place-items-center rounded-full hover:bg-background/15"
           onClick={() => onChange(stepVariant(state, 1))}
           type="button"
         >
           <Glyph className="size-3.5" name="chevronRight" />
         </button>
-        {axis === "cards" ? (
-          <>
-            <span className="hidden h-4 w-px bg-background/25 sm:block" />
-            <div className="flex items-center gap-0.5 rounded-full bg-background/10 p-0.5">
-              {CARD_VARIANTS.map((item) => (
-                <button
-                  className={cn(
-                    "rounded-full px-2 py-0.5 text-[11px]",
-                    state.cards === item.key
-                      ? "bg-background text-foreground"
-                      : "opacity-70 hover:bg-background/10 hover:opacity-100"
-                  )}
-                  key={item.key}
-                  onClick={() => onChange({ cards: item.key })}
-                  title={`${item.key} · ${item.name}`}
-                  type="button"
-                >
-                  {item.key}
-                </button>
-              ))}
-            </div>
-          </>
-        ) : null}
         <span className="hidden h-4 w-px bg-background/25 sm:block" />
         <div className="flex items-center gap-0.5 rounded-full bg-background/10 p-0.5">
           {SCREENS.map((screen) => {

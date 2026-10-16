@@ -88,6 +88,9 @@
   --accent: #eeeef0;
   --accent-foreground: #111827;
   --destructive: #ef4444;
+  /* zConnect addition, not Darkmatter: Priority mark tones (see priority-icons). */
+  --priority-high: #dd9314;
+  --priority-medium: #3284d0;
   --border: #e2e3e7;
   --input: #e2e3e7;
   --ring: #d87943;
@@ -123,6 +126,9 @@
   --accent: #2c2c31;
   --accent-foreground: #c8c8c8;
   --destructive: #e0604f;
+  /* zConnect addition, not Darkmatter: Priority mark tones (see priority-icons). */
+  --priority-high: #f5a939;
+  --priority-medium: #4c9deb;
   --border: #333338;
   --input: #333338;
   --ring: #e78a53;

@@ -3,7 +3,11 @@ import { Clock, UserRound } from "lucide-react"
 import { PropertyMenu, PropertyMenuOption } from "@/components/property-menu"
 import type { Issue, Label, Status } from "@/lib/api"
 import { describeDueDate } from "@/lib/due"
+import { PriorityMark } from "@/lib/priority-icons"
 import { StatusIcon } from "@/lib/status-icons"
+
+/** Label pills a card shows before rolling the rest into `+n`. */
+const MAX_LABELS = 2
 
 /**
  * Kanban card: a draggable Issue. The assignee avatar and the status pill
@@ -13,8 +17,10 @@ import { StatusIcon } from "@/lib/status-icons"
  * `labels` is provided (spec ziim/zConnect#1 story 14 "workspace-shared
  * Labels with color").
  *
- * Layout: identifier plus assignee, semibold title, labels, the status
- * pill, then the due row. Read-only viewers get static marks and text.
+ * Layout: identifier, an icon-only Priority mark, then the assignee; a
+ * two-line clamped title; label chips capped at two plus `+n`; and a footer
+ * with the status control left and the due date right. The card carries no
+ * status colour of its own. Read-only viewers get static marks and text.
  */
 export function KanbanCard({
   issue,
@@ -48,6 +54,14 @@ export function KanbanCard({
   const issueStatus = statuses.find((status) => status.id === issue.statusId)
   const due = describeDueDate(issue.dueDate)
   const canAssign = canEdit && onAssign !== undefined
+  const title = (
+    <span
+      title={issue.title}
+      className="line-clamp-2 break-words font-medium text-sm"
+    >
+      {issue.title}
+    </span>
+  )
 
   return (
     <article
@@ -71,6 +85,10 @@ export function KanbanCard({
           <span className="font-mono text-muted-foreground text-xs">
             {issue.identifier}
           </span>
+          <PriorityMark
+            priority={issue.priority}
+            label={`Priority for ${issue.identifier}: ${issue.priority}`}
+          />
           {canAssign ? (
             <PropertyMenu
               label={`Assignee for ${issue.identifier}`}
@@ -139,82 +157,95 @@ export function KanbanCard({
             type="button"
             aria-label={`Open detail for ${issue.identifier}`}
             onClick={() => onOpenDetail(issue)}
-            className="text-left font-medium text-sm hover:underline"
+            className="text-left hover:underline"
           >
-            {issue.title}
+            {title}
           </button>
         ) : (
-          <span className="font-medium text-sm">{issue.title}</span>
+          title
         )}
         {issue.labels.length > 0 && (
-          <span className="flex flex-wrap items-center gap-1">
-            {issue.labels.map((name) => {
+          <span className="flex items-center gap-1 overflow-hidden">
+            {issue.labels.slice(0, MAX_LABELS).map((name) => {
               const color = colorFor(name)
               return (
                 <span
                   key={name}
-                  className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs"
+                  className="inline-flex min-w-0 items-center gap-1 rounded-full border px-2 py-0.5 text-xs"
                 >
                   {color && (
                     <span
                       data-testid={`label-dot-${name}`}
                       aria-hidden="true"
-                      className="inline-block size-2.5 rounded-full"
+                      className="inline-block size-2.5 shrink-0 rounded-full"
                       style={{ backgroundColor: color }}
                     />
                   )}
-                  {name}
+                  <span className="truncate">{name}</span>
                 </span>
               )
             })}
+            {issue.labels.length > MAX_LABELS && (
+              <span
+                data-testid={`label-overflow-${issue.identifier}`}
+                className="shrink-0 rounded-full border px-1.5 py-0.5 text-muted-foreground text-xs"
+                title={issue.labels.join(", ")}
+              >
+                +{issue.labels.length - MAX_LABELS}
+              </span>
+            )}
           </span>
         )}
-        {issueStatus &&
-          (canEdit ? (
-            <PropertyMenu
-              label={`Move ${issue.identifier} to status`}
-              triggerClassName="inline-flex w-fit items-center gap-1.5 rounded-md border border-input px-2 py-0.5 text-xs hover:bg-accent"
-              preview={
-                <>
+        {(issueStatus || due) && (
+          <span className="flex items-center gap-2">
+            {issueStatus &&
+              (canEdit ? (
+                <PropertyMenu
+                  label={`Move ${issue.identifier} to status`}
+                  triggerClassName="inline-flex w-fit items-center gap-1.5 rounded-md border border-input px-2 py-0.5 text-xs hover:bg-accent"
+                  preview={
+                    <>
+                      <StatusIcon status={issueStatus} size={12} />
+                      {issueStatus.name}
+                    </>
+                  }
+                >
+                  {(close) => (
+                    <>
+                      {statuses.map((status) => (
+                        <PropertyMenuOption
+                          key={status.id}
+                          selected={status.id === issue.statusId}
+                          onSelect={() => {
+                            if (status.id !== issue.statusId) {
+                              onMove(issue, status.id)
+                            }
+                            close()
+                          }}
+                        >
+                          <StatusIcon status={status} size={13} />
+                          {status.name}
+                        </PropertyMenuOption>
+                      ))}
+                    </>
+                  )}
+                </PropertyMenu>
+              ) : (
+                <span className="flex items-center gap-1.5 text-xs">
                   <StatusIcon status={issueStatus} size={12} />
                   {issueStatus.name}
-                </>
-              }
-            >
-              {(close) => (
-                <>
-                  {statuses.map((status) => (
-                    <PropertyMenuOption
-                      key={status.id}
-                      selected={status.id === issue.statusId}
-                      onSelect={() => {
-                        if (status.id !== issue.statusId) {
-                          onMove(issue, status.id)
-                        }
-                        close()
-                      }}
-                    >
-                      <StatusIcon status={status} size={13} />
-                      {status.name}
-                    </PropertyMenuOption>
-                  ))}
-                </>
-              )}
-            </PropertyMenu>
-          ) : (
-            <span className="flex items-center gap-1.5 text-xs">
-              <StatusIcon status={issueStatus} size={12} />
-              {issueStatus.name}
-            </span>
-          ))}
-        {due && (
-          <span
-            className={`flex items-center gap-1 text-xs ${
-              due.overdue ? "text-destructive" : "text-muted-foreground"
-            }`}
-          >
-            <Clock aria-hidden="true" size={12} />
-            {due.label}
+                </span>
+              ))}
+            {due && (
+              <span
+                className={`ml-auto flex items-center gap-1 text-xs ${
+                  due.overdue ? "text-destructive" : "text-muted-foreground"
+                }`}
+              >
+                <Clock aria-hidden="true" size={12} />
+                {due.label}
+              </span>
+            )}
           </span>
         )}
       </div>
