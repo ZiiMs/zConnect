@@ -84,8 +84,9 @@ export const BOARD_VARIANTS: readonly { key: BoardKey; name: string }[] = [
 /**
  * The `cards` axis: the three Kanban Issue card densities under review
  * (handoff 2026-10-16, Q5 — density is the only axis), plus `all` to see
- * them side by side. Plugged into board "9". Pad/gap/tint are the whole
- * difference between the three; the card layout itself is the locked spec.
+ * them side by side. Plugged into board "9". Pad and gap are the whole
+ * difference between the three (the status tint was dropped in the
+ * 2026-10-16 review); the card layout itself is the locked spec.
  */
 export type DensityKey = "A" | "B" | "C"
 
@@ -96,11 +97,10 @@ export const CARD_DENSITIES: readonly {
   name: string
   pad: string
   gap: string
-  tint: number
 }[] = [
-  { key: "A", name: "compact", pad: "p-2", gap: "gap-1", tint: 8 },
-  { key: "B", name: "balanced", pad: "p-3", gap: "gap-1.5", tint: 12 },
-  { key: "C", name: "roomy", pad: "p-4", gap: "gap-2", tint: 16 },
+  { key: "A", name: "compact", pad: "p-2", gap: "gap-1" },
+  { key: "B", name: "balanced", pad: "p-3", gap: "gap-1.5" },
+  { key: "C", name: "roomy", pad: "p-4", gap: "gap-2" },
 ]
 
 export const CARD_VARIANTS: readonly { key: CardKey; name: string }[] = [

@@ -271,9 +271,9 @@ Every variant padded its inner region `px-4`, so head, rows and foot all align a
 
 **Question:** which Kanban Issue card density should ship — A compact, B balanced or
 C roomy? The card *layout* was locked before this round (2-line clamped title, icon-only
-PriorityMark after the identifier, labels capped at two plus `+n`, a `color-mix` status
-tint, footer with the status menu left and due right). Density was the open axis, and
-padding, gap and tint intensity were the only things that changed in the round.
+PriorityMark after the identifier, labels capped at two plus `+n`, footer with the status
+menu left and due right). Density was the open axis, and padding and gap were the only
+things that changed in the round.
 
 Host is **Board 9** — sub-shape A, the Board screen already exists — with the density as its
 own axis:
@@ -283,9 +283,8 @@ bun run --cwd packages/frontend dev
 http://localhost:5173/prototype.html?screen=board&board=9&cards=A&style=mono&color=neutral&mode=dark
 ```
 
-- `cards=A|B|C` — `p-2 · gap-1 · 8% tint` / `p-3 · gap-1.5 · 12%` / `p-4 · gap-2 · 16%`.
-  While Board 9 is on screen the ← / → arrows walk the density and the bar grows A/B/C/all
-  chips.
+- `cards=A|B|C` — `p-2 · gap-1` / `p-3 · gap-1.5` / `p-4 · gap-2`. While Board 9 is on
+  screen the ← / → arrows walk the density and the bar grows A/B/C/all chips.
 - `cards=all` — the three side by side over the same nine issues, so a 4px step reads
   without flipping. Static on purpose: dropping onto a density column would mean nothing.
 
@@ -313,20 +312,21 @@ overdue and future due, assigned and unassigned.
 - The assignee menu lists stub user ids (`u-3`) because that is what the shipped menu shows
   today; showing a name is a separate change, not a density one.
 
-**Verdict (2026-10-16, user pick): B balanced** — `p-3 · gap-1.5 · 12% tint`. Everything
-else on the card is accepted as specced. The two objections recorded here were resolved in
-a follow-up round the same day, so the card's treatment is now settled:
+**Verdict (2026-10-16, user pick): B balanced** — `p-3 · gap-1.5`. Everything else on the
+card is accepted as specced. The two objections recorded here were resolved in follow-up
+rounds the same day, so the card's treatment is now settled:
 
-- *"the background prio color"* — the **priority icon's tone**, not the wash. The wash was
-  accepted. The icon is softened with `PriorityMark`'s new `soft` prop: the same four tones
-  (`Urgent` red, `High` amber, `Medium` blue, `Low`/`None` grey), each `color-mix`ed 60%
-  toward `--muted-foreground` so it reads without popping beside the identifier. `Low` and
-  `None` already sat on `--muted-foreground` and are unchanged. `soft` is opt-in, so the
-  other prototype surfaces (Boards 1–8, Issues, Detail) keep the current tones.
+- *"the background prio color"* — the **priority icon's tone**, not a background wash. The
+  icon is softened with `PriorityMark`'s new `soft` prop: the same four tones (`Urgent` red,
+  `High` amber, `Medium` blue, `Low`/`None` grey), each mixed 60% toward
+  `--muted-foreground` **in `oklab`** so the hue survives (an `oklch` mix dragged `High`'s
+  amber to a red). `Low` and `None` already sat on `--muted-foreground` and are unchanged.
+  `soft` is opt-in, so the other prototype surfaces (Boards 1–8, Issues, Detail) keep the
+  current tones.
 - *"the status color on the sides"* — the 4px `borderLeft` rail in `status.color`. The rail
-  is **dropped**; the card keeps its `color-mix` tint wash, so status still reads from the
-  tint and the footer's icon+name. This is one decision for A/B/C alike, since they share
-  the treatment.
+  is **dropped**, and the user then also rejected the `color-mix` tint wash, so the card
+  carries **no status colour at all**: plain `--card`, with status reading only from the
+  footer's icon+name. One decision for A/B/C alike, since they share the treatment.
 
 Nothing is folded into `kanban-card.tsx` yet: that file is still under the build hold until
 the user gives the go-ahead.

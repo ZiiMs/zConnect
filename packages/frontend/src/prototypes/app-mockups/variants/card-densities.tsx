@@ -11,11 +11,12 @@
  *   - 2-line clamped title, `text-sm font-medium`, full title on hover
  *   - top row: identifier · icon-only PriorityMark · spacer · assignee
  *   - labels on their own line, never wrapping, capped at two plus `+n`
- *   - `status.color` shown only as a `color-mix` tint over `--card`,
- *     intensity owned by the density (8% / 12% / 16%) — no left rail
- *     (2026-10-16 review, objection 2)
+ *   - no status accent on the card at all: the 4px `borderLeft` rail was
+ *     dropped and so was the `color-mix` wash, so the surface is plain
+ *     `--card` and status reads from the footer's icon+name (2026-10-16
+ *     review, objections 1 and 2)
  *   - the priority icon is softened with `soft` so its tone does not compete
- *     with the identifier and the card tint (2026-10-16 review, objection 1)
+ *     with the identifier (2026-10-16 review)
  *   - footer: status menu left, due right
  *
  * It is a *copy*: `kanban-card.tsx` is on hold and is not touched, and the
@@ -45,7 +46,6 @@ import { resolveKanbanDrop } from "@/components/kanban-board"
 import { PropertyMenu, PropertyMenuOption } from "@/components/property-menu"
 import type { Issue, Label, Status } from "@/lib/api"
 import { describeDueDate } from "@/lib/due"
-import { FALLBACK_STATUS_COLOR, statusColor } from "@/lib/status-colors"
 import { StatusIcon } from "@/lib/status-icons"
 import { PriorityMark } from "../atoms"
 import {
@@ -214,7 +214,6 @@ function DensityCard({
 
   const status = statuses.find((item) => item.id === issue.statusId)
   const due = describeDueDate(issue.dueDate)
-  const accent = status ? statusColor(status) : FALLBACK_STATUS_COLOR
   const chips = issue.labels
     .map((name) => labels.find((label) => label.name === name))
     .filter((label): label is Label => label !== undefined)
@@ -232,7 +231,6 @@ function DensityCard({
           ? `translate3d(${transform.x}px, ${transform.y}px, 0)`
           : undefined,
         opacity: isDragging ? 0.6 : undefined,
-        backgroundColor: `color-mix(in oklch, ${accent} ${spec.tint}%, var(--card))`,
       }}
     >
       <div
@@ -477,8 +475,7 @@ export function CardDensityBoard({ cards }: { cards: CardKey }) {
             <h4 className="flex items-baseline gap-2 px-1 pt-1 pb-1 font-medium text-sm">
               {key} · {DENSITY[key].name}
               <span className="text-muted-foreground text-xs">
-                {DENSITY[key].pad} · {DENSITY[key].gap} · {DENSITY[key].tint}%
-                tint
+                {DENSITY[key].pad} · {DENSITY[key].gap}
               </span>
             </h4>
             <div
