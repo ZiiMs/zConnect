@@ -114,6 +114,8 @@ export function ProjectIssues({
     loadIssueView(userId, project.id)
   )
   const [loading, setLoading] = useState(true)
+  /** A filter re-query in flight; stale views stay mounted underneath. */
+  const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -146,6 +148,10 @@ export function ProjectIssues({
   filtersRef.current = filters
   /** A filter the user touched by hand outranks the first-visit preset. */
   const userChangedFiltersRef = useRef(false)
+  /** Overlapping re-queries: only the latest response wins. */
+  const requestRef = useRef(0)
+  /** True after the first query lands; later ones never unmount the views. */
+  const loadedOnceRef = useRef(false)
 
   /**
    * The project's workflow loads once per project: a filter change only
@@ -184,22 +190,32 @@ export function ProjectIssues({
   }, [loadWorkflow])
 
   const refresh = useCallback(async () => {
-    setLoading(true)
+    const requestId = requestRef.current + 1
+    requestRef.current = requestId
+    // First query owns the full-page loader; later ones keep the stale
+    // boards mounted so a status toggle never flashes them away.
+    if (loadedOnceRef.current) setRefreshing(true)
+    else setLoading(true)
     setError(null)
     try {
-      setIssues(
-        await api.listIssues(project.id, {
-          statusIds: filters.statusIds,
-          priorities: filters.priorities,
-          assigneeId: filters.assigneeId,
-          labels: filters.labels,
-          text: filters.text,
-        })
-      )
+      const next = await api.listIssues(project.id, {
+        statusIds: filters.statusIds,
+        priorities: filters.priorities,
+        assigneeId: filters.assigneeId,
+        labels: filters.labels,
+        text: filters.text,
+      })
+      if (requestRef.current !== requestId) return
+      setIssues(next)
     } catch (err) {
+      if (requestRef.current !== requestId) return
       setError(err instanceof Error ? err.message : "Failed to load")
     } finally {
-      setLoading(false)
+      if (requestRef.current === requestId) {
+        loadedOnceRef.current = true
+        setLoading(false)
+        setRefreshing(false)
+      }
     }
   }, [project.id, filters])
 
@@ -361,7 +377,7 @@ export function ProjectIssues({
   }, [selectedIssue, subtasks])
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-2" aria-busy={refreshing || undefined}>
       <div className="flex h-8 items-center gap-1.5">
         <Breadcrumb items={breadcrumbItems} />
         <button
@@ -429,6 +445,11 @@ export function ProjectIssues({
       </Modal>
       {loading && (
         <p className="text-muted-foreground text-sm">Loading issues…</p>
+      )}
+      {refreshing && !loading && (
+        <p role="status" className="text-muted-foreground text-xs">
+          Updating…
+        </p>
       )}
       {error && <p className="text-destructive text-sm">{error}</p>}
       {notice && (

@@ -128,6 +128,31 @@ describe("project issues list view", () => {
     )
   })
 
+  test("toggling a status keeps stale issues mounted while re-querying", async () => {
+    const user = userEvent.setup()
+    setup()
+    await screen.findByText("WEB-1")
+
+    let resolveSecond!: (next: Issue[]) => void
+    const second = new Promise<Issue[]>((resolve) => {
+      resolveSecond = resolve
+    })
+    listIssues.mockReturnValueOnce(second)
+
+    await user.click(screen.getByRole("button", { name: /^filters/i }))
+    await user.click(screen.getByRole("button", { name: "Shipped" }))
+    await waitFor(() => expect(listIssues).toHaveBeenCalledTimes(2))
+
+    // The re-query is still in flight: stale rows stay, no full-page loader.
+    expect(screen.getByText("WEB-1")).toBeInTheDocument()
+    expect(screen.queryByText(/loading issues/i)).not.toBeInTheDocument()
+
+    resolveSecond([])
+    await waitFor(() =>
+      expect(screen.queryByText("WEB-1")).not.toBeInTheDocument()
+    )
+  })
+
   test("filter choices persist per user per project", async () => {
     const user = userEvent.setup()
     setup()
