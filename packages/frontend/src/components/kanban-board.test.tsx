@@ -1,7 +1,7 @@
 import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { act } from "react"
-import { describe, expect, test, vi } from "vitest"
+import { beforeEach, describe, expect, test, vi } from "vitest"
 import type { Issue, Status } from "@/lib/api"
 
 const statuses: Status[] = [
@@ -80,7 +80,12 @@ vi.mock("@dnd-kit/core", async (importOriginal) => {
   }
 })
 
-const { KanbanBoard, resolveKanbanDrop } = await import("./kanban-board.js")
+const {
+  KanbanBoard,
+  resolveKanbanDrop,
+  loadCollapsedStatuses,
+  saveCollapsedStatuses,
+} = await import("./kanban-board.js")
 
 const members = [{ userId: "user-member" }, { userId: "user-owner" }]
 
@@ -94,12 +99,18 @@ function setup(
       issues={issues}
       statuses={statuses}
       members={members}
+      userId="user-a"
+      projectId="pr-1"
       canEdit={true}
       onMove={onMove}
       onAssign={onAssign}
     />
   )
 }
+
+beforeEach(() => {
+  localStorage.clear()
+})
 
 describe("resolveKanbanDrop", () => {
   test("dropping a card on a column targets that status", () => {
@@ -191,6 +202,8 @@ describe("kanban board", () => {
       <KanbanBoard
         issues={issues}
         statuses={statuses}
+        userId="user-a"
+        projectId="pr-1"
         canEdit={false}
         onMove={() => {}}
       />
@@ -213,6 +226,8 @@ describe("kanban board", () => {
       <KanbanBoard
         issues={[]}
         statuses={statuses}
+        userId="user-a"
+        projectId="pr-1"
         canEdit={true}
         onMove={() => {}}
       />
@@ -229,6 +244,8 @@ describe("kanban board", () => {
       <KanbanBoard
         issues={[issues[0], dated]}
         statuses={statuses}
+        userId="user-a"
+        projectId="pr-1"
         canEdit={true}
         onMove={() => {}}
       />
@@ -288,6 +305,8 @@ describe("kanban board", () => {
         issues={issues}
         statuses={statuses}
         members={members}
+        userId="user-a"
+        projectId="pr-1"
         canEdit={true}
         onMove={() => {}}
         onAssign={() => {}}
@@ -310,6 +329,8 @@ describe("kanban board", () => {
         labels={[
           { id: "lb-1", workspaceId: "ws-1", name: "bug", color: "#ef4444" },
         ]}
+        userId="user-a"
+        projectId="pr-1"
         canEdit={true}
         onMove={() => {}}
       />
@@ -350,6 +371,8 @@ describe("kanban board", () => {
           { id: "lb-2", workspaceId: "ws-1", name: "perf", color: "#22c55e" },
           { id: "lb-3", workspaceId: "ws-1", name: "a11y", color: "#3b82f6" },
         ]}
+        userId="user-a"
+        projectId="pr-1"
         canEdit={true}
         onMove={() => {}}
       />
@@ -388,6 +411,8 @@ describe("kanban board", () => {
       <KanbanBoard
         issues={long}
         statuses={statuses}
+        userId="user-a"
+        projectId="pr-1"
         canEdit={true}
         onMove={() => {}}
       />
@@ -401,5 +426,96 @@ describe("kanban board", () => {
       "title",
       "Realtime subscription leaks when switching projects quickly"
     )
+  })
+})
+
+describe("kanban status collapse", () => {
+  test("the header control collapses a status to a strip and expands it again", async () => {
+    const user = userEvent.setup()
+    setup()
+
+    await user.click(screen.getByRole("button", { name: /collapse backlog/i }))
+
+    const collapsed = screen.getByTestId("kanban-column-st-1")
+    expect(collapsed.className).toContain("w-11")
+    // The cards are gone; the strip keeps the mark, name and count.
+    expect(within(collapsed).queryByText("Fix login")).not.toBeInTheDocument()
+    expect(
+      within(collapsed).getByRole("heading", { name: /backlog/i })
+    ).toBeInTheDocument()
+    expect(within(collapsed).getByText("Backlog")).toHaveClass(
+      "[writing-mode:vertical-rl]"
+    )
+    expect(
+      within(collapsed).getByTestId("status-icon-Backlog")
+    ).toBeInTheDocument()
+    expect(within(collapsed).getByText("1")).toBeInTheDocument()
+    // Its neighbour is untouched.
+    expect(
+      within(screen.getByTestId("kanban-column-st-2")).getByText(
+        "Ship homepage"
+      )
+    ).toBeInTheDocument()
+
+    await user.click(screen.getByRole("button", { name: /expand backlog/i }))
+    expect(
+      within(screen.getByTestId("kanban-column-st-1")).getByText("Fix login")
+    ).toBeInTheDocument()
+  })
+
+  test("the control reports the collapsed state", async () => {
+    const user = userEvent.setup()
+    setup()
+
+    const collapse = screen.getByRole("button", { name: /collapse backlog/i })
+    expect(collapse).toHaveAttribute("aria-expanded", "true")
+
+    await user.click(collapse)
+    expect(
+      screen.getByRole("button", { name: /expand backlog/i })
+    ).toHaveAttribute("aria-expanded", "false")
+  })
+
+  test("read-only viewers can still collapse a status", async () => {
+    const user = userEvent.setup()
+    render(
+      <KanbanBoard
+        issues={issues}
+        statuses={statuses}
+        userId="user-a"
+        projectId="pr-1"
+        canEdit={false}
+        onMove={() => {}}
+      />
+    )
+
+    await user.click(screen.getByRole("button", { name: /collapse backlog/i }))
+    expect(
+      within(screen.getByTestId("kanban-column-st-1")).queryByText("Fix login")
+    ).not.toBeInTheDocument()
+  })
+
+  test("the collapsed set round-trips through localStorage per user and project", () => {
+    saveCollapsedStatuses("user-a", "pr-1", ["st-2"])
+    expect(loadCollapsedStatuses("user-a", "pr-1")).toEqual(["st-2"])
+    // Another viewer, and another project, start expanded.
+    expect(loadCollapsedStatuses("user-b", "pr-1")).toEqual([])
+    expect(loadCollapsedStatuses("user-a", "pr-2")).toEqual([])
+    // Unreadable storage reads as nothing collapsed.
+    localStorage.setItem("zconnect:kanban-collapsed:user-a:pr-1", "not-json{{{")
+    expect(loadCollapsedStatuses("user-a", "pr-1")).toEqual([])
+  })
+
+  test("a stored collapse is restored on render and lifted on expand", async () => {
+    const user = userEvent.setup()
+    saveCollapsedStatuses("user-a", "pr-1", ["st-1"])
+    setup()
+
+    expect(
+      within(screen.getByTestId("kanban-column-st-1")).queryByText("Fix login")
+    ).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole("button", { name: /expand backlog/i }))
+    expect(loadCollapsedStatuses("user-a", "pr-1")).toEqual([])
   })
 })

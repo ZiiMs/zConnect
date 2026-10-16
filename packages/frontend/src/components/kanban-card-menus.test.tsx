@@ -57,6 +57,8 @@ describe("kanban card menus under real sensors", () => {
         issues={issues}
         statuses={statuses}
         members={members}
+        userId="user-a"
+        projectId="pr-1"
         canEdit={true}
         onMove={onMove}
         onAssign={() => {}}
@@ -79,6 +81,8 @@ describe("kanban card menus under real sensors", () => {
         issues={issues}
         statuses={statuses}
         members={members}
+        userId="user-a"
+        projectId="pr-1"
         canEdit={true}
         onMove={() => {}}
         onAssign={onAssign}

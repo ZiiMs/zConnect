@@ -504,6 +504,8 @@ export function ProjectIssues({
           statuses={statuses}
           members={members}
           labels={labels}
+          userId={userId}
+          projectId={project.id}
           canEdit={canWrite}
           onMove={(issue, statusId) => void handleMove(issue, statusId)}
           onAssign={(issue, assigneeId) =>
