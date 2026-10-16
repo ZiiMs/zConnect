@@ -78,7 +78,7 @@ export function PrototypeRoot() {
           {state.screen === "board"
             ? (() => {
                 const Content = BOARDS[state.board] ?? BOARDS["1"]
-                return <Content />
+                return <Content cards={state.cards} />
               })()
             : null}
           {state.screen === "issue"

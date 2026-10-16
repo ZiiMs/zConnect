@@ -246,20 +246,38 @@ const PRIORITY: Record<
   },
 }
 
+/**
+ * Softened priority tone: same hue, mixed toward the muted palette so it
+ * reads without popping. Low/None already sit on `--muted-foreground`, so
+ * they are unchanged. Used where the icon sits beside plain text on a card
+ * (the Kanban Issue card) rather than standing alone.
+ *
+ * `in oklab`, not `in oklch`: the partner is near-achromatic, and mixing in a
+ * polar space interpolates its (arbitrary) hue too, which dragged High's
+ * amber (hue 72) to 13.6 — a red that collided with Urgent. oklab is
+ * rectangular, so only chroma scales and every hue survives.
+ */
+function softTone(tone: string): string {
+  return `color-mix(in oklab, ${tone} 60%, var(--muted-foreground))`
+}
+
 export function PriorityMark({
   priority,
   withLabel = false,
+  soft = false,
   className,
 }: {
   priority: Priority
   withLabel?: boolean
+  /** Dim the tone toward the muted palette (same hue, less pop). */
+  soft?: boolean
   className?: string
 }) {
   const mark = PRIORITY[priority]
   return (
     <span
       className={cn("inline-flex items-center gap-1 text-xs", className)}
-      style={{ color: mark.tone }}
+      style={{ color: soft ? softTone(mark.tone) : mark.tone }}
       title={mark.label}
     >
       <Glyph className="size-3.5" name={mark.glyph} />

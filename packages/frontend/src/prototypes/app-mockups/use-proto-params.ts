@@ -12,7 +12,12 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react"
 import {
+  BOARD_VARIANTS,
+  type BoardKey,
+  CARD_VARIANTS,
+  type CardKey,
   DEFAULT_BOARD,
+  DEFAULT_CARDS,
   DEFAULT_COLOR,
   DEFAULT_DETAIL,
   DEFAULT_ISSUES,
@@ -22,10 +27,16 @@ import {
   DEFAULT_SETTINGS,
   DEFAULT_SIGNIN,
   DEFAULT_STYLE,
+  DETAIL_VARIANTS,
+  ISSUES_VARIANTS,
   MODES,
   type ModeKey,
+  NAV_VARIANTS,
+  REAL_CARDS_BOARD,
   SCREENS,
   type ScreenKey,
+  SETTINGS_VARIANTS,
+  SIGNIN_VARIANTS,
   THEME_COLORS,
   THEME_STYLES,
   type ThemeColorKey,
@@ -38,10 +49,13 @@ export interface ProtoState {
   screen: ScreenKey
   nav: VariantKey
   issues: VariantKey
-  board: VariantKey
+  /** "9" is the real-card board, whose density is the `cards` axis. */
+  board: BoardKey
   detail: VariantKey
   settings: VariantKey
   signin: VariantKey
+  /** Kanban Issue card density; only board "9" renders it. */
+  cards: CardKey
   /** A registry theme key, or "" for the composable style × color axes. */
   theme: string
   style: ThemeStyleKey
@@ -57,6 +71,7 @@ const KEYS = [
   "detail",
   "settings",
   "signin",
+  "cards",
   "theme",
   "style",
   "color",
@@ -74,6 +89,9 @@ const VARIANT_KEYS: readonly VariantKey[] = [
   "8",
 ]
 
+/** The board axis adds the real-card board on top of the shared keys. */
+const BOARD_KEYS: readonly BoardKey[] = [...VARIANT_KEYS, "9"]
+
 function pick<T extends string>(
   values: readonly T[],
   raw: string | null,
@@ -88,8 +106,19 @@ function pick<T extends string>(
 const screenKeys = SCREENS.map((item) => item.key)
 const styleKeys = THEME_STYLES.map((item) => item.key)
 const colorKeys = THEME_COLORS.map((item) => item.key)
+const cardKeys = CARD_VARIANTS.map((item) => item.key)
 /** "" is the composable style × color mode; the rest are registry themes. */
 const themeKeys = ["", ...REGISTRY_THEMES.map((item) => item.key)]
+
+/** The variant list each surface axis walks with the ← / → arrows. */
+const AXIS_TABLE: Record<string, readonly { key: string }[]> = {
+  nav: NAV_VARIANTS,
+  issues: ISSUES_VARIANTS,
+  board: BOARD_VARIANTS,
+  detail: DETAIL_VARIANTS,
+  settings: SETTINGS_VARIANTS,
+  signin: SIGNIN_VARIANTS,
+}
 
 const LEGACY_LAYOUT: Record<string, Partial<ProtoState>> = {
   A: { nav: "1", issues: "1", board: "1", detail: "1", settings: "1" },
@@ -126,11 +155,7 @@ export function readProtoState(): ProtoState {
       params.get("issues"),
       legacy.issues ?? DEFAULT_ISSUES
     ),
-    board: pick(
-      VARIANT_KEYS,
-      params.get("board"),
-      legacy.board ?? DEFAULT_BOARD
-    ),
+    board: pick(BOARD_KEYS, params.get("board"), legacy.board ?? DEFAULT_BOARD),
     detail: pick(
       VARIANT_KEYS,
       params.get("detail"),
@@ -146,6 +171,7 @@ export function readProtoState(): ProtoState {
       params.get("signin"),
       legacy.signin ?? DEFAULT_SIGNIN
     ),
+    cards: pick(cardKeys, params.get("cards"), DEFAULT_CARDS),
     theme: pick(themeKeys, params.get("theme"), ""),
     style: pick(styleKeys, params.get("style"), legacy.style ?? DEFAULT_STYLE),
     color: pick(colorKeys, params.get("color"), legacy.color ?? DEFAULT_COLOR),
@@ -183,11 +209,14 @@ export function cycleKey<T extends string>(
 
 /**
  * The variant axis the ← / → arrows walk: whatever surface the current
- * screen shows (issues/board/detail/settings/signin).
+ * screen shows (issues/board/detail/settings/signin). Board "9" renders the
+ * real card, so there the arrows walk the card density instead.
  */
 export function activeVariantKey(state: ProtoState): keyof ProtoState {
   if (state.screen === "issues") return "issues"
-  if (state.screen === "board") return "board"
+  if (state.screen === "board") {
+    return state.board === REAL_CARDS_BOARD ? "cards" : "board"
+  }
   if (state.screen === "issue") return "detail"
   if (state.screen === "settings") return "settings"
   return "signin"
@@ -198,8 +227,12 @@ export function stepVariant(
   delta: number
 ): Partial<ProtoState> {
   const axis = activeVariantKey(state)
+  const keys: string[] =
+    axis === "cards"
+      ? CARD_VARIANTS.map((item) => item.key)
+      : (AXIS_TABLE[axis] ?? []).map((item) => item.key)
   return {
-    [axis]: cycleKey(VARIANT_KEYS, state[axis] as VariantKey, delta),
+    [axis]: cycleKey(keys, String(state[axis]), delta),
   } as Partial<ProtoState>
 }
 

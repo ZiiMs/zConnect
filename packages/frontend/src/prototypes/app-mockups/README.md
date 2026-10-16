@@ -23,7 +23,8 @@ Open **http://localhost:5173/prototype.html** (the real app stays at `/`).
 | Screen | `issues` `board` `issue` `settings` `signin` | chips in the switcher bar, or the in-app nav |
 | Nav | `1`–`8` | Tune panel → Nav |
 | Issues | `1`–`8` | ← / → on the Issues screen, or Tune panel |
-| Board | `1`–`8` | ← / → on the Board screen, or Tune panel |
+| Board | `1`–`9` | ← / → on the Board screen, or Tune panel |
+| Cards | `A` `B` `C` `all` | ← / → on Board **9**, chips in the bar, or Tune panel |
 | Detail | `1`–`8` | ← / → on the Detail screen, or Tune panel |
 | Settings | `1`–`8` | ← / → on the Settings screen, or Tune panel |
 | Sign in | `1`–`8` | ← / → on the Sign in screen, or Tune panel |
@@ -48,7 +49,8 @@ per-surface pickers, `theme` onto style+color, `S3` onto `signin=3`.
 - **Issues** — Dense grouped, Roomy cards, Table, Compact rows (working filter), Swimlanes,
   Priority stacks, Timeline, Master–detail (working selection).
 - **Board** — Compact, Roomy, Swimlanes by priority, WIP-count header, Minimal, Rich cards,
-  Horizontal swimlanes, Grouped by assignee.
+  Horizontal swimlanes, Grouped by assignee, **Issue cards (real, density toggle)** — see
+  *Card density* below.
 - **Detail** — Side pane, Full page, Hero header, Two column, Timeline first, Properties
   rail, Minimal, Split checklist. Each has an issue picker (except Minimal).
 - **Settings** — Tabbed form, Top tabs, Master–detail, Setting rows, Cards grid, Sections,
@@ -137,7 +139,8 @@ src/prototypes/app-mockups/
   stub-data.ts                     fixtures in `@/lib/api` shapes
   variants/navs.tsx                Nav1–Nav8
   variants/issues-panels.tsx       Issues1–Issues8
-  variants/boards.tsx              Board1–Board8
+  variants/boards.tsx              Board1–Board9
+  variants/card-densities.tsx      Board9's real card, A/B/C densities
   variants/details.tsx             Detail1–Detail8
   variants/settings-panels.tsx     Settings1–Settings8
   variants/signins.tsx             Signin1–Signin8
@@ -264,7 +267,75 @@ tuned for dark; no light pass was done):
 
 Every variant padded its inner region `px-4`, so head, rows and foot all align at 16px.
 
+## Card density — the Kanban Issue card (2026-10-16)
+
+**Question:** which Kanban Issue card density should ship — A compact, B balanced or
+C roomy? The card *layout* was locked before this round (2-line clamped title, icon-only
+PriorityMark after the identifier, labels capped at two plus `+n`, a `color-mix` status
+tint, footer with the status menu left and due right). Density was the open axis, and
+padding, gap and tint intensity were the only things that changed in the round.
+
+Host is **Board 9** — sub-shape A, the Board screen already exists — with the density as its
+own axis:
+
+```
+bun run --cwd packages/frontend dev
+http://localhost:5173/prototype.html?screen=board&board=9&cards=A&style=mono&color=neutral&mode=dark
+```
+
+- `cards=A|B|C` — `p-2 · gap-1 · 8% tint` / `p-3 · gap-1.5 · 12%` / `p-4 · gap-2 · 16%`.
+  While Board 9 is on screen the ← / → arrows walk the density and the bar grows A/B/C/all
+  chips.
+- `cards=all` — the three side by side over the same nine issues, so a 4px step reads
+  without flipping. Static on purpose: dropping onto a density column would mean nothing.
+
+Unlike the other surfaces this one is **not a mockup**. Sensors (`distance: 8`),
+`useDraggable`/`useDroppable` and the board's own `resolveKanbanDrop` are imported from the
+app, and the status and assignee menus are the real `PropertyMenu`, so drag, keyboard drag
+and both menus behave as they ship. Only the writes are local stub state — no API call. The
+fixture stresses the card: a title that needs both lines, three- and four-label issues (so
+`+n` appears), one title that is a single unbreakable token, `None` priority, no labels,
+overdue and future due, assigned and unassigned.
+
+**Deliberate divergences**
+
+- The card is a **prototype copy**, not `kanban-card.tsx`. That file is under a build hold
+  (handoff 2026-10-16) and has no density prop, so touching it would be implementing the
+  spec ahead of the go-ahead. When a density wins, the real card is rewritten with it and
+  this file, the `cards` axis and Board 9 are deleted together.
+- The title is a plain clamped `<span title>`, not the real card's detail-opening `<button>`:
+  this board has no detail route to open.
+- Columns are a fixed `w-72`, not the real board's `min-w-72`. A `min-w` column stretches to
+  its widest card, and the fixture card with one unbreakable title blows that wide enough to
+  make the densities incomparable. Fixed width keeps the comparison honest and the width the
+  real board assumes. The underlying card finding stands on its own: a single long token is
+  clipped rather than wrapped, so the card needs `break-words` (or the column a `max-w`).
+- The assignee menu lists stub user ids (`u-3`) because that is what the shipped menu shows
+  today; showing a name is a separate change, not a density one.
+
+**Verdict (2026-10-16, user pick): B balanced** — `p-3 · gap-1.5 · 12% tint`. Everything
+else on the card is accepted as specced. The two objections recorded here were resolved in
+a follow-up round the same day, so the card's treatment is now settled:
+
+- *"the background prio color"* — the **priority icon's tone**, not the wash. The wash was
+  accepted. The icon is softened with `PriorityMark`'s new `soft` prop: the same four tones
+  (`Urgent` red, `High` amber, `Medium` blue, `Low`/`None` grey), each `color-mix`ed 60%
+  toward `--muted-foreground` so it reads without popping beside the identifier. `Low` and
+  `None` already sat on `--muted-foreground` and are unchanged. `soft` is opt-in, so the
+  other prototype surfaces (Boards 1–8, Issues, Detail) keep the current tones.
+- *"the status color on the sides"* — the 4px `borderLeft` rail in `status.color`. The rail
+  is **dropped**; the card keeps its `color-mix` tint wash, so status still reads from the
+  tint and the footer's icon+name. This is one decision for A/B/C alike, since they share
+  the treatment.
+
+Nothing is folded into `kanban-card.tsx` yet: that file is still under the build hold until
+the user gives the go-ahead.
+
 ## Still not decided
+
+- Whether two lines of title is enough — the clamp itself was accepted. The two accent
+  objections from the Card density round are now resolved (see *Card density*), so the only
+  thing left before fold-in is the user's go-ahead.
 
 - Whether the mono base font survives the review (`sans-baseline` and `graphite` in the
   shortlist are the direct alternatives).

@@ -15,6 +15,7 @@ import {
   PriorityMark,
   StatusPill,
 } from "../atoms"
+import type { CardKey } from "../prototype-config"
 import {
   countsByStatus,
   issuesInStatus,
@@ -23,6 +24,7 @@ import {
   statuses,
   topLevelIssues,
 } from "../stub-data"
+import { CardDensityBoard } from "./card-densities"
 
 function Board1Compact() {
   return (
@@ -472,7 +474,12 @@ function Board8ByAssignee() {
   )
 }
 
-export const BOARDS: Record<string, () => React.ReactNode> = {
+/** Board "9" is the only one that reads the card density; the rest ignore it. */
+export interface BoardProps {
+  cards: CardKey
+}
+
+export const BOARDS: Record<string, (props: BoardProps) => React.ReactNode> = {
   "1": Board1Compact,
   "2": Board2Roomy,
   "3": Board3Swimlanes,
@@ -481,4 +488,5 @@ export const BOARDS: Record<string, () => React.ReactNode> = {
   "6": Board6Rich,
   "7": Board7Horizontal,
   "8": Board8ByAssignee,
+  "9": ({ cards }) => <CardDensityBoard cards={cards} />,
 }
