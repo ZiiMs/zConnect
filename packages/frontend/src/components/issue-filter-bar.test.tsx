@@ -16,14 +16,16 @@ const statuses: Status[] = [
     id: "st-1",
     projectId: "pr-1",
     name: "Backlog",
-    category: "Todo",
+    category: "Backlog",
+    color: "#bec2c8",
     position: 0,
   },
   {
     id: "st-2",
     projectId: "pr-1",
     name: "Shipped",
-    category: "Done",
+    category: "Completed",
+    color: "#5e6ad2",
     position: 1,
   },
 ]
@@ -49,10 +51,8 @@ describe("issue filter bar", () => {
     renderBar()
     expect(screen.getByLabelText(/search issues/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/assignee/i)).toBeInTheDocument()
-    expect(
-      screen.getByRole("checkbox", { name: "Backlog" })
-    ).toBeInTheDocument()
-    expect(screen.getByRole("checkbox", { name: "Urgent" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Backlog" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Urgent" })).toBeInTheDocument()
   })
 
   test("toggling a status notifies with the narrowed value", async () => {
@@ -60,7 +60,7 @@ describe("issue filter bar", () => {
     const onChange = vi.fn()
     renderBar(emptyIssueFilters(), onChange)
 
-    await user.click(screen.getByRole("checkbox", { name: "Backlog" }))
+    await user.click(screen.getByRole("button", { name: "Backlog" }))
 
     expect(onChange).toHaveBeenCalledWith(
       expect.objectContaining({ statusIds: ["st-1"] })
@@ -72,7 +72,7 @@ describe("issue filter bar", () => {
     const onChange = vi.fn()
     renderBar(emptyIssueFilters(), onChange)
 
-    await user.click(screen.getByRole("checkbox", { name: "High" }))
+    await user.click(screen.getByRole("button", { name: "High" }))
 
     expect(onChange).toHaveBeenCalledWith(
       expect.objectContaining({ priorities: ["High"] })
@@ -117,17 +117,37 @@ describe("issue filter bar", () => {
     )
   })
 
-  test("checked state reflects the current value", () => {
+  test("pressed state reflects the current value", () => {
     renderBar({
       ...emptyIssueFilters(),
       statusIds: ["st-1"],
       priorities: ["Urgent"],
       text: "fix",
     })
-    expect(screen.getByRole("checkbox", { name: "Backlog" })).toBeChecked()
-    expect(screen.getByRole("checkbox", { name: "Shipped" })).not.toBeChecked()
-    expect(screen.getByRole("checkbox", { name: "Urgent" })).toBeChecked()
+    expect(screen.getByRole("button", { name: "Backlog" })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    )
+    expect(screen.getByRole("button", { name: "Shipped" })).toHaveAttribute(
+      "aria-pressed",
+      "false"
+    )
+    expect(screen.getByRole("button", { name: "Urgent" })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    )
     expect(screen.getByLabelText(/search issues/i)).toHaveValue("fix")
+  })
+
+  test("selected status pills wash in the status color", () => {
+    renderBar({ ...emptyIssueFilters(), statusIds: ["st-1"] })
+    // jsdom normalizes the hex inside color-mix(); the authored value wins.
+    expect(
+      screen.getByRole("button", { name: "Backlog" }).getAttribute("style")
+    ).toContain("190, 194, 200")
+    expect(
+      screen.getByRole("button", { name: "Shipped" }).getAttribute("style")
+    ).toBeNull()
   })
 })
 
@@ -154,6 +174,31 @@ describe("filter persistence", () => {
   test("corrupt stored JSON loads as nothing", () => {
     localStorage.setItem("zconnect:issue-filters:user-a:pr-1", "not-json{{{")
     expect(loadIssueFilters("user-a", "pr-1")).toBeNull()
+  })
+
+  test("view prefs round-trip and fall back to defaults when unknown", () => {
+    const value: IssueFilterValue = {
+      ...emptyIssueFilters(),
+      groupBy: "priority",
+      order: "newest",
+      showEmptyGroups: true,
+      display: {
+        id: true,
+        status: false,
+        priority: true,
+        assignee: false,
+        due: false,
+        labels: false,
+      },
+    }
+    saveIssueFilters("user-a", "pr-1", value)
+    expect(loadIssueFilters("user-a", "pr-1")).toEqual(value)
+
+    localStorage.setItem(
+      "zconnect:issue-filters:user-a:pr-1",
+      JSON.stringify({ groupBy: "nope", order: "random", display: null })
+    )
+    expect(loadIssueFilters("user-a", "pr-1")).toEqual(emptyIssueFilters())
   })
 })
 

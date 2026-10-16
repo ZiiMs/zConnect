@@ -2,11 +2,16 @@ import {
   DndContext,
   type DragEndEvent,
   type DragStartEvent,
+  KeyboardSensor,
+  PointerSensor,
   useDroppable,
+  useSensor,
+  useSensors,
 } from "@dnd-kit/core"
 import { useState } from "react"
 import { KanbanCard } from "@/components/kanban-card"
 import type { Issue, Label, Status } from "@/lib/api"
+import { StatusIcon } from "@/lib/status-icons"
 
 /**
  * Maps a drag-end onto the Issue mutation it means. `activeId` is the
@@ -34,16 +39,22 @@ function KanbanColumn({
   status,
   issues,
   statuses,
+  members,
   labels,
   canEdit,
   onMove,
+  onAssign,
+  onOpenDetail,
 }: {
   status: Status
   issues: Issue[]
   statuses: Status[]
+  members: { userId: string }[]
   labels: Label[]
   canEdit: boolean
   onMove: (issue: Issue, statusId: string) => void
+  onAssign?: (issue: Issue, assigneeId: string | null) => void
+  onOpenDetail?: (issue: Issue) => void
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: status.id })
 
@@ -52,20 +63,26 @@ function KanbanColumn({
       ref={setNodeRef}
       data-testid={`kanban-column-${status.id}`}
       aria-label={status.name}
-      className={`flex min-w-60 flex-col gap-2 rounded-md border p-2 ${isOver ? "ring-2 ring-ring" : ""}`}
+      className={`flex min-w-72 shrink-0 flex-col gap-3 overflow-y-auto rounded-md border bg-sidebar p-3 ${isOver ? "ring-2 ring-ring" : ""}`}
     >
-      <h4 className="font-medium text-sm">
+      <h4 className="flex items-center gap-2 px-1 pt-1 pb-1 font-medium text-sm">
+        <StatusIcon status={status} />
         {status.name}{" "}
-        <span className="text-muted-foreground text-xs">{issues.length}</span>
+        <span className="rounded-full bg-accent px-1.5 text-muted-foreground text-xs">
+          {issues.length}
+        </span>
       </h4>
       {issues.map((issue) => (
         <KanbanCard
           key={issue.id}
           issue={issue}
           statuses={statuses}
+          members={members}
           labels={labels}
           canEdit={canEdit}
           onMove={onMove}
+          onAssign={onAssign}
+          onOpenDetail={onOpenDetail}
         />
       ))}
     </section>
@@ -81,18 +98,35 @@ function KanbanColumn({
 export function KanbanBoard({
   issues,
   statuses,
+  members = [],
   labels = [],
   canEdit,
   onMove,
+  onAssign,
+  onOpenDetail,
 }: {
   issues: Issue[]
   statuses: Status[]
+  /** Workspace members for the card quick-assign menus. */
+  members?: { userId: string }[]
   /** T5 workspace registry for card label chip colors. */
   labels?: Label[]
   canEdit: boolean
   onMove: (issue: Issue, statusId: string) => void
+  /** Card quick-assign; absent means no assign control. */
+  onAssign?: (issue: Issue, assigneeId: string | null) => void
+  /** Card title click: opens the detail view. */
+  onOpenDetail?: (issue: Issue) => void
 }) {
   const [, setActiveId] = useState<string | null>(null)
+  /**
+   * Clicks must reach the card's menus: without a distance constraint the
+   * pointer sensor claims pointer-down and the click never fires.
+   */
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor)
+  )
 
   function handleDragStart(event: DragStartEvent) {
     setActiveId(String(event.active.id))
@@ -121,20 +155,24 @@ export function KanbanBoard({
 
   return (
     <DndContext
+      sensors={sensors}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
       onDragCancel={() => setActiveId(null)}
     >
-      <div className="flex gap-2 overflow-x-auto">
+      <div className="flex h-[calc(100svh-5rem)] items-stretch gap-2 overflow-x-auto pb-2">
         {ordered.map((status) => (
           <KanbanColumn
             key={status.id}
             status={status}
             issues={issues.filter((issue) => issue.statusId === status.id)}
             statuses={statuses}
+            members={members}
             labels={labels}
             canEdit={canEdit}
             onMove={onMove}
+            onAssign={onAssign}
+            onOpenDetail={onOpenDetail}
           />
         ))}
       </div>

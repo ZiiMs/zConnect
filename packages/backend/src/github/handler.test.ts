@@ -31,7 +31,6 @@ describe("pull request webhook handler", () => {
   let workspaces: WorkspaceStore
   let github: GitHubStore
   let workspaceId: string
-  let projectId: string
   let statusId: string
   let issueId: string
 
@@ -40,21 +39,16 @@ describe("pull request webhook handler", () => {
     github = createMemoryGitHubStore()
     const workspace = await workspaces.createWorkspace(owner.id, "Acme")
     workspaceId = workspace.id
-    const project = await workspaces.createProject(workspaceId, {
+    await workspaces.createProject(workspaceId, {
       name: "Web",
       key: "WEB",
     })
-    projectId = project.id
-    const status = await workspaces.createStatus(projectId, {
-      name: "Backlog",
-      category: "Todo",
-    })
-    statusId = status.id
-    const issue = await workspaces.createIssue(projectId, {
-      title: "Fix login",
-      statusId,
-    })
+    // T2: every new project arrives with the seeded roster and six tutorial
+    // issues, so this fixture links against the seeded first issue (WEB-1).
+    const issue = await workspaces.getIssue("WEB-1")
+    if (!issue) throw new Error("seeded WEB-1 issue missing")
     issueId = issue.id
+    statusId = issue.statusId
     await github.createInstall(workspaceId, ["acme/web"])
   })
 

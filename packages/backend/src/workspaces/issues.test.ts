@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test"
 import { createWorkspacesApp } from "./routes.js"
 import type { Session } from "./session.js"
 import { createMemoryWorkspaceStore } from "./store.js"
+import { clearSeededTracker } from "./test-support.js"
 
 const owner = { id: "user-owner", email: "owner@example.com" }
 const member = { id: "user-member", email: "member@example.com" }
@@ -80,10 +81,12 @@ describe("issue creation", () => {
       }
     )
     projectId = (await project.json()).id
+    // T2: every new project arrives seeded; this describe wants a clean one.
+    await clearSeededTracker(fresh.store, projectId)
     const status = await app.request(`/api/projects/${projectId}/statuses`, {
       method: "POST",
       headers: { "content-type": "application/json", ...auth(owner.id) },
-      body: JSON.stringify({ name: "Backlog", category: "Todo" }),
+      body: JSON.stringify({ name: "Backlog", category: "Unstarted" }),
     })
     statusId = (await status.json()).id
     await joinAsMember()
@@ -100,10 +103,10 @@ describe("issue creation", () => {
     })
     expect(res.status).toBe(201)
     const body = await res.json()
-    expect(body.identifier).toBe("WEB-1")
+    expect(body.identifier).toBe("WEB-7")
     expect(body).toMatchObject({
       projectId,
-      number: 1,
+      number: 7,
       title: "Fix login",
       description: "Session expires too fast",
       statusId,
@@ -116,7 +119,7 @@ describe("issue creation", () => {
     await createIssue(member.id, { title: "One", statusId })
     const res = await createIssue(member.id, { title: "Two", statusId })
     expect(res.status).toBe(201)
-    expect((await res.json()).identifier).toBe("WEB-2")
+    expect((await res.json()).identifier).toBe("WEB-8")
   })
 
   test("unassigned (no assignee) is allowed", async () => {
@@ -237,9 +240,11 @@ describe("issue read and lifecycle", () => {
       }
     )
     projectId = (await project.json()).id
+    // T2: every new project arrives seeded; this describe wants a clean one.
+    await clearSeededTracker(fresh.store, projectId)
     for (const [name, category] of [
-      ["Backlog", "Todo"],
-      ["Shipped", "Done"],
+      ["Backlog", "Unstarted"],
+      ["Shipped", "Completed"],
     ] as const) {
       const created = await app.request(`/api/projects/${projectId}/statuses`, {
         method: "POST",
@@ -254,21 +259,21 @@ describe("issue read and lifecycle", () => {
     await joinAsMember()
   })
 
-  test("GET /api/issues/WEB-1 resolves the human identifier", async () => {
+  test("GET /api/issues/WEB-7 resolves the human identifier", async () => {
     const seeded = await seedIssue()
     const res = await app.request(`/api/issues/${seeded.identifier}`, {
       headers: auth(member.id),
     })
     expect(res.status).toBe(200)
     expect(await res.json()).toMatchObject({
-      identifier: "WEB-1",
+      identifier: "WEB-7",
       title: "Fix login",
     })
   })
 
   test("identifier lookup is case-insensitive; unknown returns 404", async () => {
     await seedIssue()
-    const lower = await app.request("/api/issues/web-1", {
+    const lower = await app.request("/api/issues/web-7", {
       headers: auth(member.id),
     })
     expect(lower.status).toBe(200)
@@ -303,7 +308,7 @@ describe("issue read and lifecycle", () => {
     )
   })
 
-  test("completing the lifecycle Todo to Done works through PATCH", async () => {
+  test("completing the lifecycle Unstarted to Completed works through PATCH", async () => {
     const seeded = await seedIssue()
     const res = await app.request(`/api/issues/${seeded.identifier}`, {
       method: "PATCH",
@@ -312,7 +317,7 @@ describe("issue read and lifecycle", () => {
     })
     expect(res.status).toBe(200)
     expect(await res.json()).toMatchObject({
-      identifier: "WEB-1",
+      identifier: "WEB-7",
       statusId: doneId,
     })
   })
@@ -373,7 +378,7 @@ describe("issue read and lifecycle", () => {
       {
         method: "POST",
         headers: { "content-type": "application/json", ...auth(owner.id) },
-        body: JSON.stringify({ name: "Triage", category: "Todo" }),
+        body: JSON.stringify({ name: "Triage", category: "Unstarted" }),
       }
     )
     const targetStatusId = ((await targetStatus.json()) as { id: string }).id
@@ -389,7 +394,7 @@ describe("issue read and lifecycle", () => {
       projectId: string
       number: number
     }
-    expect(body.identifier).toBe("WEB-1")
+    expect(body.identifier).toBe("WEB-7")
     expect(body.projectId).toBe(otherId)
 
     const reread = await app.request(`/api/issues/${seeded.identifier}`, {
@@ -439,7 +444,7 @@ describe("issue read and lifecycle", () => {
       ((await withArchived.json()) as { identifier: string }[]).map(
         (i) => i.identifier
       )
-    ).toEqual(["WEB-1"])
+    ).toEqual(["WEB-7"])
   })
 
   test("deleting a status that holds a real issue is blocked", async () => {
@@ -523,9 +528,11 @@ describe("issue list filtering", () => {
       }
     )
     projectId = (await project.json()).id
+    // T2: every new project arrives seeded; this describe wants a clean one.
+    await clearSeededTracker(fresh.store, projectId)
     for (const [name, category] of [
-      ["Backlog", "Todo"],
-      ["Shipped", "Done"],
+      ["Backlog", "Unstarted"],
+      ["Shipped", "Completed"],
     ] as const) {
       const created = await app.request(`/api/projects/${projectId}/statuses`, {
         method: "POST",
@@ -559,41 +566,41 @@ describe("issue list filtering", () => {
   })
 
   test("unfiltered list returns every issue in number order", async () => {
-    expect(await listIds()).toEqual(["WEB-1", "WEB-2", "WEB-3"])
+    expect(await listIds()).toEqual(["WEB-7", "WEB-8", "WEB-9"])
   })
 
   test("filtering by status narrows the list", async () => {
-    expect(await listIds(`?status=${backlogId}`)).toEqual(["WEB-1", "WEB-3"])
-    expect(await listIds(`?status=${doneId}`)).toEqual(["WEB-2"])
+    expect(await listIds(`?status=${backlogId}`)).toEqual(["WEB-7", "WEB-9"])
+    expect(await listIds(`?status=${doneId}`)).toEqual(["WEB-8"])
   })
 
   test("filtering by priority narrows the list", async () => {
-    expect(await listIds("?priority=Urgent")).toEqual(["WEB-3"])
+    expect(await listIds("?priority=Urgent")).toEqual(["WEB-9"])
     expect(await listIds("?priority=High&priority=Low")).toEqual([
-      "WEB-1",
-      "WEB-2",
+      "WEB-7",
+      "WEB-8",
     ])
   })
 
   test("filtering by assignee narrows the list; none finds unassigned", async () => {
-    expect(await listIds(`?assignee=${member.id}`)).toEqual(["WEB-1"])
-    expect(await listIds("?assignee=none")).toEqual(["WEB-2", "WEB-3"])
+    expect(await listIds(`?assignee=${member.id}`)).toEqual(["WEB-7"])
+    expect(await listIds("?assignee=none")).toEqual(["WEB-8", "WEB-9"])
   })
 
   test("filtering by label requires every label", async () => {
-    expect(await listIds("?label=bug")).toEqual(["WEB-1", "WEB-3"])
-    expect(await listIds("?label=bug&label=auth")).toEqual(["WEB-3"])
+    expect(await listIds("?label=bug")).toEqual(["WEB-7", "WEB-9"])
+    expect(await listIds("?label=bug&label=auth")).toEqual(["WEB-9"])
   })
 
   test("text search matches identifier or title", async () => {
-    expect(await listIds("?q=fix")).toEqual(["WEB-1", "WEB-3"])
-    expect(await listIds("?q=WEB-2")).toEqual(["WEB-2"])
-    expect(await listIds("?q=homepage")).toEqual(["WEB-2"])
+    expect(await listIds("?q=fix")).toEqual(["WEB-7", "WEB-9"])
+    expect(await listIds("?q=WEB-8")).toEqual(["WEB-8"])
+    expect(await listIds("?q=homepage")).toEqual(["WEB-8"])
   })
 
   test("combined filters intersect", async () => {
     expect(await listIds(`?status=${backlogId}&priority=Urgent`)).toEqual([
-      "WEB-3",
+      "WEB-9",
     ])
   })
 
@@ -611,7 +618,7 @@ describe("issue list filtering", () => {
       ((await asViewer.json()) as { identifier: string }[]).map(
         (i) => i.identifier
       )
-    ).toEqual(["WEB-1", "WEB-2", "WEB-3"])
+    ).toEqual(["WEB-7", "WEB-8", "WEB-9"])
     expect(
       (
         await app.request(`/api/projects/${projectId}/issues`, {
@@ -636,25 +643,28 @@ describe("issue list filtering", () => {
       {
         method: "POST",
         headers: { "content-type": "application/json", ...auth(owner.id) },
-        body: JSON.stringify({ name: "Triage", category: "Todo" }),
+        body: JSON.stringify({ name: "Triage", category: "Unstarted" }),
       }
     )
     const targetStatusId = ((await targetStatus.json()) as { id: string }).id
-    const moved = await app.request("/api/issues/WEB-1", {
+    const moved = await app.request("/api/issues/WEB-7", {
       method: "PATCH",
       headers: { "content-type": "application/json", ...auth(member.id) },
       body: JSON.stringify({ projectId: otherId, statusId: targetStatusId }),
     })
     expect(moved.status).toBe(200)
 
-    expect(await listIds()).toEqual(["WEB-2", "WEB-3"])
-    const otherList = await app.request(`/api/projects/${otherId}/issues`, {
-      headers: auth(member.id),
-    })
+    expect(await listIds()).toEqual(["WEB-8", "WEB-9"])
+    const otherList = await app.request(
+      `/api/projects/${otherId}/issues?status=${targetStatusId}`,
+      {
+        headers: auth(member.id),
+      }
+    )
     expect(
       ((await otherList.json()) as { identifier: string }[]).map(
         (i) => i.identifier
       )
-    ).toEqual(["WEB-1"])
+    ).toEqual(["WEB-7"])
   })
 })

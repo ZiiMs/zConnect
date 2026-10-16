@@ -32,12 +32,171 @@ export interface Project {
   workspaceId: string
   name: string
   key: string
+  /** Mandatory project mark: lucide icon name, colored by `color`. */
+  icon: string
+  /** Icon display color (hex). */
+  color: string
 }
 
-/** Status Category buckets per GLOSSARY.md. */
-export const STATUS_CATEGORIES = ["Todo", "In Progress", "Done"] as const
+/**
+ * Curated lucide icon names a project may use. The default is the
+ * file/folder mark; the create form offers this list as its selector.
+ */
+export const PROJECT_ICONS = [
+  "Folder",
+  "File",
+  "Rocket",
+  "Globe",
+  "Star",
+  "Zap",
+  "Target",
+  "Layers",
+  "Box",
+  "Compass",
+  "Flag",
+  "Heart",
+] as const
+
+export type ProjectIcon = (typeof PROJECT_ICONS)[number]
+
+/** File/folder default every project starts with unless one is picked. */
+export const DEFAULT_PROJECT_ICON: ProjectIcon = "Folder"
+
+/** Neutral icon color when none is picked. */
+export const DEFAULT_PROJECT_COLOR = "#94a3b8"
+
+export function isValidProjectIcon(icon: string): boolean {
+  return (PROJECT_ICONS as readonly string[]).includes(icon)
+}
+
+export function isValidProjectColor(color: string): boolean {
+  return /^#[0-9a-fA-F]{6}$/.test(color)
+}
+
+/** Status Category buckets per GLOSSARY.md, in roster order (ADR-0001). */
+export const STATUS_CATEGORIES = [
+  "Backlog",
+  "Unstarted",
+  "In Progress",
+  "Completed",
+  "Canceled",
+  "Duplicate",
+] as const
 
 export type StatusCategory = (typeof STATUS_CATEGORIES)[number]
+
+/**
+ * Default Status roster every new Project opens with, in Kanban order
+ * (ADR-0001). `createProject` seeds these before any sample Issue.
+ */
+export const DEFAULT_STATUS_ROSTER: readonly {
+  name: string
+  category: StatusCategory
+  color: string
+}[] = [
+  { name: "Backlog", category: "Backlog", color: "#bec2c8" },
+  { name: "Todo", category: "Unstarted", color: "#e2e2e2" },
+  { name: "In Progress", category: "In Progress", color: "#f2c94c" },
+  { name: "In Review", category: "In Progress", color: "#0f783c" },
+  { name: "Done", category: "Completed", color: "#5e6ad2" },
+  { name: "Canceled", category: "Canceled", color: "#95a2b3" },
+  { name: "Duplicate", category: "Duplicate", color: "#95a2b3" },
+]
+
+/**
+ * Sample Issues every new Project opens with (ADR-0001 seeding). Titles and
+ * statuses are verbatim; they are created through the normal issue path, so
+ * they consume the project sequence and the first real Issue is `KEY-7`.
+ */
+export const DEFAULT_SEED_ISSUES: readonly {
+  title: string
+  statusName: string
+}[] = [
+  { title: "Tour the List, Table, and Kanban views", statusName: "Todo" },
+  {
+    title: "Invite your teammates to this workspace",
+    statusName: "Backlog",
+  },
+  {
+    title: "Define statuses that match your workflow",
+    statusName: "Backlog",
+  },
+  { title: "Break a large issue into subtasks", statusName: "Todo" },
+  {
+    title: "Link a pull request by its issue identifier",
+    statusName: "In Progress",
+  },
+  { title: "Archive work you no longer need", statusName: "In Progress" },
+]
+
+/**
+ * Persisted fields of one seeded Issue, the single description both stores
+ * build from so the memory and Drizzle seeding waterfalls cannot drift.
+ * Matches what `CreateIssue` would store: the title verbatim, unassigned,
+ * no due date, no labels, no parent, and priority None.
+ */
+export interface SeedIssueFields {
+  number: number
+  keyPrefix: string
+  identifier: string
+  title: string
+  description: null
+  statusId: string
+  priority: "None"
+  assigneeId: null
+  dueDate: null
+  archived: false
+  labels: string[]
+  parentId: null
+}
+
+/**
+ * The seeded-Issue field set for one `DEFAULT_SEED_ISSUES` entry: given the
+ * Project Key, the issue number, the resolved status id and the seed, both
+ * stores insert these identical fields.
+ */
+export function seedIssueFields(
+  projectKey: string,
+  number: number,
+  statusId: string,
+  seed: { title: string }
+): SeedIssueFields {
+  return {
+    number,
+    keyPrefix: projectKey,
+    identifier: `${projectKey}-${number}`,
+    title: seed.title,
+    description: null,
+    statusId,
+    priority: "None",
+    assigneeId: null,
+    dueDate: null,
+    archived: false,
+    labels: [],
+    parentId: null,
+  }
+}
+
+/**
+ * Categories that count as done everywhere: list grouping, progress math, and
+ * the completion guardrail (ADR-0001). `archived` stays orthogonal — it means
+ * hidden, not canceled.
+ */
+export const TERMINAL_STATUS_CATEGORIES = [
+  "Completed",
+  "Canceled",
+  "Duplicate",
+] as const satisfies readonly StatusCategory[]
+
+/** Whether a status category is one of the terminal three (done) buckets. */
+export function isTerminalStatusCategory(
+  category: StatusCategory | undefined
+): boolean {
+  return (
+    category !== undefined &&
+    TERMINAL_STATUS_CATEGORIES.some((terminal) => terminal === category)
+  )
+}
 
 /** Priority urgency per GLOSSARY.md. */
 export const PRIORITIES = ["Urgent", "High", "Medium", "Low", "None"] as const
@@ -49,6 +208,7 @@ export interface Status {
   projectId: string
   name: string
   category: StatusCategory
+  color: string
   position: number
 }
 
@@ -140,6 +300,18 @@ export function isValidLabelColor(color: string): boolean {
   return LABEL_COLOR_PATTERN.test(color)
 }
 
+/** Status colors use the same hex shape as label colors. */
+export const DEFAULT_STATUS_COLOR = "#94a3b8"
+
+export function isValidStatusColor(color: string): boolean {
+  return LABEL_COLOR_PATTERN.test(color)
+}
+
+export function defaultStatusColorForName(name: string): string {
+  const entry = DEFAULT_STATUS_ROSTER.find((item) => item.name === name)
+  return entry?.color ?? DEFAULT_STATUS_COLOR
+}
+
 /**
  * T5 label-name normalization shared by both stores: trim, drop blanks,
  * dedupe case-insensitively keeping first-seen casing and order.
@@ -173,15 +345,22 @@ export interface WorkspaceStore {
   }): Promise<Invitation>
   listInvitationsForEmail(email: string): Promise<Invitation[]>
   acceptInvitation(invitationId: string, userId: string): Promise<Membership>
+  /**
+   * Creates the Project already seeded (ADR-0001), always, in one atomic
+   * step: the 7 default statuses in roster order, then the 6 sample Issues
+   * through the normal issue path as `KEY-1`…`KEY-6`. A failure anywhere
+   * fails the whole request, so no half-seeded Project is ever left behind.
+   * The first user-created Issue is therefore `KEY-7`.
+   */
   createProject(
     workspaceId: string,
-    input: { name: string; key: string }
+    input: { name: string; key: string; icon?: string; color?: string }
   ): Promise<Project>
   listProjects(workspaceId: string): Promise<Project[]>
   getProject(projectId: string): Promise<Project | null>
   updateProject(
     projectId: string,
-    input: { name?: string; key?: string }
+    input: { name?: string; key?: string; icon?: string; color?: string }
   ): Promise<Project>
   /** Next issue number for the project; 1 until the first issue. */
   getNextIssueNumber(projectId: string): Promise<number>
@@ -189,14 +368,19 @@ export interface WorkspaceStore {
   hasIssues(projectId: string): Promise<boolean>
   createStatus(
     projectId: string,
-    input: { name: string; category: StatusCategory }
+    input: { name: string; category: StatusCategory; color?: string }
   ): Promise<Status>
   /** Statuses in Kanban order (ascending position). */
   listStatuses(projectId: string): Promise<Status[]>
   getStatus(statusId: string): Promise<Status | null>
   updateStatus(
     statusId: string,
-    input: { name?: string; category?: StatusCategory; position?: number }
+    input: {
+      name?: string
+      category?: StatusCategory
+      color?: string
+      position?: number
+    }
   ): Promise<Status>
   deleteStatus(statusId: string): Promise<void>
   createIssue(projectId: string, input: CreateIssueInput): Promise<Issue>
@@ -239,7 +423,26 @@ export interface WorkspaceStore {
   ): Promise<boolean>
 }
 
-export function createMemoryWorkspaceStore(): WorkspaceStore {
+/**
+ * Test-only fault injection for the `createProject` seeding waterfall. The
+ * contract tests use it to prove the waterfall is atomic; production callers
+ * pass nothing.
+ */
+export interface MemoryWorkspaceStoreOptions {
+  /**
+   * Called as each seeded row is staged, before anything is committed.
+   * Throwing aborts the whole waterfall with no orphan statuses or issues.
+   */
+  onSeedStep?: (step: {
+    kind: "status" | "issue"
+    index: number
+    projectId: string
+  }) => void
+}
+
+export function createMemoryWorkspaceStore(
+  options: MemoryWorkspaceStoreOptions = {}
+): WorkspaceStore {
   const workspaces = new Map<string, Workspace>()
   const members = new Map<string, Membership>()
   const invitations = new Map<string, Invitation>()
@@ -355,6 +558,34 @@ export function createMemoryWorkspaceStore(): WorkspaceStore {
     return assigneeId
   }
 
+  /**
+   * Shape one Issue row the way CreateIssue always does. The `createProject`
+   * waterfall seeds through `seedIssueFields`, which mirrors these fields, so
+   * a seeded Issue is indistinguishable from a user-created one.
+   */
+  function newIssueRow(
+    project: Project,
+    number: number,
+    input: CreateIssueInput
+  ): Issue {
+    return {
+      id: crypto.randomUUID(),
+      projectId: project.id,
+      number,
+      keyPrefix: project.key,
+      identifier: `${project.key}-${number}`,
+      title: input.title.trim(),
+      description: input.description ?? null,
+      statusId: input.statusId,
+      priority: input.priority ?? "Medium",
+      assigneeId: input.assigneeId ?? null,
+      dueDate: normalizeDueDate(input.dueDate),
+      archived: false,
+      labels: normalizeLabelNames(input.labels ?? []),
+      parentId: input.parentId ?? null,
+    }
+  }
+
   return {
     async createWorkspace(ownerId, name) {
       const workspace = { id: crypto.randomUUID(), name, createdBy: ownerId }
@@ -456,14 +687,61 @@ export function createMemoryWorkspaceStore(): WorkspaceStore {
         ;(error as { code?: string }).code = "conflict"
         throw error
       }
+      const icon = input.icon ?? DEFAULT_PROJECT_ICON
+      if (!isValidProjectIcon(icon)) throw invalid("Invalid project icon")
+      const color = input.color ?? DEFAULT_PROJECT_COLOR
+      if (!isValidProjectColor(color)) throw invalid("Invalid project color")
       const project: Project = {
         id: crypto.randomUUID(),
         workspaceId,
         name: input.name,
         key,
+        icon,
+        color,
+      }
+      // ADR-0001 seeding: build the whole waterfall against the new project
+      // in staging and commit only once every step succeeded, so a failure
+      // anywhere leaves no orphan statuses or issues behind.
+      const stagedStatuses: Status[] = []
+      for (const [position, entry] of DEFAULT_STATUS_ROSTER.entries()) {
+        options.onSeedStep?.({
+          kind: "status",
+          index: position,
+          projectId: project.id,
+        })
+        stagedStatuses.push({
+          id: crypto.randomUUID(),
+          projectId: project.id,
+          name: entry.name,
+          category: entry.category,
+          color: entry.color,
+          position,
+        })
+      }
+      const statusIdByName = new Map(
+        stagedStatuses.map((s) => [s.name, s.id] as const)
+      )
+      const stagedIssues: Issue[] = []
+      let nextNumber = 1
+      for (const [index, seed] of DEFAULT_SEED_ISSUES.entries()) {
+        options.onSeedStep?.({ kind: "issue", index, projectId: project.id })
+        const statusId = statusIdByName.get(seed.statusName)
+        if (!statusId) {
+          throw invalid(`Seed status ${seed.statusName} is missing`)
+        }
+        // Same persisted fields as CreateIssue: consumes the sequence and
+        // KEY-N identifiers, unassigned with no due date and priority None.
+        stagedIssues.push({
+          id: crypto.randomUUID(),
+          projectId: project.id,
+          ...seedIssueFields(project.key, nextNumber, statusId, seed),
+        })
+        nextNumber += 1
       }
       projects.set(project.id, project)
-      sequences.set(project.id, 1)
+      sequences.set(project.id, nextNumber)
+      for (const staged of stagedStatuses) statuses.set(staged.id, staged)
+      for (const staged of stagedIssues) issues.set(staged.id, staged)
       return project
     },
 
@@ -495,6 +773,18 @@ export function createMemoryWorkspaceStore(): WorkspaceStore {
         }
       }
       if (input.name !== undefined) project.name = input.name
+      if (input.icon !== undefined) {
+        if (!isValidProjectIcon(input.icon)) {
+          throw invalid("Invalid project icon")
+        }
+        project.icon = input.icon
+      }
+      if (input.color !== undefined) {
+        if (!isValidProjectColor(input.color)) {
+          throw invalid("Invalid project color")
+        }
+        project.color = input.color
+      }
       return { ...project }
     },
 
@@ -530,6 +820,9 @@ export function createMemoryWorkspaceStore(): WorkspaceStore {
         ;(error as { code?: string }).code = "conflict"
         throw error
       }
+      if (input.color !== undefined && !isValidStatusColor(input.color)) {
+        throw invalid("Invalid status color")
+      }
       const position = [...statuses.values()].filter(
         (s) => s.projectId === projectId
       ).length
@@ -538,6 +831,7 @@ export function createMemoryWorkspaceStore(): WorkspaceStore {
         projectId,
         name: input.name,
         category: input.category,
+        color: input.color ?? defaultStatusColorForName(input.name),
         position,
       }
       statuses.set(status.id, status)
@@ -578,6 +872,11 @@ export function createMemoryWorkspaceStore(): WorkspaceStore {
         status.name = input.name
       }
       if (input.category !== undefined) status.category = input.category
+      if (input.color !== undefined) {
+        if (!isValidStatusColor(input.color))
+          throw invalid("Invalid status color")
+        status.color = input.color
+      }
       if (input.position !== undefined) {
         const ordered = [...statuses.values()]
           .filter((s) => s.projectId === status.projectId)
@@ -634,22 +933,16 @@ export function createMemoryWorkspaceStore(): WorkspaceStore {
       sequences.set(projectId, number + 1)
       const labelRows = ensureLabelRows(project.workspaceId, input.labels ?? [])
       const parentId = resolveParentId(projectId, null, input.parentId) ?? null
-      const issue: Issue = {
-        id: crypto.randomUUID(),
-        projectId,
-        number,
-        keyPrefix: project.key,
-        identifier: `${project.key}-${number}`,
+      const issue = newIssueRow(project, number, {
+        ...input,
         title,
-        description: input.description ?? null,
         statusId: status.id,
         priority,
         assigneeId,
         dueDate,
-        archived: false,
         labels: labelRows.map((row) => row.name),
         parentId,
-      }
+      })
       issues.set(issue.id, issue)
       relinkIssue(issue.id, labelRows)
       return { ...issue, labels: [...issue.labels] }

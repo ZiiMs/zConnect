@@ -20,6 +20,7 @@ export function CreateIssueForm({
   statuses,
   members,
   labels = [],
+  initialStatusId,
   onCreated,
 }: {
   projectId: string
@@ -27,11 +28,15 @@ export function CreateIssueForm({
   members: { userId: string }[]
   /** T5 workspace registry for optional label selection. */
   labels?: Label[]
+  /** Preselects the status (group quick-add); defaults to the first status. */
+  initialStatusId?: string
   onCreated: (issue: Issue) => void
 }) {
   const [title, setTitle] = useState("")
   const [description, setDescription] = useState("")
-  const [statusId, setStatusId] = useState(statuses[0]?.id ?? "")
+  const [statusId, setStatusId] = useState(
+    initialStatusId ?? statuses[0]?.id ?? ""
+  )
   const [priority, setPriority] = useState<Priority>("Medium")
   const [assigneeId, setAssigneeId] = useState("")
   const [dueDate, setDueDate] = useState("")

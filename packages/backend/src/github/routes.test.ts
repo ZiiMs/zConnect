@@ -53,18 +53,14 @@ function setup(webhookSecret?: string) {
 
 async function seed(app: Hono, workspaces: WorkspaceStore) {
   const workspace = await workspaces.createWorkspace(owner.id, "Acme")
-  const project = await workspaces.createProject(workspace.id, {
+  await workspaces.createProject(workspace.id, {
     name: "Web",
     key: "WEB",
   })
-  const status = await workspaces.createStatus(project.id, {
-    name: "Backlog",
-    category: "Todo",
-  })
-  const issue = await workspaces.createIssue(project.id, {
-    title: "Fix login",
-    statusId: status.id,
-  })
+  // T2: every new project arrives with the seeded roster and six tutorial
+  // issues, so this fixture links against the seeded first issue (WEB-1).
+  const issue = await workspaces.getIssue("WEB-1")
+  if (!issue) throw new Error("seeded WEB-1 issue missing")
   // Member joins through the invite flow so membership is realistic.
   await app.request(`/api/workspaces/${workspace.id}/invites`, {
     method: "POST",

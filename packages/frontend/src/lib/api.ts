@@ -30,15 +30,39 @@ export const projectSchema = z.object({
   workspaceId: z.string(),
   name: z.string(),
   key: z.string(),
+  icon: z.string().default("Folder"),
+  color: z
+    .string()
+    .regex(/^#[0-9a-fA-F]{6}$/)
+    .default("#94a3b8"),
 })
 
-export const statusCategorySchema = z.enum(["Todo", "In Progress", "Done"])
+/**
+ * The six fixed Status Categories in roster order (ADR-0001): Backlog,
+ * Unstarted, In Progress, Completed, Canceled, Duplicate. Completed,
+ * Canceled, and Duplicate are terminal and count as done everywhere
+ * (grouping, progress, guardrails).
+ */
+export const STATUS_CATEGORIES = [
+  "Backlog",
+  "Unstarted",
+  "In Progress",
+  "Completed",
+  "Canceled",
+  "Duplicate",
+] as const
+
+export const statusCategorySchema = z.enum(STATUS_CATEGORIES)
 
 export const statusSchema = z.object({
   id: z.string(),
   projectId: z.string(),
   name: z.string(),
   category: statusCategorySchema,
+  color: z
+    .string()
+    .regex(/^#[0-9a-fA-F]{6}$/)
+    .default("#94a3b8"),
   position: z.number(),
 })
 
@@ -127,6 +151,42 @@ export type StatusCategory = z.infer<typeof statusCategorySchema>
 export type Status = z.infer<typeof statusSchema>
 export type Label = z.infer<typeof labelSchema>
 
+/**
+ * Terminal Status Categories (ADR-0001): Completed, Canceled, and Duplicate
+ * count as done everywhere. Statuses in these categories are finished work;
+ * the open three (Backlog, Unstarted, In Progress) are not.
+ */
+export const TERMINAL_STATUS_CATEGORIES = [
+  "Completed",
+  "Canceled",
+  "Duplicate",
+] as const satisfies readonly StatusCategory[]
+
+export function isTerminalStatusCategory(category: StatusCategory): boolean {
+  return TERMINAL_STATUS_CATEGORIES.some((terminal) => terminal === category)
+}
+
+/**
+ * Progress rollup for a project's issues: `done` counts issues sitting in a
+ * terminal Status Category (ADR-0001), `total` counts every issue given.
+ * Issues whose status is unknown still count toward `total`, never `done`.
+ */
+export function issueProgress(
+  issues: Issue[],
+  statuses: Status[]
+): { total: number; done: number } {
+  const terminalStatusIds = new Set(
+    statuses
+      .filter((status) => isTerminalStatusCategory(status.category))
+      .map((status) => status.id)
+  )
+  return {
+    total: issues.length,
+    done: issues.filter((issue) => terminalStatusIds.has(issue.statusId))
+      .length,
+  }
+}
+
 export interface CreateLabelInput {
   name: string
   color?: string
@@ -207,7 +267,7 @@ export const api = {
 
   createProject(
     workspaceId: string,
-    input: { name: string; key: string }
+    input: { name: string; key: string; icon?: string; color?: string }
   ): Promise<Project> {
     return request(`/api/workspaces/${workspaceId}/projects`, projectSchema, {
       method: "POST",
@@ -221,7 +281,7 @@ export const api = {
 
   updateProject(
     projectId: string,
-    input: { name?: string; key?: string }
+    input: { name?: string; key?: string; icon?: string; color?: string }
   ): Promise<Project> {
     return request(`/api/projects/${projectId}`, projectSchema, {
       method: "PATCH",
@@ -235,7 +295,7 @@ export const api = {
 
   createStatus(
     projectId: string,
-    input: { name: string; category: StatusCategory }
+    input: { name: string; category: StatusCategory; color?: string }
   ): Promise<Status> {
     return request(`/api/projects/${projectId}/statuses`, statusSchema, {
       method: "POST",
@@ -246,7 +306,12 @@ export const api = {
   updateStatus(
     projectId: string,
     statusId: string,
-    input: { name?: string; category?: StatusCategory; position?: number }
+    input: {
+      name?: string
+      category?: StatusCategory
+      color?: string
+      position?: number
+    }
   ): Promise<Status> {
     return request(
       `/api/projects/${projectId}/statuses/${statusId}`,

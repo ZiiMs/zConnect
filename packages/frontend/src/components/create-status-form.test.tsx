@@ -1,18 +1,40 @@
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, test, vi } from "vitest"
 import { api } from "@/lib/api"
 import { CreateStatusForm } from "./create-status-form.js"
 
-vi.mock("@/lib/api", () => ({
-  api: {
-    createStatus: vi.fn(),
-  },
-}))
+vi.mock("@/lib/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api")>()
+  return {
+    ...actual,
+    api: {
+      createStatus: vi.fn(),
+    },
+  }
+})
 
 const createStatus = vi.mocked(api.createStatus)
 
 describe("create status form", () => {
+  test("offers the six status categories in roster order", () => {
+    render(<CreateStatusForm projectId="pr-1" onCreated={() => {}} />)
+
+    const select = screen.getByLabelText(/status category/i)
+    expect(select).toHaveValue("Backlog")
+    const options = within(select)
+      .getAllByRole("option")
+      .map((option) => option.textContent)
+    expect(options).toEqual([
+      "Backlog",
+      "Unstarted",
+      "In Progress",
+      "Completed",
+      "Canceled",
+      "Duplicate",
+    ])
+  })
+
   test("defines a status with a category", async () => {
     const user = userEvent.setup()
     createStatus.mockResolvedValue({
@@ -20,6 +42,7 @@ describe("create status form", () => {
       projectId: "pr-1",
       name: "In Review",
       category: "In Progress",
+      color: "#0f783c",
       position: 1,
     })
     const onCreated = vi.fn()
@@ -36,6 +59,7 @@ describe("create status form", () => {
       expect(createStatus).toHaveBeenCalledWith("pr-1", {
         name: "In Review",
         category: "In Progress",
+        color: "#0f783c",
       })
     )
     expect(onCreated).toHaveBeenCalled()

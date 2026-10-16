@@ -50,6 +50,8 @@ export const project = pgTable(
       .references(() => workspace.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     key: varchar("key", { length: 16 }).notNull(),
+    icon: varchar("icon", { length: 32 }).notNull().default("Folder"),
+    color: varchar("color", { length: 7 }).notNull().default("#94a3b8"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -79,7 +81,8 @@ export const projectViewer = pgTable(
 /**
  * Project workflow (T2 – Project + Status workflow). Vocabulary per
  * GLOSSARY.md: Status (ordered step, never Column/State), Status Category
- * (fixed bucket Todo/In Progress/Done), Project Key prefix.
+ * (fixed bucket Backlog/Unstarted/In Progress/Completed/Canceled/Duplicate),
+ * Project Key prefix.
  */
 export const status = pgTable(
   "status",
@@ -92,6 +95,7 @@ export const status = pgTable(
     category: varchar("category", { length: 16 })
       .notNull()
       .$type<StatusCategory>(),
+    color: varchar("color", { length: 7 }).notNull().default("#94a3b8"),
     position: integer("position").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
@@ -288,8 +292,14 @@ export const webhookDelivery = pgTable("webhook_delivery", {
 
 export type WorkspaceRole = "Owner" | "Admin" | "Member"
 
-/** Fixed Status Category buckets per GLOSSARY.md. */
-export type StatusCategory = "Todo" | "In Progress" | "Done"
+/** Fixed Status Category buckets per GLOSSARY.md, in roster order (ADR-0001). */
+export type StatusCategory =
+  | "Backlog"
+  | "Unstarted"
+  | "In Progress"
+  | "Completed"
+  | "Canceled"
+  | "Duplicate"
 
 /** Priority urgency per GLOSSARY.md. */
 export type Priority = "Urgent" | "High" | "Medium" | "Low" | "None"

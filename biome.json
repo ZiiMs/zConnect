@@ -11,6 +11,8 @@
       "!**/dist",
       "!**/.vite",
       "!packages/backend/drizzle",
+      "!packages/frontend/src/prototypes/app-mockups/themes.registry.css",
+      "!packages/frontend/src/prototypes/app-mockups/registry-themes.ts",
       "!**/*.log"
     ]
   },

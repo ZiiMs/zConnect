@@ -20,11 +20,20 @@ describe("project key form", () => {
       workspaceId: "ws-1",
       name: "Web",
       key: "SITE",
+      icon: "Folder",
+      color: "#94a3b8",
     })
     const onUpdated = vi.fn()
     render(
       <ProjectKeyForm
-        project={{ id: "pr-1", workspaceId: "ws-1", name: "Web", key: "WEB" }}
+        project={{
+          id: "pr-1",
+          workspaceId: "ws-1",
+          name: "Web",
+          key: "WEB",
+          icon: "Folder",
+          color: "#94a3b8",
+        }}
         onUpdated={onUpdated}
       />
     )
@@ -41,6 +50,8 @@ describe("project key form", () => {
       workspaceId: "ws-1",
       name: "Web",
       key: "SITE",
+      icon: "Folder",
+      color: "#94a3b8",
     })
   })
 
@@ -51,7 +62,14 @@ describe("project key form", () => {
     )
     render(
       <ProjectKeyForm
-        project={{ id: "pr-1", workspaceId: "ws-1", name: "Web", key: "WEB" }}
+        project={{
+          id: "pr-1",
+          workspaceId: "ws-1",
+          name: "Web",
+          key: "WEB",
+          icon: "Folder",
+          color: "#94a3b8",
+        }}
         onUpdated={() => {}}
       />
     )

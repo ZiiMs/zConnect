@@ -8,14 +8,16 @@ const statuses: Status[] = [
     id: "st-1",
     projectId: "pr-1",
     name: "Backlog",
-    category: "Todo",
+    category: "Backlog",
+    color: "#bec2c8",
     position: 0,
   },
   {
     id: "st-2",
     projectId: "pr-1",
     name: "Shipped",
-    category: "Done",
+    category: "Completed",
+    color: "#5e6ad2",
     position: 1,
   },
 ]

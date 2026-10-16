@@ -24,14 +24,14 @@ export function AuthForm() {
     return <p className="text-muted-foreground text-sm">Loading session…</p>
   }
 
-  if (session) {
+  const user = session?.user
+
+  if (user) {
     return (
       <div className="flex flex-col gap-3">
         <p className="text-sm">
           Signed in as{" "}
-          <span className="font-medium">
-            {session.user.name ?? session.user.email}
-          </span>
+          <span className="font-medium">{user.name ?? user.email}</span>
         </p>
         <Button variant="outline" onClick={() => void signOut()}>
           Sign out
@@ -68,60 +68,85 @@ export function AuthForm() {
   }
 
   return (
-    <div className="flex w-full max-w-sm flex-col gap-4">
-      <Button variant="outline" onClick={() => void handleGoogle()}>
-        Continue with Google
-      </Button>
-      <div className="flex gap-2">
-        <Button
-          variant={mode === "signIn" ? "default" : "outline"}
-          onClick={() => setMode("signIn")}
-        >
-          Sign in
-        </Button>
-        <Button
-          variant={mode === "signUp" ? "default" : "outline"}
-          onClick={() => setMode("signUp")}
-        >
-          Sign up
-        </Button>
+    <div className="w-full max-w-sm rounded-lg border bg-card text-card-foreground shadow-sm">
+      <div className="flex flex-col gap-6 p-6">
+        <div className="flex flex-col items-center gap-2 text-center">
+          <div
+            className="flex size-10 items-center justify-center rounded-md bg-primary font-semibold text-primary-foreground"
+            aria-hidden="true"
+          >
+            z
+          </div>
+          <h1 className="font-medium text-lg">Sign in to zConnect</h1>
+          <p className="text-muted-foreground text-sm">
+            Welcome back — sign in to continue.
+          </p>
+        </div>
+        <div className="flex flex-col gap-4">
+          <Button
+            className="w-full"
+            variant="outline"
+            onClick={() => void handleGoogle()}
+          >
+            Continue with Google
+          </Button>
+          <div className="flex items-center gap-2">
+            <span className="h-px flex-1 bg-border" />
+            <span className="text-muted-foreground text-xs">or</span>
+            <span className="h-px flex-1 bg-border" />
+          </div>
+          <div className="flex gap-2">
+            <Button
+              variant={mode === "signIn" ? "default" : "outline"}
+              onClick={() => setMode("signIn")}
+            >
+              Sign in
+            </Button>
+            <Button
+              variant={mode === "signUp" ? "default" : "outline"}
+              onClick={() => setMode("signUp")}
+            >
+              Sign up
+            </Button>
+          </div>
+          <form className="flex flex-col gap-3" onSubmit={handleSubmit}>
+            {mode === "signUp" && (
+              <input
+                className={inputClass}
+                placeholder="Name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                required
+              />
+            )}
+            <input
+              className={inputClass}
+              type="email"
+              placeholder="Email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
+            <input
+              className={inputClass}
+              type="password"
+              placeholder="Password (min 8 characters)"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              minLength={8}
+              required
+            />
+            {error && <p className="text-destructive text-sm">{error}</p>}
+            <Button type="submit" disabled={loading}>
+              {loading
+                ? "Please wait…"
+                : mode === "signUp"
+                  ? "Create account"
+                  : "Sign in"}
+            </Button>
+          </form>
+        </div>
       </div>
-      <form className="flex flex-col gap-3" onSubmit={handleSubmit}>
-        {mode === "signUp" && (
-          <input
-            className={inputClass}
-            placeholder="Name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            required
-          />
-        )}
-        <input
-          className={inputClass}
-          type="email"
-          placeholder="Email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          required
-        />
-        <input
-          className={inputClass}
-          type="password"
-          placeholder="Password (min 8 characters)"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          minLength={8}
-          required
-        />
-        {error && <p className="text-destructive text-sm">{error}</p>}
-        <Button type="submit" disabled={loading}>
-          {loading
-            ? "Please wait…"
-            : mode === "signUp"
-              ? "Create account"
-              : "Sign in"}
-        </Button>
-      </form>
     </div>
   )
 }

@@ -15,14 +15,16 @@ const statuses: Status[] = [
     id: "st-1",
     projectId: "pr-1",
     name: "Backlog",
-    category: "Todo",
+    category: "Backlog",
+    color: "#bec2c8",
     position: 0,
   },
   {
     id: "st-2",
     projectId: "pr-1",
     name: "Shipped",
-    category: "Done",
+    category: "Completed",
+    color: "#5e6ad2",
     position: 1,
   },
 ]
@@ -44,6 +46,19 @@ const created: Issue = {
 }
 
 describe("create issue form", () => {
+  test("preselects the given initial status", () => {
+    render(
+      <CreateIssueForm
+        projectId="pr-1"
+        statuses={statuses}
+        members={[{ userId: "user-member" }]}
+        initialStatusId="st-2"
+        onCreated={() => {}}
+      />
+    )
+    expect(screen.getByLabelText(/issue status/i)).toHaveValue("st-2")
+  })
+
   test("renders title, status, priority and assignee controls", () => {
     render(
       <CreateIssueForm

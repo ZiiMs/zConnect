@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test"
 import { createWorkspacesApp } from "./routes.js"
 import type { Session } from "./session.js"
 import { createMemoryWorkspaceStore } from "./store.js"
+import { clearSeededTracker } from "./test-support.js"
 
 const owner = { id: "user-owner", email: "owner@example.com" }
 const member = { id: "user-member", email: "member@example.com" }
@@ -41,9 +42,14 @@ describe("issue subtasks", () => {
   let workspaceId: string
   let projectId: string
   let otherProjectId: string
-  let backlogId: string
+  /** An Unstarted-category status: the "open" status most tests move issues around. */
+  let unstartedId: string
+  let backlogCategoryId: string
+  let inProgressId: string
   let doneId: string
-  let otherBacklogId: string
+  let canceledId: string
+  let duplicateId: string
+  let otherUnstartedId: string
 
   async function joinAsMember() {
     await app.request(`/api/workspaces/${workspaceId}/invites`, {
@@ -104,9 +110,15 @@ describe("issue subtasks", () => {
         }
       )
       const id = ((await project.json()) as { id: string }).id
+      // T2: every new project arrives seeded; this describe wants clean ones.
+      await clearSeededTracker(fresh.store, id)
       for (const [statusName, category] of [
-        ["Backlog", "Todo"],
-        ["Shipped", "Done"],
+        ["Backlog", "Backlog"],
+        ["Todo", "Unstarted"],
+        ["In Progress", "In Progress"],
+        ["Shipped", "Completed"],
+        ["Canceled", "Canceled"],
+        ["Duplicate", "Duplicate"],
       ] as const) {
         const created = await app.request(`/api/projects/${id}/statuses`, {
           method: "POST",
@@ -116,11 +128,15 @@ describe("issue subtasks", () => {
         const status = ((await created.json()) as { id: string }).id
         if (key === "WEB") {
           projectId = id
-          if (category === "Todo") backlogId = status
-          else doneId = status
+          if (statusName === "Backlog") backlogCategoryId = status
+          else if (statusName === "Todo") unstartedId = status
+          else if (statusName === "In Progress") inProgressId = status
+          else if (statusName === "Shipped") doneId = status
+          else if (statusName === "Canceled") canceledId = status
+          else duplicateId = status
         } else {
           otherProjectId = id
-          if (category === "Todo") otherBacklogId = status
+          if (statusName === "Todo") otherUnstartedId = status
         }
       }
     }
@@ -130,12 +146,12 @@ describe("issue subtasks", () => {
   test("creates a subtask linked to its parent", async () => {
     const parent = await createIssue(projectId, {
       title: "Parent",
-      statusId: backlogId,
+      statusId: unstartedId,
     })
     expect(parent.parentId).toBeNull()
     const child = await createIssue(projectId, {
       title: "Child",
-      statusId: backlogId,
+      statusId: unstartedId,
       parentId: parent.id,
     })
     expect(child.parentId).toBe(parent.id)
@@ -149,11 +165,11 @@ describe("issue subtasks", () => {
   test("links to a parent at update time and unlinks with null", async () => {
     const parent = await createIssue(projectId, {
       title: "Parent",
-      statusId: backlogId,
+      statusId: unstartedId,
     })
     const child = await createIssue(projectId, {
       title: "Child",
-      statusId: backlogId,
+      statusId: unstartedId,
     })
     const linked = await patchIssue(child.identifier, { parentId: parent.id })
     expect(linked.status).toBe(200)
@@ -167,16 +183,16 @@ describe("issue subtasks", () => {
   test("rejects missing, cross-project, self and nested parents", async () => {
     const parent = await createIssue(projectId, {
       title: "Parent",
-      statusId: backlogId,
+      statusId: unstartedId,
     })
     const child = await createIssue(projectId, {
       title: "Child",
-      statusId: backlogId,
+      statusId: unstartedId,
       parentId: parent.id,
     })
     const other = await createIssue(otherProjectId, {
       title: "Other",
-      statusId: otherBacklogId,
+      statusId: otherUnstartedId,
     })
 
     // Creating with a missing or cross-project parent fails the same way.
@@ -186,7 +202,7 @@ describe("issue subtasks", () => {
         headers: { "content-type": "application/json", ...auth(member.id) },
         body: JSON.stringify({
           title: "Bad link",
-          statusId: backlogId,
+          statusId: unstartedId,
           parentId,
         }),
       })
@@ -209,7 +225,7 @@ describe("issue subtasks", () => {
       headers: { "content-type": "application/json", ...auth(member.id) },
       body: JSON.stringify({
         title: "Grandchild",
-        statusId: backlogId,
+        statusId: unstartedId,
         parentId: child.id,
       }),
     })
@@ -219,16 +235,16 @@ describe("issue subtasks", () => {
   test("rejects making an issue with subtasks into a subtask", async () => {
     const parent = await createIssue(projectId, {
       title: "Parent",
-      statusId: backlogId,
+      statusId: unstartedId,
     })
     await createIssue(projectId, {
       title: "Child",
-      statusId: backlogId,
+      statusId: unstartedId,
       parentId: parent.id,
     })
     const sibling = await createIssue(projectId, {
       title: "Sibling",
-      statusId: backlogId,
+      statusId: unstartedId,
     })
     const res = await patchIssue(parent.identifier, { parentId: sibling.id })
     expect(res.status).toBe(400)
@@ -237,16 +253,16 @@ describe("issue subtasks", () => {
   test("lists direct subtasks in number order", async () => {
     const parent = await createIssue(projectId, {
       title: "Parent",
-      statusId: backlogId,
+      statusId: unstartedId,
     })
     await createIssue(projectId, {
       title: "Child b",
-      statusId: backlogId,
+      statusId: unstartedId,
       parentId: parent.id,
     })
     await createIssue(projectId, {
       title: "Child a",
-      statusId: backlogId,
+      statusId: unstartedId,
       parentId: parent.id,
     })
     const res = await app.request(`/api/issues/${parent.identifier}/subtasks`, {
@@ -255,7 +271,7 @@ describe("issue subtasks", () => {
     expect(res.status).toBe(200)
     expect(
       ((await res.json()) as { identifier: string }[]).map((i) => i.identifier)
-    ).toEqual(["WEB-2", "WEB-3"])
+    ).toEqual(["WEB-8", "WEB-9"])
 
     expect(
       (
@@ -274,48 +290,95 @@ describe("issue subtasks", () => {
   })
 
   test("completing a parent with open subtasks warns but allows it", async () => {
+    for (const [category, statusId] of [
+      ["Completed", doneId],
+      ["Canceled", canceledId],
+      ["Duplicate", duplicateId],
+    ] as const) {
+      const parent = await createIssue(projectId, {
+        title: `Parent (${category})`,
+        statusId: unstartedId,
+      })
+      await createIssue(projectId, {
+        title: `Open child (${category})`,
+        statusId: unstartedId,
+        parentId: parent.id,
+      })
+      const res = await patchIssue(parent.identifier, { statusId })
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as {
+        statusId: string
+        warnings: string[]
+      }
+      expect(body.statusId).toBe(statusId)
+      expect(body.warnings).toHaveLength(1)
+      expect(body.warnings[0]).toMatch(/open subtask/i)
+    }
+  })
+
+  test("moving to a terminal status with subtasks already done warns nothing", async () => {
+    for (const [category, childStatusId] of [
+      ["Completed", doneId],
+      ["Canceled", canceledId],
+      ["Duplicate", duplicateId],
+    ] as const) {
+      const parent = await createIssue(projectId, {
+        title: `Parent with ${category} child`,
+        statusId: unstartedId,
+      })
+      const child = await createIssue(projectId, {
+        title: `Done child (${category})`,
+        statusId: unstartedId,
+        parentId: parent.id,
+      })
+      await patchIssue(child.identifier, { statusId: childStatusId })
+      const res = await patchIssue(parent.identifier, { statusId: doneId })
+      expect(res.status).toBe(200)
+      expect(((await res.json()) as { warnings: string[] }).warnings).toEqual(
+        []
+      )
+    }
+  })
+
+  test("moving with open subtasks to a non-terminal status warns nothing", async () => {
+    for (const [category, statusId] of [
+      ["Backlog", backlogCategoryId],
+      ["Unstarted", unstartedId],
+      ["In Progress", inProgressId],
+    ] as const) {
+      const parent = await createIssue(projectId, {
+        title: `Parent (${category})`,
+        statusId: unstartedId,
+      })
+      await createIssue(projectId, {
+        title: `Open child (${category})`,
+        statusId: unstartedId,
+        parentId: parent.id,
+      })
+      const res = await patchIssue(parent.identifier, { statusId })
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as {
+        statusId: string
+        warnings: string[]
+      }
+      expect(body.statusId).toBe(statusId)
+      expect(body.warnings).toEqual([])
+    }
+  })
+
+  test("an unrelated update carries no warnings", async () => {
     const parent = await createIssue(projectId, {
       title: "Parent",
-      statusId: backlogId,
+      statusId: unstartedId,
     })
     await createIssue(projectId, {
       title: "Open child",
-      statusId: backlogId,
+      statusId: unstartedId,
       parentId: parent.id,
     })
-    const res = await patchIssue(parent.identifier, { statusId: doneId })
-    expect(res.status).toBe(200)
-    const body = (await res.json()) as { statusId: string; warnings: string[] }
-    expect(body.statusId).toBe(doneId)
-    expect(body.warnings).toHaveLength(1)
-    expect(body.warnings[0]).toMatch(/open subtask/i)
-  })
-
-  test("completing with done subtasks, or to a non-Done status, warns nothing", async () => {
-    const parent = await createIssue(projectId, {
-      title: "Parent",
-      statusId: backlogId,
-    })
-    const child = await createIssue(projectId, {
-      title: "Child",
-      statusId: backlogId,
-      parentId: parent.id,
-    })
-    await patchIssue(child.identifier, { statusId: doneId })
-    const done = await patchIssue(parent.identifier, { statusId: doneId })
-    expect(((await done.json()) as { warnings: string[] }).warnings).toEqual([])
-
-    const other = await createIssue(projectId, {
-      title: "Other parent",
-      statusId: backlogId,
-    })
-    await createIssue(projectId, {
-      title: "Other child",
-      statusId: backlogId,
-      parentId: other.id,
-    })
-    const moved = await patchIssue(other.identifier, { title: "Renamed" })
-    expect(((await moved.json()) as { warnings: string[] }).warnings).toEqual(
+    const renamed = await patchIssue(parent.identifier, { title: "Renamed" })
+    expect(renamed.status).toBe(200)
+    expect(((await renamed.json()) as { warnings: string[] }).warnings).toEqual(
       []
     )
   })
@@ -323,18 +386,18 @@ describe("issue subtasks", () => {
   test("cannot move a subtask or a parent to another project", async () => {
     const parent = await createIssue(projectId, {
       title: "Parent",
-      statusId: backlogId,
+      statusId: unstartedId,
     })
     const child = await createIssue(projectId, {
       title: "Child",
-      statusId: backlogId,
+      statusId: unstartedId,
       parentId: parent.id,
     })
     expect(
       (
         await patchIssue(child.identifier, {
           projectId: otherProjectId,
-          statusId: otherBacklogId,
+          statusId: otherUnstartedId,
         })
       ).status
     ).toBe(400)
@@ -342,7 +405,7 @@ describe("issue subtasks", () => {
       (
         await patchIssue(parent.identifier, {
           projectId: otherProjectId,
-          statusId: otherBacklogId,
+          statusId: otherUnstartedId,
         })
       ).status
     ).toBe(400)

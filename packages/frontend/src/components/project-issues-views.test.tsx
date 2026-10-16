@@ -45,21 +45,30 @@ const listMembers = vi.mocked(api.listMembers)
 const listLabels = vi.mocked(api.listLabels)
 const updateIssue = vi.mocked(api.updateIssue)
 
-const project = { id: "pr-1", workspaceId: "ws-1", name: "Web", key: "WEB" }
+const project = {
+  id: "pr-1",
+  workspaceId: "ws-1",
+  name: "Web",
+  key: "WEB",
+  icon: "Folder",
+  color: "#94a3b8",
+}
 
 const statuses: Status[] = [
   {
     id: "st-1",
     projectId: "pr-1",
     name: "Backlog",
-    category: "Todo",
+    category: "Backlog",
+    color: "#bec2c8",
     position: 0,
   },
   {
     id: "st-2",
     projectId: "pr-1",
     name: "Shipped",
-    category: "Done",
+    category: "Completed",
+    color: "#5e6ad2",
     position: 1,
   },
 ]
@@ -114,16 +123,54 @@ describe("project issues views", () => {
     setup()
     await screen.findByText("WEB-1")
 
-    expect(screen.getByRole("tablist")).toBeInTheDocument()
-    expect(screen.getByLabelText("Issue filters")).toBeInTheDocument()
+    async function openViews() {
+      await user.click(screen.getByRole("button", { name: /^filters/i }))
+    }
+
+    await openViews()
+    expect(
+      screen.getByRole("tablist", { name: "Issue views" })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole("tablist", { name: "Issue filter presets" })
+    ).toBeInTheDocument()
 
     await user.click(screen.getByRole("tab", { name: "Table" }))
-    expect(screen.getByLabelText("Issue filters")).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: /^filters/i })
+    ).toBeInTheDocument()
     expect(screen.getByTestId("issue-row-WEB-1")).toBeInTheDocument()
 
+    await openViews()
     await user.click(screen.getByRole("tab", { name: "Kanban" }))
-    expect(screen.getByLabelText("Issue filters")).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: /^filters/i })
+    ).toBeInTheDocument()
     expect(screen.getByTestId("kanban-card-WEB-1")).toBeInTheDocument()
+  })
+
+  test("the selected view persists per user per project across reloads", async () => {
+    const user = userEvent.setup()
+    const first = setup()
+    await screen.findByText("WEB-1")
+
+    await user.click(screen.getByRole("button", { name: /^filters/i }))
+    await user.click(screen.getByRole("tab", { name: "Kanban" }))
+    await screen.findByTestId("kanban-card-WEB-1")
+    expect(localStorage.getItem("zconnect:issue-view:user-a:pr-1")).toBe(
+      "kanban"
+    )
+
+    first.unmount()
+    setup()
+    expect(await screen.findByTestId("kanban-card-WEB-1")).toBeInTheDocument()
+  })
+
+  test("an unknown stored view lands on List", async () => {
+    localStorage.setItem("zconnect:issue-view:user-a:pr-1", "grid")
+    setup()
+    await screen.findByText("WEB-1")
+    expect(screen.queryByTestId("kanban-card-WEB-1")).not.toBeInTheDocument()
   })
 
   test("filters narrow list, table, and kanban identically", async () => {
@@ -132,7 +179,10 @@ describe("project issues views", () => {
     await screen.findByText("WEB-1")
     listIssues.mockResolvedValue([baseIssue])
 
-    await user.click(screen.getByRole("checkbox", { name: "Backlog" }))
+    // Widen to All Issues, then narrow to the Backlog status by hand.
+    await user.click(screen.getByRole("tab", { name: "All Issues" }))
+    await user.click(screen.getByRole("button", { name: /^filters/i }))
+    await user.click(screen.getByRole("button", { name: "Backlog" }))
     await waitFor(() =>
       expect(listIssues).toHaveBeenLastCalledWith(
         "pr-1",
@@ -149,6 +199,7 @@ describe("project issues views", () => {
     )
     expect(screen.queryByTestId("issue-row-WEB-2")).not.toBeInTheDocument()
 
+    await user.click(screen.getByRole("button", { name: /^filters/i }))
     await user.click(screen.getByRole("tab", { name: "Kanban" }))
     await waitFor(() =>
       expect(screen.getByTestId("kanban-card-WEB-1")).toBeInTheDocument()
@@ -162,6 +213,7 @@ describe("project issues views", () => {
     setup()
     await screen.findByText("WEB-1")
 
+    await user.click(screen.getByRole("button", { name: /^filters/i }))
     await user.click(screen.getByRole("tab", { name: "Table" }))
     const row = await screen.findByTestId("issue-row-WEB-1")
     await user.selectOptions(
@@ -187,12 +239,13 @@ describe("project issues views", () => {
     setup([baseIssue])
     await screen.findByText("WEB-1")
 
+    await user.click(screen.getByRole("button", { name: /^filters/i }))
     await user.click(screen.getByRole("tab", { name: "Kanban" }))
     await screen.findByTestId("kanban-card-WEB-1")
-    await user.selectOptions(
-      screen.getByLabelText(/move WEB-1 to status/i),
-      "st-2"
+    await user.click(
+      screen.getByRole("button", { name: /move WEB-1 to status/i })
     )
+    await user.click(screen.getByRole("menuitemradio", { name: "Shipped" }))
 
     await waitFor(() =>
       expect(updateIssue).toHaveBeenCalledWith("WEB-1", { statusId: "st-2" })
@@ -212,12 +265,13 @@ describe("project issues views", () => {
     setup([baseIssue])
     await screen.findByText("WEB-1")
 
+    await user.click(screen.getByRole("button", { name: /^filters/i }))
     await user.click(screen.getByRole("tab", { name: "Kanban" }))
     await screen.findByTestId("kanban-card-WEB-1")
-    await user.selectOptions(
-      screen.getByLabelText(/move WEB-1 to status/i),
-      "st-2"
+    await user.click(
+      screen.getByRole("button", { name: /move WEB-1 to status/i })
     )
+    await user.click(screen.getByRole("menuitemradio", { name: "Shipped" }))
 
     expect(await screen.findByText(/conflict resolved/i)).toBeInTheDocument()
     const backlog = screen.getByTestId("kanban-column-st-1")
@@ -230,12 +284,13 @@ describe("project issues views", () => {
     setup([baseIssue])
     await screen.findByText("WEB-1")
 
+    await user.click(screen.getByRole("button", { name: /^filters/i }))
     await user.click(screen.getByRole("tab", { name: "Kanban" }))
     await screen.findByTestId("kanban-card-WEB-1")
-    await user.selectOptions(
-      screen.getByLabelText(/move WEB-1 to status/i),
-      "st-2"
+    await user.click(
+      screen.getByRole("button", { name: /move WEB-1 to status/i })
     )
+    await user.click(screen.getByRole("menuitemradio", { name: "Shipped" }))
 
     expect(await screen.findByText(/move failed/i)).toBeInTheDocument()
     const backlog = screen.getByTestId("kanban-column-st-1")
@@ -248,10 +303,30 @@ describe("project issues views", () => {
     expect(subscription.projectId).toBe("pr-1")
     const calls = listIssues.mock.calls.length
 
-    subscription.handler?.({ type: "INSERT", issue: secondIssue })
+    subscription.handler?.({
+      type: "INSERT",
+      issue: { ...secondIssue, statusId: "st-1" },
+    })
 
     expect(await screen.findByText("WEB-2")).toBeInTheDocument()
     expect(listIssues.mock.calls.length).toBe(calls)
+  })
+
+  test("a realtime insert outside the active preset stays out", async () => {
+    const user = userEvent.setup()
+    setup([baseIssue])
+    await screen.findByText("WEB-1")
+
+    // WEB-2 sits in the terminal Completed status, which Active leaves out.
+    subscription.handler?.({ type: "INSERT", issue: secondIssue })
+
+    expect(screen.queryByText("Ship homepage")).not.toBeInTheDocument()
+
+    // The server still has it; widening the preset brings it back.
+    listIssues.mockResolvedValue([baseIssue, secondIssue])
+    await user.click(screen.getByRole("tab", { name: "All Issues" }))
+
+    expect(await screen.findByText("Ship homepage")).toBeInTheDocument()
   })
 
   test("a realtime update rewrites the row without a refresh", async () => {

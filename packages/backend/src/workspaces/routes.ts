@@ -2,7 +2,9 @@ import { Hono } from "hono"
 import { z } from "zod"
 import type { GetSession } from "./session.js"
 import {
+  isTerminalStatusCategory,
   PRIORITIES,
+  PROJECT_ICONS,
   type Priority,
   STATUS_CATEGORIES,
   WORKSPACE_ROLES,
@@ -22,19 +24,32 @@ const projectKeySchema = z
   .toUpperCase()
   .regex(/^[A-Z][A-Z0-9]{1,15}$/)
 
+const projectColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/)
+
 const createProjectBody = z.object({
   name: z.string().trim().min(1),
   key: projectKeySchema,
+  icon: z.enum(PROJECT_ICONS).optional(),
+  color: projectColorSchema.optional(),
 })
 
 const updateProjectBody = z
   .object({
     name: z.string().trim().min(1).optional(),
     key: projectKeySchema.optional(),
+    icon: z.enum(PROJECT_ICONS).optional(),
+    color: projectColorSchema.optional(),
   })
-  .refine((body) => body.name !== undefined || body.key !== undefined, {
-    message: "Nothing to update",
-  })
+  .refine(
+    (body) =>
+      body.name !== undefined ||
+      body.key !== undefined ||
+      body.icon !== undefined ||
+      body.color !== undefined,
+    {
+      message: "Nothing to update",
+    }
+  )
 
 const grantViewerBody = z.object({ userId: z.string().trim().min(1) })
 
@@ -55,21 +70,26 @@ const updateLabelBody = z
     message: "Nothing to update",
   })
 
+const statusColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/)
+
 const createStatusBody = z.object({
   name: z.string().trim().min(1),
   category: z.enum(STATUS_CATEGORIES),
+  color: statusColorSchema.optional(),
 })
 
 const updateStatusBody = z
   .object({
     name: z.string().trim().min(1).optional(),
     category: z.enum(STATUS_CATEGORIES).optional(),
+    color: statusColorSchema.optional(),
     position: z.number().int().min(0).optional(),
   })
   .refine(
     (body) =>
       body.name !== undefined ||
       body.category !== undefined ||
+      body.color !== undefined ||
       body.position !== undefined,
     { message: "Nothing to update" }
   )
@@ -648,9 +668,10 @@ export function createWorkspacesApp({ store, getSession }: WorkspacesDeps) {
   })
 
   /**
-   * T5 gentle guardrail: completing means moving to a Done-category status.
-   * A parent with open (non-archived, non-Done) subtasks still completes,
-   * but the response carries warnings describing the open work.
+   * T5 gentle guardrail: completing means moving to a terminal category —
+   * Completed, Canceled or Duplicate (ADR-0001). A parent with open
+   * (non-archived, non-terminal) subtasks still moves, but the response
+   * carries warnings describing the open work.
    */
   async function completionWarnings(
     updated: { id: string; projectId: string },
@@ -658,7 +679,7 @@ export function createWorkspacesApp({ store, getSession }: WorkspacesDeps) {
   ): Promise<string[]> {
     if (statusId === undefined) return []
     const target = await store.getStatus(statusId)
-    if (target?.category !== "Done") return []
+    if (!isTerminalStatusCategory(target?.category)) return []
     const children = await store.listSubtasks(updated.id)
     if (children.length === 0) return []
     const byId = new Map(
@@ -666,7 +687,8 @@ export function createWorkspacesApp({ store, getSession }: WorkspacesDeps) {
     )
     const open = children.filter(
       (child) =>
-        !child.archived && byId.get(child.statusId)?.category !== "Done"
+        !child.archived &&
+        !isTerminalStatusCategory(byId.get(child.statusId)?.category)
     )
     if (open.length === 0) return []
     const noun = open.length === 1 ? "subtask" : "subtasks"

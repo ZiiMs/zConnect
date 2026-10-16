@@ -29,11 +29,11 @@ An issue reference to a GitHub PR, branch, or commit, created manually or auto-c
 _Avoid_: Integration, Sync
 
 **Status**:
-A named step in a project's workflow (e.g. In Review), ordered for Kanban display.
+A named step in a project's workflow (e.g. In Review), ordered for Kanban display, with a display color.
 _Avoid_: State, Column
 
 **Status Category**:
-The fixed bucket a status rolls up to: Todo, In Progress, or Done.
+The fixed bucket a status rolls up to: Backlog, Unstarted, In Progress, Completed, Canceled, or Duplicate. Completed, Canceled, and Duplicate are terminal: they count as done everywhere (grouping, progress, guardrails).
 _Avoid_: Group, Phase
 
 **Project Key**:

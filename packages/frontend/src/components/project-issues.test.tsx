@@ -4,18 +4,22 @@ import { beforeEach, describe, expect, test, vi } from "vitest"
 import { api, type Issue, type Label, type Status } from "@/lib/api"
 import { ProjectIssues } from "./project-issues.js"
 
-vi.mock("@/lib/api", () => ({
-  api: {
-    listStatuses: vi.fn(),
-    listIssues: vi.fn(),
-    listMembers: vi.fn(),
-    listLabels: vi.fn(),
-    listSubtasks: vi.fn(),
-    createIssue: vi.fn(),
-    updateIssue: vi.fn(),
-    deleteIssue: vi.fn(),
-  },
-}))
+vi.mock("@/lib/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api")>()
+  return {
+    ...actual,
+    api: {
+      listStatuses: vi.fn(),
+      listIssues: vi.fn(),
+      listMembers: vi.fn(),
+      listLabels: vi.fn(),
+      listSubtasks: vi.fn(),
+      createIssue: vi.fn(),
+      updateIssue: vi.fn(),
+      deleteIssue: vi.fn(),
+    },
+  }
+})
 
 const listStatuses = vi.mocked(api.listStatuses)
 const listIssues = vi.mocked(api.listIssues)
@@ -25,21 +29,30 @@ const listSubtasks = vi.mocked(api.listSubtasks)
 const updateIssue = vi.mocked(api.updateIssue)
 const deleteIssue = vi.mocked(api.deleteIssue)
 
-const project = { id: "pr-1", workspaceId: "ws-1", name: "Web", key: "WEB" }
+const project = {
+  id: "pr-1",
+  workspaceId: "ws-1",
+  name: "Web",
+  key: "WEB",
+  icon: "Folder",
+  color: "#94a3b8",
+}
 
 const statuses: Status[] = [
   {
     id: "st-1",
     projectId: "pr-1",
     name: "Backlog",
-    category: "Todo",
+    category: "Backlog",
+    color: "#bec2c8",
     position: 0,
   },
   {
     id: "st-2",
     projectId: "pr-1",
     name: "Shipped",
-    category: "Done",
+    category: "Completed",
+    color: "#5e6ad2",
     position: 1,
   },
 ]
@@ -88,10 +101,11 @@ describe("project issues list view", () => {
     setup()
 
     expect(await screen.findByText("WEB-1")).toBeInTheDocument()
+    // A first visit lands on the Active preset: the open categories only.
     await waitFor(() =>
-      expect(listIssues).toHaveBeenCalledWith(
+      expect(listIssues).toHaveBeenLastCalledWith(
         "pr-1",
-        expect.objectContaining({ statusIds: [], text: "" })
+        expect.objectContaining({ statusIds: ["st-1"], text: "" })
       )
     )
   })
@@ -100,13 +114,16 @@ describe("project issues list view", () => {
     const user = userEvent.setup()
     setup()
     await screen.findByText("WEB-1")
+    listIssues.mockResolvedValue([issues[0]])
 
-    await user.click(screen.getByRole("checkbox", { name: "Backlog" }))
+    await user.click(screen.getByRole("tab", { name: "All Issues" }))
+    await user.click(screen.getByRole("button", { name: /^filters/i }))
+    await user.click(screen.getByRole("button", { name: "Shipped" }))
 
     await waitFor(() =>
       expect(listIssues).toHaveBeenLastCalledWith(
         "pr-1",
-        expect.objectContaining({ statusIds: ["st-1"] })
+        expect.objectContaining({ statusIds: ["st-2"] })
       )
     )
   })
@@ -116,13 +133,44 @@ describe("project issues list view", () => {
     setup()
     await screen.findByText("WEB-1")
 
-    await user.click(screen.getByRole("checkbox", { name: "Backlog" }))
+    await user.click(screen.getByRole("tab", { name: "All Issues" }))
+    await user.click(screen.getByRole("button", { name: /^filters/i }))
+    await user.click(screen.getByRole("button", { name: "Shipped" }))
 
     await waitFor(() =>
       expect(
         localStorage.getItem("zconnect:issue-filters:user-a:pr-1")
-      ).toContain("st-1")
+      ).toContain("st-2")
     )
+  })
+
+  test("group quick-add opens the composer preselected to that status", async () => {
+    const user = userEvent.setup()
+    setup()
+    await screen.findByText("WEB-1")
+
+    await user.click(
+      screen.getByRole("button", { name: /add issue to backlog/i })
+    )
+
+    expect(screen.getByLabelText(/issue status/i)).toHaveValue("st-1")
+  })
+
+  test("grouping by priority regroups the list end to end", async () => {
+    const user = userEvent.setup()
+    setup()
+    await screen.findByText("WEB-1")
+    expect(screen.getByRole("heading", { name: "Backlog" })).toBeInTheDocument()
+
+    await user.click(screen.getByRole("button", { name: /^filters/i }))
+    await user.selectOptions(screen.getByLabelText(/grouping/i), "priority")
+
+    expect(
+      await screen.findByRole("heading", { name: "High" })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole("heading", { name: "Backlog" })
+    ).not.toBeInTheDocument()
   })
 
   test("completing the lifecycle through a list action updates the row", async () => {
@@ -172,6 +220,7 @@ describe("project issues list view", () => {
     ])
     await screen.findByText("WEB-1")
 
+    await user.click(screen.getByRole("button", { name: /^filters/i }))
     const bar = screen.getByRole("region", { name: /issue filters/i })
     await user.click(within(bar).getByRole("checkbox", { name: "bug" }))
 
@@ -202,27 +251,31 @@ describe("project issues list view", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/open subtask/i)
   })
 
-  test("archiving and deleting through row actions updates the list", async () => {
+  test("archiving and deleting through the detail view updates the list", async () => {
     const user = userEvent.setup()
     updateIssue.mockResolvedValue({ ...issues[0], archived: true })
     deleteIssue.mockResolvedValue(undefined)
     setup(true, true)
     await screen.findByText("WEB-1")
-    const row = screen.getByTestId("issue-WEB-1")
 
-    await user.click(within(row).getByRole("button", { name: /archive/i }))
+    await user.click(
+      screen.getByRole("button", { name: /open detail for WEB-1/i })
+    )
+    const detail = await screen.findByTestId("issue-detail-WEB-1")
+
+    await user.click(within(detail).getByRole("button", { name: /archive/i }))
     await waitFor(() =>
       expect(updateIssue).toHaveBeenCalledWith("WEB-1", { archived: true })
     )
 
     await user.click(
-      within(row).getByRole("button", { name: /delete permanently/i })
+      within(detail).getByRole("button", { name: /delete permanently/i })
     )
     await waitFor(() => expect(deleteIssue).toHaveBeenCalledWith("WEB-1"))
     expect(screen.queryByText("WEB-1")).not.toBeInTheDocument()
   })
 
-  test("expanding subtasks loads the children", async () => {
+  test("opening detail loads the subtasks", async () => {
     const user = userEvent.setup()
     setup()
     listSubtasks.mockResolvedValue([
@@ -237,9 +290,213 @@ describe("project issues list view", () => {
     ])
     await screen.findByText("WEB-1")
 
-    await user.click(screen.getByRole("button", { name: /subtasks/i }))
+    await user.click(
+      screen.getByRole("button", { name: /open detail for WEB-1/i })
+    )
 
     expect(await screen.findByText("Split it")).toBeInTheDocument()
     expect(listSubtasks).toHaveBeenCalledWith("WEB-1")
+  })
+
+  test("creating an issue happens in a modal that closes on success", async () => {
+    const user = userEvent.setup()
+    const createIssue = vi.mocked(api.createIssue)
+    createIssue.mockResolvedValue({
+      ...issues[0],
+      id: "is-2",
+      number: 2,
+      identifier: "WEB-2",
+      title: "New from modal",
+    })
+    setup()
+    await screen.findByText("WEB-1")
+
+    expect(screen.queryByLabelText(/issue title/i)).not.toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: /^new issue$/i }))
+    await user.type(screen.getByLabelText(/issue title/i), "New from modal")
+    await user.click(screen.getByRole("button", { name: /^create issue$/i }))
+
+    await waitFor(() =>
+      expect(createIssue).toHaveBeenCalledWith(
+        "pr-1",
+        expect.objectContaining({ title: "New from modal" })
+      )
+    )
+    expect(await screen.findByText("WEB-2")).toBeInTheDocument()
+    expect(screen.queryByLabelText(/issue title/i)).not.toBeInTheDocument()
+  })
+})
+
+describe("issue filter presets and breadcrumb", () => {
+  const storageKey = "zconnect:issue-filters:user-a:pr-1"
+  const breadcrumb = () =>
+    screen.getByRole("navigation", { name: /breadcrumb/i })
+  const crumbs = () =>
+    within(breadcrumb())
+      .getAllByRole("button")
+      .map((crumb) => crumb.textContent)
+
+  beforeEach(() => {
+    localStorage.clear()
+    vi.clearAllMocks()
+  })
+
+  test("a first visit lands on Active without freezing it into storage", async () => {
+    setup()
+    await screen.findByText("WEB-1")
+
+    expect(screen.getByRole("tab", { name: "Active" })).toHaveAttribute(
+      "aria-selected",
+      "true"
+    )
+    await waitFor(() =>
+      expect(listIssues).toHaveBeenLastCalledWith(
+        "pr-1",
+        expect.objectContaining({ statusIds: ["st-1"] })
+      )
+    )
+    // The default is derived from the project's statuses, not a stored choice.
+    expect(localStorage.getItem(storageKey)).toBeNull()
+  })
+
+  test("a stored preference wins over the Active default", async () => {
+    localStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        statusIds: [],
+        priorities: [],
+        labels: [],
+        text: "fix",
+      })
+    )
+    setup()
+    await screen.findByText("WEB-1")
+
+    expect(listIssues).toHaveBeenLastCalledWith(
+      "pr-1",
+      expect.objectContaining({ statusIds: [], text: "fix" })
+    )
+    expect(screen.getByRole("tab", { name: "All Issues" })).toHaveAttribute(
+      "aria-selected",
+      "true"
+    )
+    expect(screen.getByRole("tab", { name: "Active" })).toHaveAttribute(
+      "aria-selected",
+      "false"
+    )
+  })
+
+  test("All Issues drops the status constraint and keeps the archived default", async () => {
+    const user = userEvent.setup()
+    setup()
+    await screen.findByText("WEB-1")
+
+    await user.click(screen.getByRole("tab", { name: "All Issues" }))
+
+    await waitFor(() =>
+      expect(listIssues).toHaveBeenLastCalledWith(
+        "pr-1",
+        expect.objectContaining({ statusIds: [] })
+      )
+    )
+    // Never a client-side archived override: the query keeps archived=false.
+    expect(listIssues.mock.calls.at(-1)?.[1]).not.toHaveProperty("archived")
+  })
+
+  test("Backlog narrows the query to the Backlog category", async () => {
+    const user = userEvent.setup()
+    setup()
+    await screen.findByText("WEB-1")
+
+    await user.click(screen.getByRole("tab", { name: "Backlog" }))
+
+    await waitFor(() =>
+      expect(listIssues).toHaveBeenLastCalledWith(
+        "pr-1",
+        expect.objectContaining({ statusIds: ["st-1"] })
+      )
+    )
+  })
+
+  test("the breadcrumb names the project, Issues, and the current view", async () => {
+    const user = userEvent.setup()
+    setup()
+    await screen.findByText("WEB-1")
+
+    expect(crumbs()).toEqual(["Web", "Issues", "List"])
+
+    await user.click(screen.getByRole("button", { name: /^filters/i }))
+    await user.click(screen.getByRole("tab", { name: "Kanban" }))
+
+    expect(crumbs()).toEqual(["Web", "Issues", "Kanban"])
+  })
+
+  test("the View crumb keeps that view", async () => {
+    const user = userEvent.setup()
+    setup()
+    await screen.findByText("WEB-1")
+    await user.click(screen.getByRole("button", { name: /^filters/i }))
+    await user.click(screen.getByRole("tab", { name: "Table" }))
+    await screen.findByTestId("issue-row-WEB-1")
+
+    await user.click(
+      within(breadcrumb()).getByRole("button", { name: "Table" })
+    )
+
+    expect(screen.getByTestId("issue-row-WEB-1")).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: /^filters/i }))
+    expect(screen.getByRole("tab", { name: "Table" })).toHaveAttribute(
+      "aria-selected",
+      "true"
+    )
+  })
+
+  test("the breadcrumb extends to the identifier on detail and navigates back", async () => {
+    const user = userEvent.setup()
+    setup()
+    await screen.findByText("WEB-1")
+
+    await user.click(
+      screen.getByRole("button", { name: /open detail for WEB-1/i })
+    )
+
+    expect(crumbs()).toEqual(["Web", "Issues", "WEB-1"])
+    expect(screen.getByTestId("issue-detail-WEB-1")).toBeInTheDocument()
+
+    await user.click(
+      within(breadcrumb()).getByRole("button", { name: "Issues" })
+    )
+
+    expect(screen.queryByTestId("issue-detail-WEB-1")).not.toBeInTheDocument()
+    expect(screen.getByTestId("issue-WEB-1")).toBeInTheDocument()
+  })
+
+  test("the project crumb returns to the issues root from detail", async () => {
+    const user = userEvent.setup()
+    setup()
+    await screen.findByText("WEB-1")
+    await user.click(
+      screen.getByRole("button", { name: /open detail for WEB-1/i })
+    )
+
+    await user.click(within(breadcrumb()).getByRole("button", { name: "Web" }))
+
+    expect(screen.queryByTestId("issue-detail-WEB-1")).not.toBeInTheDocument()
+    expect(screen.getByTestId("issue-WEB-1")).toBeInTheDocument()
+  })
+
+  test("the identifier crumb keeps the detail it names", async () => {
+    const user = userEvent.setup()
+    setup()
+    await screen.findByText("WEB-1")
+    await user.click(
+      screen.getByRole("button", { name: /open detail for WEB-1/i })
+    )
+
+    await user.click(
+      within(breadcrumb()).getByRole("button", { name: "WEB-1" })
+    )
+
+    expect(screen.getByTestId("issue-detail-WEB-1")).toBeInTheDocument()
   })
 })
