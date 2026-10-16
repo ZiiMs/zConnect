@@ -161,18 +161,22 @@ const groupClass = "flex flex-wrap items-center gap-2"
 const labelClass = "text-muted-foreground text-xs"
 const pillClass =
   "inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs"
-/** Selected tone shared by the status visibility pills and priority pills. */
+/** Selected tone for the priority pills. */
 const pillToneClass = (selected: boolean) =>
   selected
     ? "border-ring bg-accent font-medium text-accent-foreground"
     : "border-input text-muted-foreground hover:bg-accent hover:text-accent-foreground"
 /**
  * Status options read as visibility pills: the dot keeps the status color
- * cue and `aria-pressed` + the accent pill mark which statuses are visible.
- * Same selected convention as the priority pills below.
+ * cue; visible statuses get the accent pill while hidden ones fade out.
+ * No ring outline: opacity carries the visible/hidden distinction.
  */
 const statusOptionClass = (selected: boolean) =>
-  `${pillClass} ${pillToneClass(selected)}`
+  `${pillClass} ${
+    selected
+      ? "border-transparent bg-accent font-medium text-accent-foreground"
+      : "border-transparent text-muted-foreground opacity-50 hover:bg-accent hover:text-accent-foreground hover:opacity-100"
+  }`
 const inputClass =
   "rounded-md border border-input bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
 const checkClass = "flex items-center gap-1 text-sm"
