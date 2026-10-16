@@ -1,3 +1,5 @@
+import { ProjectIcon } from "@/lib/project-icons"
+
 export interface BreadcrumbItem {
   label: string
   /** Every crumb navigates, the current page included (it re-opens itself). */
@@ -6,6 +8,8 @@ export interface BreadcrumbItem {
   mono?: boolean
   /** Marks the page the user is already on. */
   current?: boolean
+  /** Project mark shown before the label (project crumb only). */
+  icon?: { name: string; color: string }
 }
 
 /**
@@ -29,12 +33,19 @@ export function Breadcrumb({ items }: { items: BreadcrumbItem[] }) {
               type="button"
               aria-current={item.current ? "page" : undefined}
               onClick={item.onClick}
-              className={`rounded px-1 py-0.5 hover:bg-accent ${
+              className={`flex items-center gap-1.5 rounded-md px-1 py-0.5 hover:bg-accent ${
                 item.current
                   ? "font-medium"
                   : "text-muted-foreground hover:text-accent-foreground"
               } ${item.mono ? "font-mono" : ""}`}
             >
+              {item.icon && (
+                <ProjectIcon
+                  icon={item.icon.name}
+                  color={item.icon.color}
+                  size={13}
+                />
+              )}
               {item.label}
             </button>
           </li>

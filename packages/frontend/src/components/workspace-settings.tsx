@@ -3,6 +3,7 @@ import { CreateStatusForm } from "@/components/create-status-form"
 import { CreateWorkspaceForm } from "@/components/create-workspace-form"
 import { InviteMemberForm } from "@/components/invite-member-form"
 import { ProjectKeyForm } from "@/components/project-key-form"
+import { StatusDot } from "@/components/status-dot"
 import { Button } from "@/components/ui/button"
 import { WorkspaceMembers } from "@/components/workspace-members"
 import {
@@ -12,6 +13,7 @@ import {
   type Status,
   type Workspace,
 } from "@/lib/api"
+import { ProjectIcon } from "@/lib/project-icons"
 
 type SettingsTab = "general" | "members" | "workflow" | "labels"
 
@@ -70,7 +72,8 @@ function WorkflowSection({
 
   return (
     <div className="flex flex-col gap-4">
-      <h3 className="font-medium text-sm">
+      <h3 className="flex items-center gap-2 font-medium text-sm">
+        <ProjectIcon icon={project.icon} color={project.color} size={14} />
         {project.name}{" "}
         <span className="text-muted-foreground">({project.key})</span>
       </h3>
@@ -106,8 +109,14 @@ function WorkflowSection({
             className="flex flex-col gap-1 rounded-md border p-3"
           >
             <div className="flex items-center justify-between">
-              <h4 className="font-medium text-sm">{status.name}</h4>
-              <span className="text-muted-foreground text-xs">
+              <h4 className="flex items-center gap-2 font-medium text-sm">
+                <StatusDot status={status} />
+                <span data-testid="status-name">{status.name}</span>
+              </h4>
+              <span
+                data-testid="status-category"
+                className="text-muted-foreground text-xs"
+              >
                 {status.category}
               </span>
             </div>

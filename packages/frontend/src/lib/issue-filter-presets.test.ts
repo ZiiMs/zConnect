@@ -14,6 +14,7 @@ const statuses: Status[] = [
     projectId: "pr-1",
     name: "Backlog",
     category: "Backlog",
+    color: "#bec2c8",
     position: 0,
   },
   {
@@ -21,6 +22,7 @@ const statuses: Status[] = [
     projectId: "pr-1",
     name: "Todo",
     category: "Unstarted",
+    color: "#e2e2e2",
     position: 1,
   },
   {
@@ -28,6 +30,7 @@ const statuses: Status[] = [
     projectId: "pr-1",
     name: "In Progress",
     category: "In Progress",
+    color: "#f2c94c",
     position: 2,
   },
   {
@@ -35,6 +38,7 @@ const statuses: Status[] = [
     projectId: "pr-1",
     name: "In Review",
     category: "In Progress",
+    color: "#0f783c",
     position: 3,
   },
   {
@@ -42,6 +46,7 @@ const statuses: Status[] = [
     projectId: "pr-1",
     name: "Done",
     category: "Completed",
+    color: "#5e6ad2",
     position: 4,
   },
   {
@@ -49,6 +54,7 @@ const statuses: Status[] = [
     projectId: "pr-1",
     name: "Canceled",
     category: "Canceled",
+    color: "#95a2b3",
     position: 5,
   },
   {
@@ -56,6 +62,7 @@ const statuses: Status[] = [
     projectId: "pr-1",
     name: "Duplicate",
     category: "Duplicate",
+    color: "#95a2b3",
     position: 6,
   },
 ]

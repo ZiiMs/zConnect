@@ -1,20 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Breadcrumb, type BreadcrumbItem } from "@/components/breadcrumb"
 import { CreateIssueForm } from "@/components/create-issue-form"
-import { IssueActions } from "@/components/issue-actions"
 import { IssueDetail } from "@/components/issue-detail"
 import {
   emptyIssueFilters,
-  IssueFilterBar,
   type IssueFilterValue,
   loadIssueFilters,
   saveIssueFilters,
 } from "@/components/issue-filter-bar"
+import {
+  IssueFilterPopover,
+  type IssueView,
+} from "@/components/issue-filter-popover"
 import { IssueFilterPresetTabs } from "@/components/issue-filter-preset-tabs"
 import { IssueList } from "@/components/issue-list"
 import { IssueTable } from "@/components/issue-table"
 import { KanbanBoard } from "@/components/kanban-board"
-import { SubtaskList } from "@/components/subtask-list"
 import { Button } from "@/components/ui/button"
 import { Modal } from "@/components/ui/dialog"
 import { useIssueSubscription } from "@/hooks/use-issue-subscription"
@@ -31,22 +32,14 @@ import {
 } from "@/lib/api"
 import { activeStatusIds } from "@/lib/issue-filter-presets"
 
-type IssueView = "list" | "table" | "kanban"
-
-const VIEWS: { id: IssueView; label: string }[] = [
-  { id: "list", label: "List" },
-  { id: "table", label: "Table" },
-  { id: "kanban", label: "Kanban" },
-]
-
 /**
  * List view container: the same filtered Issue query later views reuse,
  * with a shared filter bar persisted per user per project (localStorage;
  * see `issue-filter-bar`). Status changes and creation run through the
  * Issue API so status changes complete the lifecycle from the List.
  * T5 adds the workspace Label registry to the filter bar and creation
- * form, per-row archive controls, expandable subtasks, and the gentle
- * completion guardrail (warn-but-allow) as an alert banner.
+ * form, archive controls and expandable subtasks inside the Detail view,
+ * and the gentle completion guardrail (warn-but-allow) as an alert banner.
  *
  * T4 renders that same query as a Table (inline status/priority/assignee
  * edits) and a Kanban board (drag cards between Status columns with an
@@ -62,6 +55,32 @@ const VIEWS: { id: IssueView; label: string }[] = [
  * on the shared filter value, so they keep composing with the filter bar and
  * its localStorage persistence.
  */
+const ISSUE_VIEWS: IssueView[] = ["list", "table", "kanban"]
+
+function viewStorageKey(userId: string, projectId: string): string {
+  return `zconnect:issue-view:${userId}:${projectId}`
+}
+
+/** The persisted List/Table/Kanban choice; unknown values land on List. */
+export function loadIssueView(userId: string, projectId: string): IssueView {
+  try {
+    const stored = localStorage.getItem(viewStorageKey(userId, projectId))
+    return stored !== null && (ISSUE_VIEWS as string[]).includes(stored)
+      ? (stored as IssueView)
+      : "list"
+  } catch {
+    return "list"
+  }
+}
+
+export function saveIssueView(
+  userId: string,
+  projectId: string,
+  view: IssueView
+): void {
+  localStorage.setItem(viewStorageKey(userId, projectId), view)
+}
+
 export function ProjectIssues({
   project,
   userId,
@@ -91,16 +110,37 @@ export function ProjectIssues({
    * project's statuses, so that landing query is the only one issued.
    */
   const [presetResolved, setPresetResolved] = useState(hasStoredFilters)
-  const [view, setView] = useState<IssueView>("list")
+  const [view, setView] = useState<IssueView>(() =>
+    loadIssueView(userId, project.id)
+  )
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [subtasks, setSubtasks] = useState<Record<string, Issue[]>>({})
   const [toast, setToast] = useState<string | null>(null)
   const [composerOpen, setComposerOpen] = useState(false)
+  const [composerStatusId, setComposerStatusId] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [starred, setStarred] = useState(() => {
+    try {
+      return localStorage.getItem(`zconnect:starred:${project.id}`) === "1"
+    } catch {
+      return false
+    }
+  })
+
+  function toggleStar() {
+    setStarred((prev) => {
+      const next = !prev
+      try {
+        localStorage.setItem(`zconnect:starred:${project.id}`, next ? "1" : "0")
+      } catch {
+        // Storage is a nicety; the toggle still works for the session.
+      }
+      return next
+    })
+  }
 
   const filtersRef = useRef(filters)
   filtersRef.current = filters
@@ -192,6 +232,11 @@ export function ProjectIssues({
     saveIssueFilters(userId, project.id, next)
   }
 
+  function handleView(next: IssueView) {
+    setView(next)
+    saveIssueView(userId, project.id, next)
+  }
+
   async function handleUpdate(issue: Issue, input: UpdateIssueInput) {
     setActionError(null)
     setNotice(null)
@@ -248,21 +293,9 @@ export function ProjectIssues({
     setIssues((current) => current.filter((item) => item.id !== deleted.id))
   }
 
-  async function toggleSubtasks(issue: Issue) {
-    const open = !expanded[issue.id]
-    setExpanded((current) => ({ ...current, [issue.id]: open }))
-    if (open && subtasks[issue.id] === undefined) {
-      try {
-        const children = await api.listSubtasks(issue.identifier)
-        setSubtasks((current) => ({ ...current, [issue.id]: children }))
-      } catch (err) {
-        setActionError(err instanceof Error ? err.message : "Update failed")
-      }
-    }
-  }
-
   const selectedIssue = issues.find((item) => item.id === selectedId) ?? null
-  const viewLabel = VIEWS.find((option) => option.id === view)?.label ?? "List"
+  const viewLabel =
+    view === "list" ? "List" : view === "table" ? "Table" : "Kanban"
 
   /**
    * Both the project crumb and the Issues crumb land on the project's issues
@@ -277,7 +310,11 @@ export function ProjectIssues({
   const breadcrumbItems: BreadcrumbItem[] =
     selectedIssue === null
       ? [
-          { label: project.name, onClick: showIssuesRoot },
+          {
+            label: project.name,
+            onClick: showIssuesRoot,
+            icon: { name: project.icon, color: project.color },
+          },
           { label: "Issues", onClick: showIssuesRoot },
           {
             label: viewLabel,
@@ -286,7 +323,11 @@ export function ProjectIssues({
           },
         ]
       : [
-          { label: project.name, onClick: showIssuesRoot },
+          {
+            label: project.name,
+            onClick: showIssuesRoot,
+            icon: { name: project.icon, color: project.color },
+          },
           { label: "Issues", onClick: showIssuesRoot },
           {
             label: selectedIssue.identifier,
@@ -320,44 +361,51 @@ export function ProjectIssues({
   }, [selectedIssue, subtasks])
 
   return (
-    <div className="flex flex-col gap-4">
-      <Breadcrumb items={breadcrumbItems} />
-      {/* Hidden until the first-visit preset is resolved: before the statuses
-          arrive no preset describes the query, and "All Issues" would blink. */}
-      {presetResolved && (
-        <IssueFilterPresetTabs
-          statuses={statuses}
-          value={filters.statusIds}
-          onChange={(statusIds) => handleFilters({ ...filters, statusIds })}
-        />
-      )}
-      <IssueFilterBar
-        statuses={statuses}
-        members={members}
-        labels={labels}
-        value={filters}
-        onChange={handleFilters}
-      />
-      <div className="flex items-center gap-2">
-        <div role="tablist" aria-label="Issue views" className="flex gap-2">
-          {VIEWS.map((option) => (
-            <button
-              key={option.id}
-              type="button"
-              role="tab"
-              aria-selected={view === option.id}
-              onClick={() => setView(option.id)}
-              className="rounded-md border px-3 py-1 text-sm"
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-        {canWrite && statuses.length > 0 && (
-          <Button className="ml-auto" onClick={() => setComposerOpen(true)}>
-            New issue
-          </Button>
+    <div className="flex flex-col gap-2">
+      <div className="flex h-8 items-center gap-1.5">
+        <Breadcrumb items={breadcrumbItems} />
+        <button
+          type="button"
+          aria-label={starred ? "Unstar project" : "Star project"}
+          aria-pressed={starred}
+          onClick={toggleStar}
+          className={`grid size-6 shrink-0 place-items-center rounded-md text-sm hover:bg-accent hover:text-accent-foreground ${
+            starred ? "text-amber-400" : "text-muted-foreground"
+          }`}
+        >
+          <span aria-hidden="true">{starred ? "★" : "☆"}</span>
+        </button>
+        {/* Hidden until the first-visit preset is resolved: before the statuses
+            arrive no preset describes the query, and "All Issues" would blink. */}
+        {presetResolved && (
+          <IssueFilterPresetTabs
+            statuses={statuses}
+            value={filters.statusIds}
+            onChange={(statusIds) => handleFilters({ ...filters, statusIds })}
+          />
         )}
+        <div className="ml-auto flex items-center gap-1.5">
+          <IssueFilterPopover
+            statuses={statuses}
+            members={members}
+            labels={labels}
+            value={filters}
+            onChange={handleFilters}
+            view={view}
+            onViewChange={handleView}
+          />
+          {canWrite && statuses.length > 0 && (
+            <Button
+              size="sm"
+              onClick={() => {
+                setComposerStatusId(null)
+                setComposerOpen(true)
+              }}
+            >
+              New issue
+            </Button>
+          )}
+        </div>
       </div>
       <Modal
         open={composerOpen}
@@ -365,10 +413,12 @@ export function ProjectIssues({
         title="New issue"
       >
         <CreateIssueForm
+          key={composerStatusId ?? "default"}
           projectId={project.id}
           statuses={statuses}
           members={members}
           labels={labels}
+          initialStatusId={composerStatusId ?? undefined}
           onCreated={(created) => {
             setIssues((current) =>
               [...current, created].sort((a, b) => a.number - b.number)
@@ -417,47 +467,25 @@ export function ProjectIssues({
         <IssueList
           issues={issues}
           statuses={statuses}
+          members={members}
           labels={labels}
           canEdit={canWrite}
           onStatusChange={(issue, statusId) =>
             void handleStatusChange(issue, statusId)
           }
-          actions={(issue) => (
-            <div className="flex w-full flex-col gap-1">
-              <div className="flex items-center gap-2">
-                {canWrite && (
-                  <IssueActions
-                    issue={issue}
-                    canAdmin={canAdmin}
-                    onChanged={handleArchivedChanged}
-                    onDeleted={handleDeleted}
-                  />
-                )}
-                <button
-                  type="button"
-                  className="rounded-md border border-input px-2 py-1 text-xs"
-                  aria-label={`Open detail for ${issue.identifier}`}
-                  onClick={() => setSelectedId(issue.id)}
-                >
-                  Detail
-                </button>
-                <button
-                  type="button"
-                  className="rounded-md border border-input px-2 py-1 text-xs"
-                  aria-expanded={expanded[issue.id] ?? false}
-                  onClick={() => void toggleSubtasks(issue)}
-                >
-                  Subtasks
-                </button>
-              </div>
-              {expanded[issue.id] && (
-                <SubtaskList
-                  subtasks={subtasks[issue.id] ?? []}
-                  statuses={statuses}
-                />
-              )}
-            </div>
-          )}
+          onAddIssue={
+            canWrite
+              ? (statusId) => {
+                  setComposerStatusId(statusId)
+                  setComposerOpen(true)
+                }
+              : undefined
+          }
+          onOpenDetail={(issue) => setSelectedId(issue.id)}
+          groupBy={filters.groupBy}
+          order={filters.order}
+          showEmptyGroups={filters.showEmptyGroups}
+          display={filters.display}
         />
       )}
       {!loading && !error && selectedIssue === null && view === "table" && (
@@ -474,9 +502,14 @@ export function ProjectIssues({
         <KanbanBoard
           issues={issues}
           statuses={statuses}
+          members={members}
           labels={labels}
           canEdit={canWrite}
           onMove={(issue, statusId) => void handleMove(issue, statusId)}
+          onAssign={(issue, assigneeId) =>
+            void handleUpdate(issue, { assigneeId })
+          }
+          onOpenDetail={(issue) => setSelectedId(issue.id)}
         />
       )}
     </div>

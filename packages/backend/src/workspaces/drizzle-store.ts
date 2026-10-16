@@ -33,9 +33,15 @@ import type {
 } from "./store.js"
 import {
   DEFAULT_LABEL_COLOR,
+  DEFAULT_PROJECT_COLOR,
+  DEFAULT_PROJECT_ICON,
   DEFAULT_SEED_ISSUES,
   DEFAULT_STATUS_ROSTER,
+  defaultStatusColorForName,
   isValidLabelColor,
+  isValidProjectColor,
+  isValidProjectIcon,
+  isValidStatusColor,
   normalizeLabelNames,
   seedIssueFields,
 } from "./store.js"
@@ -300,6 +306,10 @@ export function createDrizzleWorkspaceStore(
     async createProject(workspaceId, input) {
       const db = resolveDb()
       const key = input.key.toUpperCase()
+      const icon = input.icon ?? DEFAULT_PROJECT_ICON
+      if (!isValidProjectIcon(icon)) throw invalid("Invalid project icon")
+      const color = input.color ?? DEFAULT_PROJECT_COLOR
+      if (!isValidProjectColor(color)) throw invalid("Invalid project color")
       try {
         // ADR-0001 seeding: project + sequence + the default roster + the six
         // sample issues go in one transaction, so a failure anywhere leaves
@@ -307,7 +317,7 @@ export function createDrizzleWorkspaceStore(
         const row = await db.transaction(async (tx) => {
           const [projectRow] = await tx
             .insert(project)
-            .values({ workspaceId, name: input.name, key })
+            .values({ workspaceId, name: input.name, key, icon, color })
             .returning()
           await tx.insert(projectSequence).values({ projectId: projectRow.id })
           const statusRows = await tx
@@ -317,6 +327,7 @@ export function createDrizzleWorkspaceStore(
                 projectId: projectRow.id,
                 name: entry.name,
                 category: entry.category,
+                color: entry.color,
                 position,
               }))
             )
@@ -378,8 +389,25 @@ export function createDrizzleWorkspaceStore(
         .where(eq(project.id, projectId))
       const row = rows[0]
       if (!row) throw notFound("Project not found")
-      const patch: { name?: string; key?: string } = {}
+      const patch: {
+        name?: string
+        key?: string
+        icon?: string
+        color?: string
+      } = {}
       if (input.name !== undefined) patch.name = input.name
+      if (input.icon !== undefined) {
+        if (!isValidProjectIcon(input.icon)) {
+          throw invalid("Invalid project icon")
+        }
+        patch.icon = input.icon
+      }
+      if (input.color !== undefined) {
+        if (!isValidProjectColor(input.color)) {
+          throw invalid("Invalid project color")
+        }
+        patch.color = input.color
+      }
       if (input.key !== undefined) {
         const key = input.key.toUpperCase()
         if (key !== row.key) {
@@ -426,10 +454,12 @@ export function createDrizzleWorkspaceStore(
         .from(status)
         .where(eq(status.projectId, projectId))
       const position = existing.length
+      const color = input.color ?? defaultStatusColorForName(input.name)
+      if (!isValidStatusColor(color)) throw invalid("Invalid status color")
       try {
         const [row] = await db
           .insert(status)
-          .values({ ...input, projectId, position })
+          .values({ ...input, color, projectId, position })
           .returning()
         return toStatus(row)
       } catch {
@@ -459,7 +489,14 @@ export function createDrizzleWorkspaceStore(
       const rows = await db.select().from(status).where(eq(status.id, statusId))
       const row = rows[0]
       if (!row) throw notFound("Status not found")
-      if (input.name !== undefined || input.category !== undefined) {
+      if (
+        input.name !== undefined ||
+        input.category !== undefined ||
+        input.color !== undefined
+      ) {
+        if (input.color !== undefined && !isValidStatusColor(input.color)) {
+          throw invalid("Invalid status color")
+        }
         try {
           await db
             .update(status)
@@ -468,6 +505,7 @@ export function createDrizzleWorkspaceStore(
               ...(input.category !== undefined
                 ? { category: input.category }
                 : {}),
+              ...(input.color !== undefined ? { color: input.color } : {}),
             })
             .where(eq(status.id, statusId))
         } catch {
@@ -1038,6 +1076,8 @@ function toProject(row: typeof project.$inferSelect): Project {
     workspaceId: row.workspaceId,
     name: row.name,
     key: row.key,
+    icon: row.icon ?? DEFAULT_PROJECT_ICON,
+    color: row.color ?? DEFAULT_PROJECT_COLOR,
   }
 }
 
@@ -1047,6 +1087,7 @@ function toStatus(row: typeof status.$inferSelect): Status {
     projectId: row.projectId,
     name: row.name,
     category: row.category as StatusCategory,
+    color: row.color ?? DEFAULT_LABEL_COLOR,
     position: row.position,
   }
 }

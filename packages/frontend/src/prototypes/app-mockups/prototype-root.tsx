@@ -9,6 +9,7 @@
  */
 import { useEffect } from "react"
 import { PrototypeSwitcher } from "./prototype-switcher"
+import { applyThemeFonts } from "./theme-fonts"
 import { useProtoState } from "./use-proto-params"
 import { BOARDS } from "./variants/boards"
 import { DETAILS } from "./variants/details"
@@ -25,14 +26,23 @@ export function PrototypeRoot() {
 
   useEffect(() => {
     const root = document.documentElement
-    root.dataset.protoStyle = state.style
-    root.dataset.protoColor = state.color
     root.dataset.protoMode = state.mode
+    // `theme` and the style/color pair are alternative modes: a generated theme
+    // block carries radius and fonts too, so exactly one may be on the root.
+    if (state.theme === "") {
+      root.dataset.protoStyle = state.style
+      root.dataset.protoColor = state.color
+      delete root.dataset.protoTheme
+    } else {
+      root.dataset.protoTheme = state.theme
+      delete root.dataset.protoStyle
+      delete root.dataset.protoColor
+    }
+    applyThemeFonts(state.theme)
     // Keep the app's own dark hook in sync so `dark:` utilities resolve.
     root.classList.toggle("dark", state.mode === "dark")
     root.style.colorScheme = state.mode
-    delete root.dataset.protoTheme
-  }, [state.style, state.color, state.mode])
+  }, [state.style, state.color, state.mode, state.theme])
 
   if (state.screen === "signin") {
     const Signin = SIGNINS[state.signin] ?? SIGNINS["1"]

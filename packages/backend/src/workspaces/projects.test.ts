@@ -89,6 +89,79 @@ describe("project sequence and status reads", () => {
     expect(missing.status).toBe(404)
   })
 
+  test("a new project opens with the default folder icon and color", async () => {
+    const { id } = await createProject()
+    const res = await app.request(`/api/projects/${id}`, {
+      headers: auth(owner.id),
+    })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({
+      icon: "Folder",
+      color: "#94a3b8",
+    })
+  })
+
+  test("creating a project stores a picked icon and color", async () => {
+    const res = await app.request(`/api/workspaces/${workspaceId}/projects`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...auth(owner.id) },
+      body: JSON.stringify({
+        name: "Web",
+        key: "WEB",
+        icon: "Rocket",
+        color: "#f2c94c",
+      }),
+    })
+    expect(res.status).toBe(201)
+    expect(await res.json()).toMatchObject({
+      icon: "Rocket",
+      color: "#f2c94c",
+    })
+  })
+
+  test("unknown icons and bad colors are rejected", async () => {
+    const badIcon = await app.request(
+      `/api/workspaces/${workspaceId}/projects`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", ...auth(owner.id) },
+        body: JSON.stringify({ name: "Web", key: "WEB", icon: "Nope" }),
+      }
+    )
+    expect(badIcon.status).toBe(400)
+
+    const badColor = await app.request(
+      `/api/workspaces/${workspaceId}/projects`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", ...auth(owner.id) },
+        body: JSON.stringify({ name: "Web", key: "WEB", color: "red" }),
+      }
+    )
+    expect(badColor.status).toBe(400)
+  })
+
+  test("icon and color patch through PATCH; bad values return 400", async () => {
+    const { id } = await createProject()
+    const res = await app.request(`/api/projects/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", ...auth(owner.id) },
+      body: JSON.stringify({ icon: "Globe", color: "#5e6ad2" }),
+    })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({
+      icon: "Globe",
+      color: "#5e6ad2",
+    })
+
+    const bad = await app.request(`/api/projects/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", ...auth(owner.id) },
+      body: JSON.stringify({ icon: "Nope" }),
+    })
+    expect(bad.status).toBe(400)
+  })
+
   test("outsider cannot read a project (403); anonymous gets 401", async () => {
     const { id } = await createProject()
     const denied = await app.request(`/api/projects/${id}`, {

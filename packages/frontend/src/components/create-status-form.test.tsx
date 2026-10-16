@@ -42,6 +42,7 @@ describe("create status form", () => {
       projectId: "pr-1",
       name: "In Review",
       category: "In Progress",
+      color: "#0f783c",
       position: 1,
     })
     const onCreated = vi.fn()
@@ -58,6 +59,7 @@ describe("create status form", () => {
       expect(createStatus).toHaveBeenCalledWith("pr-1", {
         name: "In Review",
         category: "In Progress",
+        color: "#0f783c",
       })
     )
     expect(onCreated).toHaveBeenCalled()

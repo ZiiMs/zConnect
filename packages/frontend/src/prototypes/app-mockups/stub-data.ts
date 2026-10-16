@@ -89,10 +89,38 @@ export const members: Member[] = people.map((person) => ({
 }))
 
 export const projects: Project[] = [
-  { id: "p-zc", workspaceId: workspace.id, name: "zConnect", key: "ZC" },
-  { id: "p-web", workspaceId: workspace.id, name: "Web App", key: "WEB" },
-  { id: "p-mob", workspaceId: workspace.id, name: "Mobile", key: "MOB" },
-  { id: "p-ds", workspaceId: workspace.id, name: "Design System", key: "DS" },
+  {
+    id: "p-zc",
+    workspaceId: workspace.id,
+    name: "zConnect",
+    key: "ZC",
+    icon: "Folder",
+    color: "#94a3b8",
+  },
+  {
+    id: "p-web",
+    workspaceId: workspace.id,
+    name: "Web App",
+    key: "WEB",
+    icon: "Globe",
+    color: "#5e6ad2",
+  },
+  {
+    id: "p-mob",
+    workspaceId: workspace.id,
+    name: "Mobile",
+    key: "MOB",
+    icon: "Rocket",
+    color: "#f2c94c",
+  },
+  {
+    id: "p-ds",
+    workspaceId: workspace.id,
+    name: "Design System",
+    key: "DS",
+    icon: "Layers",
+    color: "#0f783c",
+  },
 ]
 
 export const activeProject = projects[0]
@@ -103,6 +131,7 @@ export const statuses: Status[] = [
     projectId: "p-zc",
     name: "Backlog",
     category: "Backlog",
+    color: "#bec2c8",
     position: 0,
   },
   {
@@ -110,6 +139,7 @@ export const statuses: Status[] = [
     projectId: "p-zc",
     name: "Todo",
     category: "Unstarted",
+    color: "#e2e2e2",
     position: 1,
   },
   {
@@ -117,6 +147,7 @@ export const statuses: Status[] = [
     projectId: "p-zc",
     name: "In Progress",
     category: "In Progress",
+    color: "#f2c94c",
     position: 2,
   },
   {
@@ -124,6 +155,7 @@ export const statuses: Status[] = [
     projectId: "p-zc",
     name: "In Review",
     category: "In Progress",
+    color: "#0f783c",
     position: 3,
   },
   {
@@ -131,6 +163,7 @@ export const statuses: Status[] = [
     projectId: "p-zc",
     name: "Done",
     category: "Completed",
+    color: "#5e6ad2",
     position: 4,
   },
 ]

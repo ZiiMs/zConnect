@@ -152,6 +152,7 @@ describe("project api client", () => {
         projectId: "pr-1",
         name: "Backlog",
         category: "Backlog",
+        color: "#94a3b8",
         position: 0,
       },
       {
@@ -159,6 +160,7 @@ describe("project api client", () => {
         projectId: "pr-1",
         name: "Shipped",
         category: "Completed",
+        color: "#94a3b8",
         position: 1,
       },
     ])
@@ -170,6 +172,7 @@ describe("project api client", () => {
       projectId: "pr-1",
       name: "Backlog",
       category: "Backlog",
+      color: "#bec2c8",
       position: 0,
     })
 
@@ -246,6 +249,7 @@ describe("status category domain (ADR-0001)", () => {
         projectId: "pr-1",
         name: "Backlog",
         category: "Backlog",
+        color: "#bec2c8",
         position: 0,
       },
       {
@@ -253,6 +257,7 @@ describe("status category domain (ADR-0001)", () => {
         projectId: "pr-1",
         name: "Todo",
         category: "Unstarted",
+        color: "#e2e2e2",
         position: 1,
       },
       {
@@ -260,6 +265,7 @@ describe("status category domain (ADR-0001)", () => {
         projectId: "pr-1",
         name: "In Progress",
         category: "In Progress",
+        color: "#f2c94c",
         position: 2,
       },
       {
@@ -267,6 +273,7 @@ describe("status category domain (ADR-0001)", () => {
         projectId: "pr-1",
         name: "Done",
         category: "Completed",
+        color: "#5e6ad2",
         position: 3,
       },
       {
@@ -274,6 +281,7 @@ describe("status category domain (ADR-0001)", () => {
         projectId: "pr-1",
         name: "Canceled",
         category: "Canceled",
+        color: "#95a2b3",
         position: 4,
       },
       {
@@ -281,6 +289,7 @@ describe("status category domain (ADR-0001)", () => {
         projectId: "pr-1",
         name: "Duplicate",
         category: "Duplicate",
+        color: "#95a2b3",
         position: 5,
       },
     ]

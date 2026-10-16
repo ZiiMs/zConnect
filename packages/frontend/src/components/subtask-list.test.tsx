@@ -9,6 +9,7 @@ const statuses: Status[] = [
     projectId: "pr-1",
     name: "Backlog",
     category: "Backlog",
+    color: "#bec2c8",
     position: 0,
   },
   {
@@ -16,6 +17,7 @@ const statuses: Status[] = [
     projectId: "pr-1",
     name: "Shipped",
     category: "Completed",
+    color: "#5e6ad2",
     position: 1,
   },
 ]

@@ -64,6 +64,20 @@
       "when": 1792098214828,
       "tag": "0008_six_status_categories",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792101385758,
+      "tag": "0009_status_color",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792102921623,
+      "tag": "0010_project_icon",
+      "breakpoints": true
     }
   ]
 }

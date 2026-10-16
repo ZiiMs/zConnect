@@ -6,6 +6,7 @@ import {
   type Status,
   type StatusCategory,
 } from "@/lib/api"
+import { defaultColorForStatusName } from "@/lib/status-colors"
 
 const inputClass =
   "w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
@@ -22,8 +23,18 @@ export function CreateStatusForm({
 }) {
   const [name, setName] = useState("")
   const [category, setCategory] = useState<StatusCategory>("Backlog")
+  const [color, setColor] = useState("#94a3b8")
   const [error, setError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
+
+  function handleNameChange(value: string) {
+    setName(value)
+    const trimmed = value.trim()
+    if (trimmed) {
+      const known = defaultColorForStatusName(trimmed)
+      if (known !== "#94a3b8") setColor(known)
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -31,7 +42,11 @@ export function CreateStatusForm({
     setError(null)
     try {
       onCreated(
-        await api.createStatus(projectId, { name: name.trim(), category })
+        await api.createStatus(projectId, {
+          name: name.trim(),
+          category,
+          color,
+        })
       )
       setName("")
     } catch (err) {
@@ -49,7 +64,7 @@ export function CreateStatusForm({
           aria-label="Status name"
           placeholder="New status name"
           value={name}
-          onChange={(e) => setName(e.target.value)}
+          onChange={(e) => handleNameChange(e.target.value)}
           required
         />
         <select
@@ -64,6 +79,13 @@ export function CreateStatusForm({
             </option>
           ))}
         </select>
+        <input
+          className="h-9 w-12 shrink-0 cursor-pointer rounded-md border border-input bg-background px-1"
+          aria-label="Status color"
+          type="color"
+          value={color}
+          onChange={(e) => setColor(e.target.value)}
+        />
         <Button type="submit" disabled={sending}>
           {sending ? "Adding…" : "Add status"}
         </Button>

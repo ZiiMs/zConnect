@@ -29,7 +29,7 @@ An issue reference to a GitHub PR, branch, or commit, created manually or auto-c
 _Avoid_: Integration, Sync
 
 **Status**:
-A named step in a project's workflow (e.g. In Review), ordered for Kanban display.
+A named step in a project's workflow (e.g. In Review), ordered for Kanban display, with a display color.
 _Avoid_: State, Column
 
 **Status Category**:

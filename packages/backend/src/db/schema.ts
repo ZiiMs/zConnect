@@ -50,6 +50,8 @@ export const project = pgTable(
       .references(() => workspace.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     key: varchar("key", { length: 16 }).notNull(),
+    icon: varchar("icon", { length: 32 }).notNull().default("Folder"),
+    color: varchar("color", { length: 7 }).notNull().default("#94a3b8"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -93,6 +95,7 @@ export const status = pgTable(
     category: varchar("category", { length: 16 })
       .notNull()
       .$type<StatusCategory>(),
+    color: varchar("color", { length: 7 }).notNull().default("#94a3b8"),
     position: integer("position").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()

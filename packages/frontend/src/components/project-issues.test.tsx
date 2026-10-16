@@ -29,7 +29,14 @@ const listSubtasks = vi.mocked(api.listSubtasks)
 const updateIssue = vi.mocked(api.updateIssue)
 const deleteIssue = vi.mocked(api.deleteIssue)
 
-const project = { id: "pr-1", workspaceId: "ws-1", name: "Web", key: "WEB" }
+const project = {
+  id: "pr-1",
+  workspaceId: "ws-1",
+  name: "Web",
+  key: "WEB",
+  icon: "Folder",
+  color: "#94a3b8",
+}
 
 const statuses: Status[] = [
   {
@@ -37,6 +44,7 @@ const statuses: Status[] = [
     projectId: "pr-1",
     name: "Backlog",
     category: "Backlog",
+    color: "#bec2c8",
     position: 0,
   },
   {
@@ -44,6 +52,7 @@ const statuses: Status[] = [
     projectId: "pr-1",
     name: "Shipped",
     category: "Completed",
+    color: "#5e6ad2",
     position: 1,
   },
 ]
@@ -108,7 +117,8 @@ describe("project issues list view", () => {
     listIssues.mockResolvedValue([issues[0]])
 
     await user.click(screen.getByRole("tab", { name: "All Issues" }))
-    await user.click(screen.getByRole("checkbox", { name: "Shipped" }))
+    await user.click(screen.getByRole("button", { name: /^filters/i }))
+    await user.click(screen.getByRole("button", { name: "Shipped" }))
 
     await waitFor(() =>
       expect(listIssues).toHaveBeenLastCalledWith(
@@ -124,13 +134,43 @@ describe("project issues list view", () => {
     await screen.findByText("WEB-1")
 
     await user.click(screen.getByRole("tab", { name: "All Issues" }))
-    await user.click(screen.getByRole("checkbox", { name: "Shipped" }))
+    await user.click(screen.getByRole("button", { name: /^filters/i }))
+    await user.click(screen.getByRole("button", { name: "Shipped" }))
 
     await waitFor(() =>
       expect(
         localStorage.getItem("zconnect:issue-filters:user-a:pr-1")
       ).toContain("st-2")
     )
+  })
+
+  test("group quick-add opens the composer preselected to that status", async () => {
+    const user = userEvent.setup()
+    setup()
+    await screen.findByText("WEB-1")
+
+    await user.click(
+      screen.getByRole("button", { name: /add issue to backlog/i })
+    )
+
+    expect(screen.getByLabelText(/issue status/i)).toHaveValue("st-1")
+  })
+
+  test("grouping by priority regroups the list end to end", async () => {
+    const user = userEvent.setup()
+    setup()
+    await screen.findByText("WEB-1")
+    expect(screen.getByRole("heading", { name: "Backlog" })).toBeInTheDocument()
+
+    await user.click(screen.getByRole("button", { name: /^filters/i }))
+    await user.selectOptions(screen.getByLabelText(/grouping/i), "priority")
+
+    expect(
+      await screen.findByRole("heading", { name: "High" })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole("heading", { name: "Backlog" })
+    ).not.toBeInTheDocument()
   })
 
   test("completing the lifecycle through a list action updates the row", async () => {
@@ -180,6 +220,7 @@ describe("project issues list view", () => {
     ])
     await screen.findByText("WEB-1")
 
+    await user.click(screen.getByRole("button", { name: /^filters/i }))
     const bar = screen.getByRole("region", { name: /issue filters/i })
     await user.click(within(bar).getByRole("checkbox", { name: "bug" }))
 
@@ -210,27 +251,31 @@ describe("project issues list view", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/open subtask/i)
   })
 
-  test("archiving and deleting through row actions updates the list", async () => {
+  test("archiving and deleting through the detail view updates the list", async () => {
     const user = userEvent.setup()
     updateIssue.mockResolvedValue({ ...issues[0], archived: true })
     deleteIssue.mockResolvedValue(undefined)
     setup(true, true)
     await screen.findByText("WEB-1")
-    const row = screen.getByTestId("issue-WEB-1")
 
-    await user.click(within(row).getByRole("button", { name: /archive/i }))
+    await user.click(
+      screen.getByRole("button", { name: /open detail for WEB-1/i })
+    )
+    const detail = await screen.findByTestId("issue-detail-WEB-1")
+
+    await user.click(within(detail).getByRole("button", { name: /archive/i }))
     await waitFor(() =>
       expect(updateIssue).toHaveBeenCalledWith("WEB-1", { archived: true })
     )
 
     await user.click(
-      within(row).getByRole("button", { name: /delete permanently/i })
+      within(detail).getByRole("button", { name: /delete permanently/i })
     )
     await waitFor(() => expect(deleteIssue).toHaveBeenCalledWith("WEB-1"))
     expect(screen.queryByText("WEB-1")).not.toBeInTheDocument()
   })
 
-  test("expanding subtasks loads the children", async () => {
+  test("opening detail loads the subtasks", async () => {
     const user = userEvent.setup()
     setup()
     listSubtasks.mockResolvedValue([
@@ -245,7 +290,9 @@ describe("project issues list view", () => {
     ])
     await screen.findByText("WEB-1")
 
-    await user.click(screen.getByRole("button", { name: /subtasks/i }))
+    await user.click(
+      screen.getByRole("button", { name: /open detail for WEB-1/i })
+    )
 
     expect(await screen.findByText("Split it")).toBeInTheDocument()
     expect(listSubtasks).toHaveBeenCalledWith("WEB-1")
@@ -378,6 +425,7 @@ describe("issue filter presets and breadcrumb", () => {
 
     expect(crumbs()).toEqual(["Web", "Issues", "List"])
 
+    await user.click(screen.getByRole("button", { name: /^filters/i }))
     await user.click(screen.getByRole("tab", { name: "Kanban" }))
 
     expect(crumbs()).toEqual(["Web", "Issues", "Kanban"])
@@ -387,6 +435,7 @@ describe("issue filter presets and breadcrumb", () => {
     const user = userEvent.setup()
     setup()
     await screen.findByText("WEB-1")
+    await user.click(screen.getByRole("button", { name: /^filters/i }))
     await user.click(screen.getByRole("tab", { name: "Table" }))
     await screen.findByTestId("issue-row-WEB-1")
 
@@ -395,6 +444,7 @@ describe("issue filter presets and breadcrumb", () => {
     )
 
     expect(screen.getByTestId("issue-row-WEB-1")).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: /^filters/i }))
     expect(screen.getByRole("tab", { name: "Table" })).toHaveAttribute(
       "aria-selected",
       "true"

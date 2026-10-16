@@ -27,7 +27,7 @@ export function IssueFilterPresetTabs({
     <div
       role="tablist"
       aria-label="Issue filter presets"
-      className="flex gap-1 rounded-md border bg-card p-1"
+      className="flex gap-1"
     >
       {ISSUE_FILTER_PRESETS.map((preset) => {
         const isSelected = selected === preset.id
@@ -41,8 +41,10 @@ export function IssueFilterPresetTabs({
               if (isSelected) return
               onChange(presetStatusIds(preset.id, statuses))
             }}
-            className={`rounded px-3 py-1 text-sm ${
-              isSelected ? "bg-accent font-medium" : "text-muted-foreground"
+            className={`rounded-md px-3 py-1 text-sm ${
+              isSelected
+                ? "bg-accent font-medium text-accent-foreground"
+                : "text-muted-foreground hover:bg-accent/60 hover:text-accent-foreground"
             }`}
           >
             {preset.label}

@@ -1,13 +1,14 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist-mono";
 
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
   --font-heading: var(--font-sans);
-  --font-sans:
-    "Cascadia Mono", SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  --font-sans: "Geist Mono Variable", ui-monospace, SFMono-Regular, monospace;
+  --font-mono: "Geist Mono Variable", ui-monospace, SFMono-Regular, monospace;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -48,73 +49,96 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/*
+ * Darkmatter (tweakcn), folded in and expanded.
+ *
+ * The frame/panel split is the app's main structure: the rail carries no surface
+ * of its own and sits on `--sidebar`, while the content is a rounded
+ * `--background` panel inset by 8px. `--sidebar` is also the Kanban column
+ * surface, so columns read as wells inside the panel.
+ *
+ * `--card` is an alias of `--background`: cards sit flush with the app panel and
+ * are defined by their border rather than by a value step. Written as a reference
+ * rather than a copied hex so the two cannot drift apart.
+ *
+ * The ramp that remains, roughly 4 lightness points per step: sidebar (the frame
+ * and the Kanban well, L*≈2) → background / card (the panel and its cards, 7) →
+ * muted (10) → popover (17) → accent (hover, 20) → border (22). An earlier pass
+ * put the frame at #0c0c0d against a page of #121113 — a 6/255 gap that measured
+ * as distinct and looked as one field — so it was widened, then deepened again
+ * when the rail became the frame.
+ *
+ * `--border` and `--accent` are lifted so outlines and hover states survive on a
+ * card that shares the panel's surface, and dark `--destructive` is a red rather
+ * than upstream's teal (which was the same value as `--secondary`).
+ */
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.141 0.005 285.823);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.141 0.005 285.823);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.141 0.005 285.823);
-  --primary: oklch(0.21 0.006 285.885);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.967 0.001 286.375);
-  --secondary-foreground: oklch(0.21 0.006 285.885);
-  --muted: oklch(0.967 0.001 286.375);
-  --muted-foreground: oklch(0.552 0.016 285.938);
-  --accent: oklch(0.967 0.001 286.375);
-  --accent-foreground: oklch(0.21 0.006 285.885);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.92 0.004 286.32);
-  --input: oklch(0.92 0.004 286.32);
-  --ring: oklch(0.705 0.015 286.067);
-  --chart-1: oklch(0.871 0.006 286.286);
-  --chart-2: oklch(0.552 0.016 285.938);
-  --chart-3: oklch(0.442 0.017 285.786);
-  --chart-4: oklch(0.37 0.013 285.805);
-  --chart-5: oklch(0.274 0.006 286.033);
-  --radius: 0;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.141 0.005 285.823);
-  --sidebar-primary: oklch(0.21 0.006 285.885);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.967 0.001 286.375);
-  --sidebar-accent-foreground: oklch(0.21 0.006 285.885);
-  --sidebar-border: oklch(0.92 0.004 286.32);
-  --sidebar-ring: oklch(0.705 0.015 286.067);
+  --background: #f5f5f6;
+  --foreground: #111827;
+  --card: var(--background);
+  --card-foreground: #111827;
+  --popover: #ffffff;
+  --popover-foreground: #111827;
+  --primary: #d87943;
+  --primary-foreground: #ffffff;
+  --secondary: #527575;
+  --secondary-foreground: #ffffff;
+  --muted: #ebebed;
+  --muted-foreground: #6b7280;
+  --accent: #eeeef0;
+  --accent-foreground: #111827;
+  --destructive: #ef4444;
+  --border: #e2e3e7;
+  --input: #e2e3e7;
+  --ring: #d87943;
+  --chart-1: #5f8787;
+  --chart-2: #e78a53;
+  --chart-3: #fbcb97;
+  --chart-4: #888888;
+  --chart-5: #999999;
+  --radius: 0.75rem;
+  --sidebar: #e4e4e8;
+  --sidebar-foreground: #111827;
+  --sidebar-primary: #d87943;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #f1f1f3;
+  --sidebar-accent-foreground: #111827;
+  --sidebar-border: #d8d9dd;
+  --sidebar-ring: #d87943;
 }
 
 .dark {
-  --background: oklch(0.141 0.005 285.823);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.21 0.006 285.885);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.21 0.006 285.885);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.92 0.004 286.32);
-  --primary-foreground: oklch(0.21 0.006 285.885);
-  --secondary: oklch(0.274 0.006 286.033);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.274 0.006 286.033);
-  --muted-foreground: oklch(0.705 0.015 286.067);
-  --accent: oklch(0.274 0.006 286.033);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.552 0.016 285.938);
-  --chart-1: oklch(0.871 0.006 286.286);
-  --chart-2: oklch(0.552 0.016 285.938);
-  --chart-3: oklch(0.442 0.017 285.786);
-  --chart-4: oklch(0.37 0.013 285.805);
-  --chart-5: oklch(0.274 0.006 286.033);
-  --sidebar: oklch(0.21 0.006 285.885);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.274 0.006 286.033);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.552 0.016 285.938);
+  --background: #131315;
+  --foreground: #c1c1c1;
+  --card: var(--background);
+  --card-foreground: #c1c1c1;
+  --popover: #26262b;
+  --popover-foreground: #c1c1c1;
+  --primary: #e78a53;
+  --primary-foreground: #131315;
+  --secondary: #5f8787;
+  --secondary-foreground: #131315;
+  --muted: #1a1a1d;
+  --muted-foreground: #9a9a9a;
+  --accent: #2c2c31;
+  --accent-foreground: #c8c8c8;
+  --destructive: #e0604f;
+  --border: #333338;
+  --input: #333338;
+  --ring: #e78a53;
+  --chart-1: #5f8787;
+  --chart-2: #e78a53;
+  --chart-3: #fbcb97;
+  --chart-4: #888888;
+  --chart-5: #999999;
+  --sidebar: #08080a;
+  --sidebar-foreground: #c1c1c1;
+  --sidebar-primary: #e78a53;
+  --sidebar-primary-foreground: #0b0b0c;
+  --sidebar-accent: #26262b;
+  --sidebar-accent-foreground: #c1c1c1;
+  --sidebar-border: #26262b;
+  --sidebar-ring: #e78a53;
 }
 
 @layer base {

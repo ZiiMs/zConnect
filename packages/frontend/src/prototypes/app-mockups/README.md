@@ -56,15 +56,67 @@ per-surface pickers, `theme` onto style+color, `S3` onto `signin=3`.
 - **Sign in** — Split panel, Centred card, Card over preview, Single column, Prompt, Side
   sheet, Stacked steps, Branded gradient.
 
-### Theme: style × color × mode (8 × 8 × 2, fully independent)
+### Theme: style × color × mode (8 × 11 × 2, fully independent)
 
 **Styles** (radius/type/grid only, never color): `neutral`, `slate`, `violet`, `sand`
-(serif + square grid), `mono` (monospace everything), `rounded` (extra-soft), `compact`
-(dense), `minimal` (quiet). **Colors** (every color token): `neutral` (zinc), `blue`,
-`violet`, `clay` (warm), `forest` (green), `ocean` (teal), `rose` (pink), `terminal`
-(green phosphor). Any style works with any color in either mode — e.g. Terminal style +
-Rose color is monospace rose. Tokens live in `themes.css`: `data-proto-style` owns
-`--radius`/fonts/grid, `data-proto-color`+`data-proto-mode` owns the palette.
+(serif headings + square grid), `mono` (monospace everything), `rounded` (extra-soft),
+`compact` (dense), `minimal` (quiet). **Colors** (every color token): `neutral` (zinc),
+`graphite` (cool near-black, high contrast), `oat` (low-chroma warm paper), `blue`,
+`indigo` (deep brand indigo), `violet`, `clay` (warm), `forest` (green), `ocean` (teal),
+`rose` (pink), `terminal` (green phosphor). Any style works with any color in either mode —
+e.g. Terminal style + Rose color is monospace rose. Tokens live in `themes.css`:
+`data-proto-style` owns `--radius`/fonts/grid, `data-proto-color`+`data-proto-mode` owns
+the palette.
+
+**Fonts are style-owned and applied to `body`.** The app pins its base font in
+`@theme inline` (`--font-sans`), and `inline` means `.font-sans` carries that literal
+stack — so re-pointing the variable cannot change it. When the terminal fold-in set
+`--font-sans` to the Cascadia Mono stack, the type half of the style axis went inert:
+every style rendered monospace. `themes.css` now sets `--proto-body-font` per style and
+applies it to `html[data-proto-style] body` (unlayered, so it beats `@layer base`).
+Components using an explicit `font-sans`/`font-mono` utility still take the pinned stack.
+
+`THEME_IDENTITIES` in `prototype-config.ts` narrows the 176 to the seven identities
+actually worth judging, with the shipped one first.
+
+### Registry themes: 42 real ones, from tweakcn
+
+`themes.css` and `THEME_COLORS` are ours, and hand-made palettes only ever vary
+colour. The registry is the opposite: **42 themes published by
+[tweakcn](https://tweakcn.com), the shadcn theme editor**, taken whole — each one
+carries its own palette, radius, font stack and letter-spacing, because that is
+what makes it recognisable (Claude's serif, Vercel's Geist, Vintage Paper's Libre
+Baskerville, Neo Brutalism's 0rem).
+
+| File | Role |
+| --- | --- |
+| `scripts/generate-registry.ts` | fetches the presets, resolves Google Fonts, writes the two files below |
+| `themes.registry.css` | GENERATED — one block per theme, light + dark |
+| `registry-themes.ts` | GENERATED — the list: key, label, radius, font URLs |
+| `theme-fonts.ts` | swaps in the active theme's own Google Fonts, lazily |
+
+Source is pinned by commit in the generated header (currently tweakcn
+`a3b47b37`). The output is committed, so the prototype never touches the network
+at dev time. Regenerate with:
+
+```
+bun run packages/frontend/scripts/generate-registry.ts
+```
+
+Font URLs are pre-resolved at generation time by probing Google Fonts, so a
+family that is not available — Signifier, in Sage Garden — is excluded there
+rather than failing in the browser.
+
+**`theme` and `style`/`color` are alternatives, not layers.** A registry theme
+owns radius and fonts as well as colour, so the root carries exactly one of
+`data-proto-theme` or `data-proto-style` + `data-proto-color`. Both hooks set the
+same custom properties at the same specificity, so the composable axes are kept
+in the URL while a theme is active, ready for when you switch back.
+
+```
+/prototype.html?screen=issues&theme=violet-bloom&mode=light
+http://localhost:5173/?theme=catppuccin&mode=dark
+```
 
 ## Files
 
@@ -76,7 +128,11 @@ src/prototypes/app-mockups/
   use-proto-params.ts              URL as the state store (+ legacy mapping)
   prototype-root.tsx               nav + content composition
   prototype-switcher.tsx           pill bar + Tune panel (dev-only)
-  themes.css                       8 styles + 8 colors × light/dark
+  real-theme.tsx                   sub-shape A: themes the real app via ?theme / ?style/?color/?mode
+  themes.css                       8 styles + 11 colors × light/dark (hand-made)
+  themes.registry.css              GENERATED — 42 tweakcn themes × light/dark
+  registry-themes.ts               GENERATED — registry list (key, label, radius, fonts)
+  theme-fonts.ts                   loads the active theme's Google Fonts
   atoms.tsx                        inline-SVG glyphs + domain marks only
   stub-data.ts                     fixtures in `@/lib/api` shapes
   variants/navs.tsx                Nav1–Nav8
@@ -86,6 +142,11 @@ src/prototypes/app-mockups/
   variants/settings-panels.tsx     Settings1–Settings8
   variants/signins.tsx             Signin1–Signin8
 ```
+
+The registry generator is not listed above because it lives outside `src/`, at
+`packages/frontend/scripts/generate-registry.ts`: it is node tooling, and
+`tsconfig.app.json` covers `src` with `vite/client` types only, so a script using
+`node:fs` there breaks the production build. `tsconfig.node.json` covers it instead.
 
 Shared on purpose: the glyphs and the small domain marks (priority, label, status, assignee,
 due chip). Everything structural is owned by each variant, so variants are free to disagree
@@ -106,27 +167,111 @@ with the branch.
 3. Delete the losers, the switcher, `prototype.html` and `src/prototype-main.tsx` from
    `main`. Keep the full set of variants on this branch as the primary source.
 
-## Verdict (2026-10-15, user pick)
+## Verdict (2026-10-15, user pick) — FOLDED IN
 
 Nav **1** (Wide rail) · Issues **1** (Dense grouped) · Board **2** (Roomy) · Detail **4**
-(Two column) · Settings **2** (Top tabs) · Sign in **2** (Centred card) · Style **terminal** ·
-Color **neutral** · Mode **dark** (mode was unspecified; dark assumed as terminal's native —
-say the word if light was meant).
+(Two column) · Settings **2** (Top tabs) · Sign in **2** (Centred card) · Style **mono**
+(the config's "Terminal" — square radii + monospace) · Color **neutral** · Mode **dark**.
 
-Shareable entry points (all other axes pinned):
+This landed in `1f3f7bd` ("fold in app-mockup verdict"): `--radius: 0`, `--font-sans`
+switched to the Cascadia Mono stack, dark default, plus the rail / dense list / roomy
+board / two-column detail / top-tab settings / centred sign-in rewrites. An earlier
+version of this section said fold-in had not happened; that was stale.
+
+## Folded in: Darkmatter, expanded (2026-10-16)
+
+`index.css` now ships **Darkmatter**, folded in from the registry and *expanded*
+— so `?theme=darkmatter` shows upstream's published values, not what the app
+renders. Deliberate divergences:
+
+- **Three surfaces, two values.** Upstream light has `--card` identical to
+  `--background`, and dark has them one step apart. The ramp is `--sidebar` (the app
+  frame; also the Kanban column well) < `--background` (the app panel) = `--card`.
+  Cards sit flush with the panel and are defined by their border, not by a value step.
+- `--card` is written as `var(--background)` rather than a copied hex, so the two
+  cannot drift apart.
+- `--border` and `--accent` lifted so hover states and outlines survive on a card
+  that shares the panel's surface.
+- Dark `--destructive` is a red; upstream sets it to the same teal as `--secondary`.
+- Base font is Geist Mono (`@fontsource-variable/geist-mono`), via `@theme inline`,
+  since a variable override cannot reach the inlined stack.
+
+`THEME_IDENTITIES` and the registry shortlists are untouched, so both are still
+available for comparison.
+
+## Round 2 (2026-10-16) — the theme, on the real app
+
+**Question:** which identity should the app wear, now that the first pick has shipped?
+
+The gallery answers a *structural* question on hand-built mockups. For an identity-only
+question where the layouts stay, the mockups are the wrong surface: nothing in
+`variants/*` is a real component. So this round is **sub-shape A** — the variants live on
+the real screens.
 
 ```
-/prototype.html?screen=issues&nav=1&issues=1&board=2&detail=4&settings=2&signin=2&style=terminal&color=neutral&mode=dark
+bun run --cwd packages/frontend dev
+http://localhost:5173/?theme=catppuccin&mode=dark
 ```
 
-Swap `screen=` for `board` / `issue` / `settings` / `signin` to review each picked
-surface. Fold-in has NOT happened yet: the real app still renders its current design;
-rewriting the real components against this verdict is the next step when confirmed.
+`real-theme.tsx` pushes `?theme=` (or `?style=` `?color=` `?mode=`) onto
+`document.documentElement` as `data-proto-*`. `themes.css` and
+`themes.registry.css` target `html[data-proto-*]` (specificity 0,1,1) which beats
+the app's own `:root` and `.dark` blocks, so the whole app re-skins with **no
+component changes**. Dev-only: `main.tsx` imports it behind `import.meta.env.DEV`,
+so the module, its CSS and its fonts are dropped from the production build.
 
-## Not decided yet
+- Arrows walk all 42 registry themes, then the `THEME_IDENTITIES` shortlist.
+- **Tune** opens every axis: registry (42), style (8), color (11), mode (2), shortlist (7).
+- **copy index.css** prints the `:root` / `.dark` token blocks to paste over `src/index.css`.
+- **off** clears the params and returns the app to its shipped theme.
+- It does nothing until a param is present, so ordinary dev sessions are untouched.
+- While active it wins the `.dark` class from `ThemeProvider`; a MutationObserver keeps
+  `?mode=` authoritative.
 
+## Rail: borderless, on the app frame (2026-10-16)
+
+Five rail treatments were built as a `?sidebar=` axis and reviewed on the real app.
+**Flat** won — and then the structure around it changed, so the rail stopped being a
+panel at all and became the app's *chrome*, with the content promoted to the app.
+
+The shape now: the shell is `bg-sidebar` (the frame), the rail sits on it with **no
+surface and no borders of its own**, and the content is a `rounded-lg bg-background`
+panel inset 8px on all sides — so the app reads as a rounded window inside the frame.
+Dropping the rail's hairlines was part of the same move: the panel's own edge does that
+work now, which is why the rail needs nothing.
+
+| | dark | light |
+| --- | --- | --- |
+| frame (`--sidebar`) | `#08080a` | `#e4e4e8` |
+| app panel (`--background`) | `#131315` | `#f5f5f6` |
+| panel inset / radius | 8px / 12px | same |
+
+`--sidebar` therefore now means two things, both of them "recessed": the frame the rail
+sits on, and the Kanban column well inside the panel. That naming mismatch is still open.
+
+The `?sidebar=` axis, its variant CSS and the three `data-rail` hooks were all deleted
+once this shipped, so the design is expressed directly in `App.tsx`. The losing variants
+are recorded here because the prototype CSS was deleted rather than committed (values
+tuned for dark; no light pass was done):
+
+| key | rail | inside | radius | hairline |
+| --- | --- | --- | --- | --- |
+| `now` | `#0b0b0c` | `#202024` | 0.75rem | — |
+| `well` | `#0f0f10` | `#08080a` | 0.75rem | — |
+| `flat` | `#131315` | — | 0 | `#26262b` |
+| `tint` | `#1a1410` | — | 0 | `#2e231a` |
+| `hollow` | `#0f0f10` | — | 0 | — |
+
+Every variant padded its inner region `px-4`, so head, rows and foot all align at 16px.
+
+## Still not decided
+
+- Whether the mono base font survives the review (`sans-baseline` and `graphite` in the
+  shortlist are the direct alternatives).
 - Whether nav and content are picked independently (assumed yes here) or curated as pairs.
 - Whether the board deserves to be the home screen or a view you switch to.
 - Whether the detail should be a pane or a page (now both exist as Detail1 vs Detail2–4).
+- No contrast/AA readout yet — the fold-in is unguarded against a palette that loses
+  contrast. Cheapest next step if the round comes down to two close candidates.
 - The switcher bar covers the bottom ~40px of every variant. Judge bottom-anchored content
   with that in mind.

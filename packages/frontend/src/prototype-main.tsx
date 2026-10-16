@@ -11,15 +11,22 @@ import { createRoot } from "react-dom/client"
 
 import "./index.css"
 import "./prototypes/app-mockups/themes.css"
+import "./prototypes/app-mockups/themes.registry.css"
 import { PrototypeRoot } from "./prototypes/app-mockups/prototype-root"
+import { applyThemeFonts } from "./prototypes/app-mockups/theme-fonts"
 import { readProtoState } from "./prototypes/app-mockups/use-proto-params"
 
 // Apply the theme before the first paint so there is no unstyled flash.
 const state = readProtoState()
 const root = document.documentElement
-root.dataset.protoStyle = state.style
-root.dataset.protoColor = state.color
 root.dataset.protoMode = state.mode
+if (state.theme === "") {
+  root.dataset.protoStyle = state.style
+  root.dataset.protoColor = state.color
+} else {
+  root.dataset.protoTheme = state.theme
+  applyThemeFonts(state.theme)
+}
 root.classList.toggle("dark", state.mode === "dark")
 root.style.colorScheme = state.mode
 

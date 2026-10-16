@@ -35,6 +35,7 @@ const statuses: Status[] = [
     projectId: "pr-1",
     name: "Backlog",
     category: "Backlog",
+    color: "#bec2c8",
     position: 0,
   },
   {
@@ -42,6 +43,7 @@ const statuses: Status[] = [
     projectId: "pr-1",
     name: "Shipped",
     category: "Completed",
+    color: "#5e6ad2",
     position: 1,
   },
 ]
@@ -167,15 +169,50 @@ describe("issue detail", () => {
     expect(callbacks.onBack).toHaveBeenCalledTimes(1)
   })
 
-  test("the rail status control reuses the status-change path", async () => {
+  test("the status pill opens a menu on the status-change path", async () => {
     const user = userEvent.setup()
     const callbacks = renderDetail()
 
-    await user.selectOptions(screen.getByLabelText(/status for WEB-1/i), "st-2")
+    await user.click(screen.getByRole("button", { name: /status for WEB-1/i }))
+    await user.click(screen.getByRole("menuitemradio", { name: "Shipped" }))
 
     expect(callbacks.onStatusChange).toHaveBeenCalledWith(
       expect.objectContaining({ identifier: "WEB-1" }),
       "st-2"
+    )
+  })
+
+  test("the priority pill opens a menu on the update path", async () => {
+    const user = userEvent.setup()
+    const callbacks = renderDetail()
+
+    await user.click(
+      screen.getByRole("button", { name: /priority for WEB-1/i })
+    )
+    await user.click(screen.getByRole("menuitemradio", { name: "Urgent" }))
+
+    expect(callbacks.onUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ identifier: "WEB-1" }),
+      { priority: "Urgent" }
+    )
+  })
+
+  test("the assignee avatar opens a menu on the update path", async () => {
+    const user = userEvent.setup()
+    const callbacks = renderDetail()
+
+    await user.click(
+      screen.getByRole("button", { name: /assignee for WEB-1/i })
+    )
+    const unassigned = screen.getByRole("menuitemradio", {
+      name: "Unassigned",
+    })
+    expect(unassigned).toHaveAttribute("aria-checked", "true")
+    await user.click(unassigned)
+
+    expect(callbacks.onUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ identifier: "WEB-1" }),
+      { assigneeId: null }
     )
   })
 
@@ -194,7 +231,14 @@ describe("issue detail", () => {
 })
 
 describe("project issues detail selection", () => {
-  const project = { id: "pr-1", workspaceId: "ws-1", name: "Web", key: "WEB" }
+  const project = {
+    id: "pr-1",
+    workspaceId: "ws-1",
+    name: "Web",
+    key: "WEB",
+    icon: "Folder",
+    color: "#94a3b8",
+  }
 
   beforeEach(() => {
     localStorage.clear()
@@ -209,6 +253,35 @@ describe("project issues detail selection", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals()
+  })
+
+  test("detail opens from a kanban card and back returns to the board", async () => {
+    const user = userEvent.setup()
+    updateIssue.mockResolvedValue({ ...baseIssue, statusId: "st-2" })
+    render(
+      <ProjectIssues
+        project={project}
+        userId="user-a"
+        canWrite={true}
+        canAdmin={false}
+      />
+    )
+    await screen.findByText("WEB-1")
+
+    await user.click(screen.getByRole("button", { name: /^filters/i }))
+    await user.click(screen.getByRole("tab", { name: "Kanban" }))
+    await user.click(
+      screen.getByRole("button", { name: /open detail for WEB-1/i })
+    )
+
+    const detail = await screen.findByTestId("issue-detail-WEB-1")
+    expect(
+      within(detail).getByRole("heading", { name: "Fix login" })
+    ).toBeInTheDocument()
+
+    await user.click(screen.getByRole("button", { name: /back to issues/i }))
+    expect(await screen.findByTestId("kanban-card-WEB-1")).toBeInTheDocument()
+    expect(screen.queryByTestId("issue-detail-WEB-1")).not.toBeInTheDocument()
   })
 
   test("detail opens from the row and back returns to the list", async () => {
@@ -237,10 +310,10 @@ describe("project issues detail selection", () => {
       await within(detail).findByTestId("subtask-WEB-2")
     ).toBeInTheDocument()
 
-    await user.selectOptions(
-      within(detail).getByLabelText(/status for WEB-1/i),
-      "st-2"
+    await user.click(
+      within(detail).getByRole("button", { name: /status for WEB-1/i })
     )
+    await user.click(screen.getByRole("menuitemradio", { name: "Shipped" }))
     await waitFor(() =>
       expect(updateIssue).toHaveBeenCalledWith("WEB-1", {
         statusId: "st-2",

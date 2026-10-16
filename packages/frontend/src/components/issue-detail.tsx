@@ -1,5 +1,7 @@
+import { UserRound } from "lucide-react"
 import { ExternalLinkSection } from "@/components/external-link-section"
 import { IssueActions } from "@/components/issue-actions"
+import { PropertyMenu, PropertyMenuOption } from "@/components/property-menu"
 import { SubtaskList } from "@/components/subtask-list"
 import type {
   Issue,
@@ -9,14 +11,12 @@ import type {
   Status,
   UpdateIssueInput,
 } from "@/lib/api"
+import { StatusIcon } from "@/lib/status-icons"
 
 const PRIORITIES: Priority[] = ["Urgent", "High", "Medium", "Low", "None"]
 
-const selectClass =
-  "rounded-md border border-input bg-background px-2 py-1 text-sm"
-
 const inputClass =
-  "rounded-md border border-input bg-background px-2 py-1 text-sm"
+  "rounded-md border border-transparent bg-transparent px-1 py-0.5 text-xs outline-none hover:border-input focus:border-input"
 
 /**
  * Two-column issue detail (Detail4 verdict): the content column carries
@@ -61,6 +61,7 @@ export function IssueDetail({
 }) {
   const statusName =
     statuses.find((status) => status.id === issue.statusId)?.name ?? "Unknown"
+  const status = statuses.find((s) => s.id === issue.statusId)
   const colorFor = (name: string) =>
     labels.find((label) => label.name === name)?.color
   const dueDay = issue.dueDate?.slice(0, 10) ?? ""
@@ -111,78 +112,150 @@ export function IssueDetail({
         </div>
         <aside
           aria-label="Properties"
-          className="h-fit rounded-xl border bg-card p-4"
+          className="h-fit rounded-md border bg-card p-3"
         >
-          <h3 className="font-medium text-sm">Properties</h3>
+          <h3 className="font-semibold text-muted-foreground text-xs">
+            Properties
+          </h3>
           <dl className="mt-1 divide-y">
-            <div className="flex items-center justify-between gap-3 py-1 text-xs">
+            <div className="flex items-center justify-between gap-3 py-0.5 text-xs">
               <dt className="shrink-0 text-muted-foreground">Status</dt>
               <dd className="flex min-w-0 items-center gap-1.5">
-                {canEdit ? (
-                  <select
-                    aria-label={`Status for ${issue.identifier}`}
-                    className={selectClass}
-                    value={issue.statusId}
-                    onChange={(e) => onStatusChange(issue, e.target.value)}
+                {canEdit && status ? (
+                  <PropertyMenu
+                    label={`Status for ${issue.identifier}`}
+                    triggerClassName="flex min-w-0 items-center gap-1.5 rounded-md border border-input px-2 py-0.5 text-xs hover:bg-accent"
+                    preview={
+                      <>
+                        <StatusIcon status={status} size={12} />
+                        {statusName}
+                      </>
+                    }
                   >
-                    {statuses.map((status) => (
-                      <option key={status.id} value={status.id}>
-                        {status.name}
-                      </option>
-                    ))}
-                  </select>
+                    {(close) => (
+                      <>
+                        {statuses.map((option) => (
+                          <PropertyMenuOption
+                            key={option.id}
+                            selected={option.id === issue.statusId}
+                            onSelect={() => {
+                              onStatusChange(issue, option.id)
+                              close()
+                            }}
+                          >
+                            <StatusIcon status={option} size={13} />
+                            {option.name}
+                          </PropertyMenuOption>
+                        ))}
+                      </>
+                    )}
+                  </PropertyMenu>
                 ) : (
-                  <span>{statusName}</span>
+                  <span className="flex items-center gap-1.5">
+                    {status && <StatusIcon status={status} size={12} />}
+                    {statusName}
+                  </span>
                 )}
               </dd>
             </div>
-            <div className="flex items-center justify-between gap-3 py-1 text-xs">
+            <div className="flex items-center justify-between gap-3 py-0.5 text-xs">
               <dt className="shrink-0 text-muted-foreground">Assignee</dt>
               <dd className="flex min-w-0 items-center gap-1.5">
                 {canEdit ? (
-                  <select
-                    aria-label={`Assignee for ${issue.identifier}`}
-                    className={selectClass}
-                    value={issue.assigneeId ?? ""}
-                    onChange={(e) =>
-                      onUpdate(issue, {
-                        assigneeId:
-                          e.target.value === "" ? null : e.target.value,
-                      })
+                  <PropertyMenu
+                    label={`Assignee for ${issue.identifier}`}
+                    triggerClassName="grid size-6 shrink-0 place-items-center rounded-full hover:bg-accent"
+                    preview={
+                      issue.assigneeId ? (
+                        <span
+                          className="grid size-6 place-items-center rounded-full bg-muted text-muted-foreground"
+                          title={issue.assigneeId}
+                        >
+                          <UserRound aria-hidden="true" size={12} />
+                        </span>
+                      ) : (
+                        <span
+                          className="grid size-6 place-items-center rounded-full border border-muted-foreground border-dashed text-muted-foreground"
+                          title="Unassigned"
+                        >
+                          <UserRound aria-hidden="true" size={12} />
+                        </span>
+                      )
                     }
                   >
-                    <option value="">Unassigned</option>
-                    {members.map((member) => (
-                      <option key={member.userId} value={member.userId}>
-                        {member.userId}
-                      </option>
-                    ))}
-                  </select>
+                    {(close) => (
+                      <>
+                        <PropertyMenuOption
+                          selected={issue.assigneeId === null}
+                          onSelect={() => {
+                            onUpdate(issue, { assigneeId: null })
+                            close()
+                          }}
+                        >
+                          Unassigned
+                        </PropertyMenuOption>
+                        {members.map((member) => (
+                          <PropertyMenuOption
+                            key={member.userId}
+                            selected={member.userId === issue.assigneeId}
+                            onSelect={() => {
+                              onUpdate(issue, { assigneeId: member.userId })
+                              close()
+                            }}
+                          >
+                            <span
+                              className="grid size-5 shrink-0 place-items-center rounded-full bg-muted text-muted-foreground"
+                              title={member.userId}
+                            >
+                              <UserRound aria-hidden="true" size={10} />
+                            </span>
+                            <span className="truncate">{member.userId}</span>
+                          </PropertyMenuOption>
+                        ))}
+                      </>
+                    )}
+                  </PropertyMenu>
+                ) : issue.assigneeId ? (
+                  <span className="flex items-center gap-1.5">
+                    <span
+                      className="grid size-5 shrink-0 place-items-center rounded-full bg-muted text-muted-foreground"
+                      title={issue.assigneeId}
+                    >
+                      <UserRound aria-hidden="true" size={10} />
+                    </span>
+                    {issue.assigneeId}
+                  </span>
                 ) : (
-                  <span>{issue.assigneeId ?? "Unassigned"}</span>
+                  <span className="text-muted-foreground">Unassigned</span>
                 )}
               </dd>
             </div>
-            <div className="flex items-center justify-between gap-3 py-1 text-xs">
+            <div className="flex items-center justify-between gap-3 py-0.5 text-xs">
               <dt className="shrink-0 text-muted-foreground">Priority</dt>
               <dd className="flex min-w-0 items-center gap-1.5">
                 {canEdit ? (
-                  <select
-                    aria-label={`Priority for ${issue.identifier}`}
-                    className={selectClass}
-                    value={issue.priority}
-                    onChange={(e) =>
-                      onUpdate(issue, {
-                        priority: e.target.value as Priority,
-                      })
-                    }
+                  <PropertyMenu
+                    label={`Priority for ${issue.identifier}`}
+                    triggerClassName="rounded-md border border-input px-2 py-0.5 text-xs hover:bg-accent"
+                    preview={issue.priority}
                   >
-                    {PRIORITIES.map((priority) => (
-                      <option key={priority} value={priority}>
-                        {priority}
-                      </option>
-                    ))}
-                  </select>
+                    {(close) => (
+                      <>
+                        {PRIORITIES.map((priority) => (
+                          <PropertyMenuOption
+                            key={priority}
+                            selected={priority === issue.priority}
+                            onSelect={() => {
+                              onUpdate(issue, { priority })
+                              close()
+                            }}
+                          >
+                            {priority}
+                          </PropertyMenuOption>
+                        ))}
+                      </>
+                    )}
+                  </PropertyMenu>
                 ) : (
                   <span>{issue.priority}</span>
                 )}

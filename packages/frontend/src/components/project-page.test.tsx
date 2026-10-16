@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react"
+import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, test, vi } from "vitest"
 import { api, type Project } from "@/lib/api"
@@ -25,7 +25,6 @@ vi.mock("@/lib/api", async (importOriginal) => {
 })
 
 const listStatuses = vi.mocked(api.listStatuses)
-const deleteStatus = vi.mocked(api.deleteStatus)
 const listIssues = vi.mocked(api.listIssues)
 const listMembers = vi.mocked(api.listMembers)
 const listLabels = vi.mocked(api.listLabels)
@@ -35,21 +34,17 @@ const project: Project = {
   workspaceId: "ws-1",
   name: "Web",
   key: "WEB",
+  icon: "Folder",
+  color: "#94a3b8",
 }
 
 const statuses = [
-  {
-    id: "st-3",
-    projectId: "pr-1",
-    name: "Shipped",
-    category: "Completed",
-    position: 2,
-  },
   {
     id: "st-1",
     projectId: "pr-1",
     name: "Backlog",
     category: "Backlog",
+    color: "#bec2c8",
     position: 0,
   },
   {
@@ -57,6 +52,7 @@ const statuses = [
     projectId: "pr-1",
     name: "In Review",
     category: "In Progress",
+    color: "#0f783c",
     position: 1,
   },
 ] as const
@@ -65,125 +61,67 @@ describe("project page", () => {
   beforeEach(() => {
     localStorage.clear()
     vi.clearAllMocks()
+    listStatuses.mockResolvedValue([...statuses])
     listIssues.mockResolvedValue([])
     listMembers.mockResolvedValue([])
     listLabels.mockResolvedValue([])
   })
 
-  test("renders statuses as ordered sections with categories", async () => {
-    listStatuses.mockResolvedValue([...statuses])
+  test("keeps a screen-reader heading and shows the compact breadcrumb trail", async () => {
     render(
       <ProjectPage
         project={project}
         canManage={true}
         canWriteIssues={true}
         userId="user-owner"
-        onProjectUpdated={() => {}}
       />
     )
 
-    const names = (await screen.findAllByTestId("status-name")).map(
-      (el) => el.textContent
-    )
-    expect(names).toEqual(["Backlog", "In Review", "Shipped"])
-    const categories = screen
-      .getAllByTestId("status-category")
-      .map((el) => el.textContent)
-    expect(categories).toEqual(["Backlog", "In Progress", "Completed"])
-  })
-
-  test("shows an empty state without statuses", async () => {
-    listStatuses.mockResolvedValue([])
-    render(
-      <ProjectPage
-        project={project}
-        canManage={true}
-        canWriteIssues={true}
-        userId="user-owner"
-        onProjectUpdated={() => {}}
-      />
-    )
-    expect(await screen.findByText(/no statuses yet/i)).toBeInTheDocument()
-  })
-
-  test("deleting a status removes it; a blocked delete shows the error", async () => {
-    const user = userEvent.setup()
-    listStatuses.mockResolvedValue([
-      {
-        id: "st-1",
-        projectId: "pr-1",
-        name: "Backlog",
-        category: "Backlog",
-        position: 0,
-      },
-      {
-        id: "st-2",
-        projectId: "pr-1",
-        name: "Done",
-        category: "Completed",
-        position: 1,
-      },
-    ])
-    deleteStatus.mockResolvedValueOnce(undefined)
-    deleteStatus.mockRejectedValueOnce(
-      new Error("Cannot delete a status that holds issues")
-    )
-    render(
-      <ProjectPage
-        project={project}
-        canManage={true}
-        canWriteIssues={true}
-        userId="user-owner"
-        onProjectUpdated={() => {}}
-      />
-    )
-
-    await screen.findAllByTestId("status-name")
-    const sections = screen.getAllByTestId("status-name")
-    const backlog = sections[0].closest("section")
-    if (!(backlog instanceof HTMLElement)) throw new Error("Missing section")
-    await user.click(within(backlog).getByRole("button", { name: /delete/i }))
-    await waitFor(() =>
-      expect(deleteStatus).toHaveBeenCalledWith("pr-1", "st-1")
-    )
-    await waitFor(() =>
-      expect(
-        screen.getAllByTestId("status-name").map((el) => el.textContent)
-      ).not.toContain("Backlog")
-    )
-
-    const doneSection = screen
-      .getAllByTestId("status-name")
-      .find((el) => el.textContent === "Done")
-      ?.closest("section")
-    if (!(doneSection instanceof HTMLElement))
-      throw new Error("Missing section")
-    const done = doneSection
-    await user.click(within(done).getByRole("button", { name: /delete/i }))
-    expect(await screen.findByText(/holds issues/i)).toBeInTheDocument()
-  })
-
-  test("hides manage controls from read-only viewers", async () => {
-    listStatuses.mockResolvedValue([])
-    listIssues.mockResolvedValue([])
-    listMembers.mockResolvedValue([])
-    render(
-      <ProjectPage
-        project={project}
-        canManage={false}
-        canWriteIssues={false}
-        userId="user-viewer"
-        onProjectUpdated={() => {}}
-      />
-    )
-    expect(await screen.findByText(/no statuses yet/i)).toBeInTheDocument()
-    expect(screen.queryByLabelText(/project key/i)).not.toBeInTheDocument()
+    expect(
+      await screen.findByRole("heading", { name: "Web" })
+    ).toBeInTheDocument()
+    const trail = screen.getByRole("navigation", { name: /breadcrumb/i })
+    expect(
+      within(trail).getByRole("button", { name: "Web" })
+    ).toBeInTheDocument()
+    // The project crumb carries the project mark in its color.
+    const mark = within(trail).getByTestId("project-icon-Folder")
+    expect(mark).toBeInTheDocument()
+    expect(mark).toHaveStyle({ color: "#94a3b8" })
+    expect(
+      within(trail).getByRole("button", { name: "Issues" })
+    ).toBeInTheDocument()
+    // No stacked title row, key badge, or inline workflow editor.
+    expect(screen.queryByLabelText(/workflow/i)).not.toBeInTheDocument()
     expect(screen.queryByLabelText(/status name/i)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/project key/i)).not.toBeInTheDocument()
+    expect(screen.queryByText("WEB")).not.toBeInTheDocument()
   })
 
-  test("renders the issue list view below the workflow", async () => {
-    listStatuses.mockResolvedValue([])
-    listMembers.mockResolvedValue([])
+  test("star toggles and persists per project", async () => {
+    const user = userEvent.setup()
+    render(
+      <ProjectPage
+        project={project}
+        canManage={true}
+        canWriteIssues={true}
+        userId="user-owner"
+      />
+    )
+    const star = await screen.findByRole("button", { name: /star project/i })
+    expect(star).toHaveAttribute("aria-pressed", "false")
+
+    await user.click(star)
+    expect(star).toHaveAttribute("aria-pressed", "true")
+    expect(localStorage.getItem("zconnect:starred:pr-1")).toBe("1")
+
+    await user.click(screen.getByRole("button", { name: /unstar project/i }))
+    expect(
+      screen.getByRole("button", { name: /star project/i })
+    ).toHaveAttribute("aria-pressed", "false")
+  })
+
+  test("renders the issue list view with filters popover", async () => {
     listIssues.mockResolvedValue([
       {
         id: "is-1",
@@ -207,10 +145,11 @@ describe("project page", () => {
         canManage={true}
         canWriteIssues={true}
         userId="user-owner"
-        onProjectUpdated={() => {}}
       />
     )
     expect(await screen.findByText("WEB-1")).toBeInTheDocument()
-    expect(screen.getByLabelText(/search issues/i)).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: /^filters/i })
+    ).toBeInTheDocument()
   })
 })

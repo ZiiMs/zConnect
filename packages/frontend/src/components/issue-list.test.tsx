@@ -10,6 +10,7 @@ const statuses: Status[] = [
     projectId: "pr-1",
     name: "Backlog",
     category: "Backlog",
+    color: "#bec2c8",
     position: 0,
   },
   {
@@ -17,6 +18,7 @@ const statuses: Status[] = [
     projectId: "pr-1",
     name: "Shipped",
     category: "Completed",
+    color: "#5e6ad2",
     position: 1,
   },
   {
@@ -24,6 +26,7 @@ const statuses: Status[] = [
     projectId: "pr-1",
     name: "In Review",
     category: "In Progress",
+    color: "#0f783c",
     position: 2,
   },
 ]
@@ -77,7 +80,7 @@ const issues: Issue[] = [
 ]
 
 describe("issue list", () => {
-  test("renders every issue with identifier, title and priority", () => {
+  test("renders rows with key, mark, title, avatar and labels", () => {
     render(
       <IssueList
         issues={issues}
@@ -87,10 +90,14 @@ describe("issue list", () => {
       />
     )
 
-    expect(screen.getByText("WEB-1")).toBeInTheDocument()
-    expect(screen.getByText("Fix login")).toBeInTheDocument()
-    expect(screen.getByText("WEB-2")).toBeInTheDocument()
-    expect(screen.getByText("High")).toBeInTheDocument()
+    const row = screen.getByTestId("issue-WEB-2")
+    expect(within(row).getByText("WEB-2")).toBeInTheDocument()
+    expect(within(row).getByText("Ship homepage")).toBeInTheDocument()
+    expect(within(row).getByTestId("status-icon-Shipped")).toBeInTheDocument()
+    expect(within(row).getByTitle("user-member")).toBeInTheDocument()
+    // Priority moved to the Table/Detail views; the row stays dense.
+    expect(screen.queryByText("High")).not.toBeInTheDocument()
+    expect(screen.queryByText("Low")).not.toBeInTheDocument()
   })
 
   test("shows an empty state without issues", () => {
@@ -189,30 +196,32 @@ describe("issue list", () => {
     ).not.toBeInTheDocument()
   })
 
-  test("renders all six category groups in roster order", () => {
-    const sixStatuses: Status[] = [
+  test("renders one collapsible group per status in position order", () => {
+    const ordered: Status[] = [
       "Backlog",
       "Unstarted",
       "In Progress",
       "Completed",
       "Canceled",
       "Duplicate",
-    ].map((category, index) => ({
+    ].map((name, index) => ({
       id: `six-${index}`,
       projectId: "pr-1",
-      name: category,
-      category: category as Status["category"],
+      name,
+      category: "Backlog" as Status["category"],
+      color: "#94a3b8",
       position: index,
     }))
-    // Deliberately out of roster order: grouping, not input order, sets the
-    // heading order.
-    const sixIssues: Issue[] = [...sixStatuses].reverse().map((status, i) => ({
+    // Deliberately out of position order: grouping, not input order, sets
+    // the section order.
+    const shuffled = [...ordered].reverse()
+    const sixIssues: Issue[] = ordered.map((status, i) => ({
       id: `six-issue-${i}`,
       projectId: "pr-1",
       number: i + 1,
       keyPrefix: "WEB",
       identifier: `WEB-6${i}`,
-      title: `Issue in ${status.category}`,
+      title: `Issue in ${status.name}`,
       description: null,
       statusId: status.id,
       priority: "None",
@@ -225,7 +234,7 @@ describe("issue list", () => {
     render(
       <IssueList
         issues={sixIssues}
-        statuses={sixStatuses}
+        statuses={shuffled}
         canEdit={false}
         onStatusChange={() => {}}
       />
@@ -241,11 +250,251 @@ describe("issue list", () => {
       "Duplicate",
     ])
 
-    const duplicate = screen.getByTestId("issue-WEB-60").closest("section")
+    const duplicate = screen.getByTestId("issue-WEB-65").closest("section")
     expect(
       within(duplicate as HTMLElement).getByRole("heading", {
         name: "Duplicate",
       })
+    ).toBeInTheDocument()
+  })
+
+  test("collapsing a group hides its rows", async () => {
+    const user = userEvent.setup()
+    render(
+      <IssueList
+        issues={issues}
+        statuses={statuses}
+        canEdit={true}
+        onStatusChange={() => {}}
+      />
+    )
+
+    expect(screen.getByTestId("issue-WEB-1")).toBeInTheDocument()
+    await user.click(
+      screen.getByRole("button", { name: /collapse backlog issues/i })
+    )
+
+    expect(screen.queryByTestId("issue-WEB-1")).not.toBeInTheDocument()
+    expect(screen.getByRole("heading", { name: "Backlog" })).toBeInTheDocument()
+
+    await user.click(
+      screen.getByRole("button", { name: /expand backlog issues/i })
+    )
+    expect(screen.getByTestId("issue-WEB-1")).toBeInTheDocument()
+  })
+
+  test("clicking anywhere on the header collapses the group", async () => {
+    const user = userEvent.setup()
+    render(
+      <IssueList
+        issues={issues}
+        statuses={statuses}
+        canEdit={true}
+        onStatusChange={() => {}}
+      />
+    )
+
+    await user.click(screen.getByRole("heading", { name: "Backlog" }))
+    expect(screen.queryByTestId("issue-WEB-1")).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole("heading", { name: "Backlog" }))
+    expect(screen.getByTestId("issue-WEB-1")).toBeInTheDocument()
+  })
+
+  test("group headers wash in the status color", () => {
+    render(
+      <IssueList
+        issues={issues}
+        statuses={statuses}
+        canEdit={true}
+        onStatusChange={() => {}}
+      />
+    )
+
+    const header = screen
+      .getByRole("heading", { name: "Backlog" })
+      .closest("header")
+    expect(header).toHaveStyle({
+      backgroundImage:
+        "linear-gradient(90deg, color-mix(in oklch, #bec2c8 24%, transparent), transparent 75%)",
+    })
+  })
+
+  test("titles open the detail view when wired", async () => {
+    const user = userEvent.setup()
+    const onOpenDetail = vi.fn()
+    render(
+      <IssueList
+        issues={issues}
+        statuses={statuses}
+        canEdit={true}
+        onStatusChange={() => {}}
+        onOpenDetail={onOpenDetail}
+      />
+    )
+
+    await user.click(
+      screen.getByRole("button", { name: /open detail for WEB-1/i })
+    )
+    expect(onOpenDetail).toHaveBeenCalledWith(issues[0])
+  })
+
+  test("the group quick-add reports its status", async () => {
+    const user = userEvent.setup()
+    const onAddIssue = vi.fn()
+    render(
+      <IssueList
+        issues={issues}
+        statuses={statuses}
+        canEdit={true}
+        onStatusChange={() => {}}
+        onAddIssue={onAddIssue}
+      />
+    )
+
+    await user.click(
+      screen.getByRole("button", { name: /add issue to backlog/i })
+    )
+    expect(onAddIssue).toHaveBeenCalledWith("st-1")
+    // The quick-add sits above the header toggle: rows stay visible.
+    expect(screen.getByTestId("issue-WEB-1")).toBeInTheDocument()
+  })
+
+  test("priority lanes follow urgency order", () => {
+    render(
+      <IssueList
+        issues={issues}
+        statuses={statuses}
+        canEdit={true}
+        onStatusChange={() => {}}
+        groupBy="priority"
+      />
+    )
+
+    const headings = screen.getAllByRole("heading").map((el) => el.textContent)
+    expect(headings).toEqual(["High", "Medium", "Low"])
+  })
+
+  test("assignee lanes put known members first and Unassigned last", () => {
+    render(
+      <IssueList
+        issues={issues}
+        statuses={statuses}
+        members={[{ userId: "user-member" }, { userId: "user-owner" }]}
+        canEdit={true}
+        onStatusChange={() => {}}
+        groupBy="assignee"
+      />
+    )
+
+    const headings = screen.getAllByRole("heading").map((el) => el.textContent)
+    expect(headings).toEqual(["user-member", "Unassigned"])
+    const lane = screen
+      .getByTestId("issue-WEB-2")
+      .closest("section") as HTMLElement
+    expect(
+      within(lane).getByRole("heading", { name: "user-member" })
+    ).toBeInTheDocument()
+  })
+
+  test("no grouping renders one flat list without headers", () => {
+    render(
+      <IssueList
+        issues={issues}
+        statuses={statuses}
+        canEdit={true}
+        onStatusChange={() => {}}
+        groupBy="none"
+      />
+    )
+
+    expect(screen.queryByRole("heading")).not.toBeInTheDocument()
+    expect(screen.getByTestId("issue-WEB-1")).toBeInTheDocument()
+    expect(screen.getByTestId("issue-WEB-2")).toBeInTheDocument()
+    expect(screen.getByTestId("issue-WEB-3")).toBeInTheDocument()
+  })
+
+  test("newest ordering reverses rows inside each lane", () => {
+    render(
+      <IssueList
+        issues={issues}
+        statuses={statuses}
+        canEdit={true}
+        onStatusChange={() => {}}
+        groupBy="none"
+        order="newest"
+      />
+    )
+
+    const rows = screen
+      .getAllByTestId(/^issue-WEB-/, { exact: false })
+      .map((el) => el.getAttribute("data-testid"))
+    expect(rows).toEqual(["issue-WEB-3", "issue-WEB-2", "issue-WEB-1"])
+  })
+
+  test("empty groups show when enabled", () => {
+    render(
+      <IssueList
+        issues={[issues[0]]}
+        statuses={statuses}
+        canEdit={true}
+        onStatusChange={() => {}}
+        showEmptyGroups
+      />
+    )
+
+    const headings = screen.getAllByRole("heading").map((el) => el.textContent)
+    expect(headings).toEqual(["Backlog", "Shipped", "In Review"])
+  })
+
+  test("display flags hide row elements", () => {
+    render(
+      <IssueList
+        issues={issues}
+        statuses={statuses}
+        canEdit={true}
+        onStatusChange={() => {}}
+        display={{
+          id: false,
+          status: false,
+          priority: false,
+          assignee: false,
+          due: false,
+          labels: false,
+        }}
+      />
+    )
+
+    const row = screen.getByTestId("issue-WEB-2")
+    expect(within(row).queryByText("WEB-2")).not.toBeInTheDocument()
+    expect(within(row).queryByText("feature")).not.toBeInTheDocument()
+    expect(within(row).queryByTitle("user-member")).not.toBeInTheDocument()
+    expect(
+      within(row).queryByTestId("status-icon-Shipped")
+    ).not.toBeInTheDocument()
+    expect(within(row).getByText("Ship homepage")).toBeInTheDocument()
+  })
+
+  test("display priority shows the priority text", () => {
+    render(
+      <IssueList
+        issues={issues}
+        statuses={statuses}
+        canEdit={true}
+        onStatusChange={() => {}}
+        display={{
+          id: true,
+          status: true,
+          priority: true,
+          assignee: true,
+          due: true,
+          labels: true,
+        }}
+      />
+    )
+
+    expect(
+      within(screen.getByTestId("issue-WEB-2")).getByText("Low")
     ).toBeInTheDocument()
   })
 

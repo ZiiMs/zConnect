@@ -3,6 +3,7 @@ import {
   tableFeatures,
   useTable,
 } from "@tanstack/react-table"
+import { UserRound } from "lucide-react"
 import { useMemo, useState } from "react"
 import type {
   Issue,
@@ -11,23 +12,25 @@ import type {
   Status,
   UpdateIssueInput,
 } from "@/lib/api"
+import { formatDueDate } from "@/lib/due"
+import { StatusIcon } from "@/lib/status-icons"
 
 const PRIORITIES: Priority[] = ["Urgent", "High", "Medium", "Low", "None"]
 
+/** Borderless editors that read as plain text until hovered/focused. */
 const selectClass =
-  "rounded-md border border-input bg-background px-2 py-1 text-sm"
+  "rounded-md border border-transparent bg-transparent px-1 py-0.5 text-sm hover:border-input focus:border-input"
 
 const inputClass =
-  "rounded-md border border-input bg-background px-2 py-1 text-sm"
+  "w-full rounded-md border border-transparent bg-transparent px-1 py-0.5 text-sm outline-none hover:border-input focus:border-input"
 
 const features = tableFeatures({})
 
 const columnHelper = createColumnHelper<typeof features, Issue>()
 
-/** Optional columns behind the show/hide control; the Issue key always shows. */
+/** Optional columns behind the show/hide control; Work items always shows. */
 const TOGGLEABLE_COLUMNS = [
-  { id: "title", label: "Title" },
-  { id: "statusId", label: "Status" },
+  { id: "statusId", label: "State" },
   { id: "priority", label: "Priority" },
   { id: "assigneeId", label: "Assignee" },
   { id: "dueDate", label: "Due date" },
@@ -65,72 +68,76 @@ export function IssueTable({
   const [hidden, setHidden] = useState<Record<string, boolean>>({})
 
   const allColumns = useMemo(() => {
-    const statusName = (statusId: string) =>
-      statuses.find((s) => s.id === statusId)?.name ?? "Unknown"
+    const statusOf = (statusId: string) =>
+      statuses.find((s) => s.id === statusId)
     const colorFor = (name: string) =>
       labels.find((label) => label.name === name)?.color
     return columnHelper.columns([
-      columnHelper.accessor("identifier", {
-        id: "identifier",
-        header: "Issue",
-        cell: (info) => (
-          <span className="font-mono text-xs">{info.getValue()}</span>
-        ),
-      }),
       columnHelper.accessor("title", {
         id: "title",
-        header: "Title",
+        header: "Work items",
         cell: (info) => {
           const issue = info.row.original
-          if (!canEdit) {
-            return (
-              <span className="font-medium text-sm">{info.getValue()}</span>
-            )
-          }
           return (
-            <input
-              aria-label={`Title for ${issue.identifier}`}
-              className={inputClass}
-              defaultValue={issue.title}
-              onBlur={(e) => {
-                if (e.target.value !== issue.title) {
-                  onUpdate(issue, { title: e.target.value })
-                }
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.currentTarget.blur()
-                }
-              }}
-            />
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="shrink-0 font-mono text-muted-foreground text-xs">
+                {issue.identifier}
+              </span>
+              {canEdit ? (
+                <input
+                  aria-label={`Title for ${issue.identifier}`}
+                  className={inputClass}
+                  defaultValue={issue.title}
+                  onBlur={(e) => {
+                    if (e.target.value !== issue.title) {
+                      onUpdate(issue, { title: e.target.value })
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.currentTarget.blur()
+                    }
+                  }}
+                />
+              ) : (
+                <span className="truncate font-medium text-sm">
+                  {info.getValue()}
+                </span>
+              )}
+            </span>
           )
         },
       }),
       columnHelper.accessor("statusId", {
         id: "statusId",
-        header: "Status",
+        header: "State",
         cell: (info) => {
           const issue = info.row.original
+          const status = statusOf(issue.statusId)
           if (!canEdit) {
             return (
-              <span className="text-muted-foreground text-xs">
-                {statusName(issue.statusId)}
+              <span className="flex items-center gap-1.5 text-sm">
+                {status && <StatusIcon status={status} />}
+                {status?.name ?? "Unknown"}
               </span>
             )
           }
           return (
-            <select
-              aria-label={`Status for ${issue.identifier}`}
-              className={selectClass}
-              value={issue.statusId}
-              onChange={(e) => onUpdate(issue, { statusId: e.target.value })}
-            >
-              {statuses.map((status) => (
-                <option key={status.id} value={status.id}>
-                  {status.name}
-                </option>
-              ))}
-            </select>
+            <span className="flex items-center gap-1.5">
+              {status && <StatusIcon status={status} />}
+              <select
+                aria-label={`Status for ${issue.identifier}`}
+                className={selectClass}
+                value={issue.statusId}
+                onChange={(e) => onUpdate(issue, { statusId: e.target.value })}
+              >
+                {statuses.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.name}
+                  </option>
+                ))}
+              </select>
+            </span>
           )
         },
       }),
@@ -141,7 +148,7 @@ export function IssueTable({
           const issue = info.row.original
           if (!canEdit) {
             return (
-              <span className="text-muted-foreground text-xs">
+              <span className="text-muted-foreground text-sm">
                 {issue.priority}
               </span>
             )
@@ -169,31 +176,45 @@ export function IssueTable({
         header: "Assignee",
         cell: (info) => {
           const issue = info.row.original
+          const avatar = issue.assigneeId ? (
+            <span
+              className="grid size-5 shrink-0 place-items-center rounded-full bg-muted text-muted-foreground"
+              title={issue.assigneeId}
+            >
+              <UserRound aria-hidden="true" size={10} />
+            </span>
+          ) : null
           if (!canEdit) {
             return (
-              <span className="text-muted-foreground text-xs">
-                {issue.assigneeId ?? "Unassigned"}
+              <span className="flex items-center gap-1.5 text-sm">
+                {avatar}
+                {issue.assigneeId ?? (
+                  <span className="text-muted-foreground">Unassigned</span>
+                )}
               </span>
             )
           }
           return (
-            <select
-              aria-label={`Assignee for ${issue.identifier}`}
-              className={selectClass}
-              value={issue.assigneeId ?? ""}
-              onChange={(e) =>
-                onUpdate(issue, {
-                  assigneeId: e.target.value === "" ? null : e.target.value,
-                })
-              }
-            >
-              <option value="">Unassigned</option>
-              {members.map((member) => (
-                <option key={member.userId} value={member.userId}>
-                  {member.userId}
-                </option>
-              ))}
-            </select>
+            <span className="flex items-center gap-1.5">
+              {avatar}
+              <select
+                aria-label={`Assignee for ${issue.identifier}`}
+                className={selectClass}
+                value={issue.assigneeId ?? ""}
+                onChange={(e) =>
+                  onUpdate(issue, {
+                    assigneeId: e.target.value === "" ? null : e.target.value,
+                  })
+                }
+              >
+                <option value="">Unassigned</option>
+                {members.map((member) => (
+                  <option key={member.userId} value={member.userId}>
+                    {member.userId}
+                  </option>
+                ))}
+              </select>
+            </span>
           )
         },
       }),
@@ -205,8 +226,8 @@ export function IssueTable({
           const day = issue.dueDate?.slice(0, 10) ?? ""
           if (!canEdit) {
             return (
-              <span className="text-muted-foreground text-xs">
-                {day === "" ? "No due date" : day}
+              <span className="text-muted-foreground text-sm">
+                {day === "" ? "—" : formatDueDate(day)}
               </span>
             )
           }
@@ -265,7 +286,7 @@ export function IssueTable({
   const visibleColumns = useMemo(
     () =>
       allColumns.filter(
-        (column) => column.id === "identifier" || !hidden[column.id ?? ""]
+        (column) => column.id === "title" || !hidden[column.id ?? ""]
       ),
     [allColumns, hidden]
   )
@@ -325,7 +346,7 @@ export function IssueTable({
             <tr
               key={row.id}
               data-testid={`issue-row-${row.original.identifier}`}
-              className="border-b"
+              className="border-b hover:bg-accent/60"
             >
               {row.getAllCells().map((cell) => (
                 <td key={cell.id} className="px-2 py-1">

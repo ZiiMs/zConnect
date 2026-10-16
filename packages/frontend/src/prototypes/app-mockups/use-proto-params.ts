@@ -32,6 +32,7 @@ import {
   type ThemeStyleKey,
   type VariantKey,
 } from "./prototype-config"
+import { REGISTRY_THEMES } from "./registry-themes"
 
 export interface ProtoState {
   screen: ScreenKey
@@ -41,6 +42,8 @@ export interface ProtoState {
   detail: VariantKey
   settings: VariantKey
   signin: VariantKey
+  /** A registry theme key, or "" for the composable style × color axes. */
+  theme: string
   style: ThemeStyleKey
   color: ThemeColorKey
   mode: ModeKey
@@ -54,6 +57,7 @@ const KEYS = [
   "detail",
   "settings",
   "signin",
+  "theme",
   "style",
   "color",
   "mode",
@@ -84,6 +88,8 @@ function pick<T extends string>(
 const screenKeys = SCREENS.map((item) => item.key)
 const styleKeys = THEME_STYLES.map((item) => item.key)
 const colorKeys = THEME_COLORS.map((item) => item.key)
+/** "" is the composable style × color mode; the rest are registry themes. */
+const themeKeys = ["", ...REGISTRY_THEMES.map((item) => item.key)]
 
 const LEGACY_LAYOUT: Record<string, Partial<ProtoState>> = {
   A: { nav: "1", issues: "1", board: "1", detail: "1", settings: "1" },
@@ -140,6 +146,7 @@ export function readProtoState(): ProtoState {
       params.get("signin"),
       legacy.signin ?? DEFAULT_SIGNIN
     ),
+    theme: pick(themeKeys, params.get("theme"), ""),
     style: pick(styleKeys, params.get("style"), legacy.style ?? DEFAULT_STYLE),
     color: pick(colorKeys, params.get("color"), legacy.color ?? DEFAULT_COLOR),
     mode: pick(MODES, params.get("mode"), DEFAULT_MODE),
@@ -149,7 +156,12 @@ export function readProtoState(): ProtoState {
 function toQuery(state: ProtoState): string {
   const params = new URLSearchParams()
   for (const key of KEYS) {
-    params.set(key, state[key])
+    const value = state[key]
+    // "" means "use the composable axes" — leaving it out keeps URLs clean.
+    if (value === "") {
+      continue
+    }
+    params.set(key, value)
   }
   return params.toString()
 }

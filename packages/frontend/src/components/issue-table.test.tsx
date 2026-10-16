@@ -10,6 +10,7 @@ const statuses: Status[] = [
     projectId: "pr-1",
     name: "Backlog",
     category: "Backlog",
+    color: "#bec2c8",
     position: 0,
   },
   {
@@ -17,6 +18,7 @@ const statuses: Status[] = [
     projectId: "pr-1",
     name: "Shipped",
     category: "Completed",
+    color: "#5e6ad2",
     position: 1,
   },
 ]
@@ -80,6 +82,44 @@ describe("issue table", () => {
       "Ship homepage"
     )
     expect(screen.getAllByRole("row")).toHaveLength(3)
+  })
+
+  test("work items merge the key and title under one header", () => {
+    setup()
+
+    expect(
+      screen.getByRole("columnheader", { name: "Work items" })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole("columnheader", { name: "Title" })
+    ).not.toBeInTheDocument()
+    const row = screen.getByTestId("issue-row-WEB-1")
+    expect(within(row).getByText("WEB-1")).toBeInTheDocument()
+    expect(within(row).getByDisplayValue("Fix login")).toBeInTheDocument()
+  })
+
+  test("state cells show the status mark in its color next to the name", () => {
+    setup(false)
+
+    const row = screen.getByTestId("issue-row-WEB-1")
+    expect(within(row).getByTestId("status-icon-Backlog")).toHaveStyle({
+      color: "#bec2c8",
+    })
+    expect(within(row).getByText("Backlog")).toBeInTheDocument()
+  })
+
+  test("due dates read formatted for viewers", () => {
+    render(
+      <IssueTable
+        issues={[{ ...issues[0], dueDate: "2026-10-14T00:00:00.000Z" }]}
+        statuses={statuses}
+        members={members}
+        canEdit={false}
+        onUpdate={() => {}}
+      />
+    )
+    const row = screen.getByTestId("issue-row-WEB-1")
+    expect(within(row).getByText("Oct 14, 2026")).toBeInTheDocument()
   })
 
   test("shows an empty state without issues", () => {

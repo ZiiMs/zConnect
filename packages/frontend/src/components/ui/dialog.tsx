@@ -25,10 +25,10 @@ export function Modal({
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Backdrop className="fixed inset-0 bg-black/60" />
+        <DialogPrimitive.Backdrop className="fixed inset-0 z-[200] bg-black/60" />
         <DialogPrimitive.Popup
           className={cn(
-            "fixed top-1/2 left-1/2 max-h-[85svh] w-[calc(100vw-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 overflow-auto border bg-card p-4 shadow-xl",
+            "fixed top-1/2 left-1/2 z-[201] max-h-[85svh] w-[calc(100vw-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 overflow-auto border bg-card p-4 shadow-xl",
             className
           )}
         >

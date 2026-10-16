@@ -1,3 +1,4 @@
+import { Popover as PopoverPrimitive } from "@base-ui/react/popover"
 import type { ReactNode } from "react"
 import { useState } from "react"
 import { AuthForm } from "@/components/auth-form"
@@ -5,11 +6,13 @@ import { CreateProjectForm } from "@/components/create-project-form"
 import { CreateWorkspaceForm } from "@/components/create-workspace-form"
 import { ProjectPage } from "@/components/project-page"
 import { Button } from "@/components/ui/button"
+import { Modal } from "@/components/ui/dialog"
 import { WorkspaceSettings } from "@/components/workspace-settings"
 import { useProjects } from "@/hooks/use-projects"
 import { useWorkspaces } from "@/hooks/use-workspaces"
 import type { Project, Workspace } from "@/lib/api"
 import { signOut, useSession } from "@/lib/auth-client"
+import { ProjectIcon } from "@/lib/project-icons"
 
 function SignedOut() {
   return (
@@ -27,7 +30,7 @@ function SignedOut() {
   )
 }
 
-type ShellView = "project" | "settings"
+type ShellView = "project" | "settings" | "new-project"
 
 /**
  * One labeled rail block: distinct surface, collapsible via its header
@@ -50,7 +53,7 @@ function RailSection({
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")}`
   return (
-    <section className="flex flex-col gap-2 rounded-md border border-sidebar-border bg-card p-2">
+    <section className="flex flex-col gap-1.5">
       <div className="flex items-center gap-1">
         <button
           type="button"
@@ -88,8 +91,8 @@ function initialsOf(name: string) {
 
 /**
  * Workspace dropdown pinned top-left: the icon plus the selected workspace
- * name open a menu that switches workspaces and creates one in place. The
- * flat Workspaces rail section is gone — this is the only switcher.
+ * name open a menu that switches workspaces. Creation lives in the modal —
+ * the menu entry just opens it.
  */
 function WorkspaceDropdown({
   workspaces,
@@ -98,7 +101,7 @@ function WorkspaceDropdown({
   loading,
   error,
   onSelect,
-  onCreated,
+  onAdd,
 }: {
   workspaces: Workspace[]
   selectedId: string | null
@@ -106,100 +109,103 @@ function WorkspaceDropdown({
   loading: boolean
   error: string | null
   onSelect: (workspaceId: string) => void
-  onCreated: (workspace: Workspace) => void
+  onAdd: () => void
 }) {
   const [open, setOpen] = useState(false)
-  const [creating, setCreating] = useState(false)
 
   function selectWorkspace(workspaceId: string) {
     onSelect(workspaceId)
     setOpen(false)
-    setCreating(false)
   }
 
   return (
-    <div className="flex flex-col gap-2">
-      <button
-        type="button"
-        data-testid="rail-workspace-trigger"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
-        className="flex items-center gap-2 rounded-md px-1 py-1 text-left hover:bg-accent"
-      >
-        <span
-          aria-hidden="true"
-          className="grid size-7 shrink-0 place-items-center rounded-md bg-primary font-semibold text-[11px] text-primary-foreground"
-        >
-          {selected ? initialsOf(selected.name) : "ZC"}
-        </span>
-        <span className="truncate font-medium text-sm">
-          {selected ? selected.name : "zConnect"}
-        </span>
-        <span
-          aria-hidden="true"
-          className="ml-auto text-muted-foreground text-xs"
-        >
-          {open ? "▴" : "▾"}
-        </span>
-      </button>
-      {open && (
-        <div
-          role="menu"
-          aria-label="Workspaces"
-          className="flex flex-col gap-1 rounded-md border border-sidebar-border bg-card p-1"
-        >
-          {loading && (
-            <p className="px-2 py-1 text-muted-foreground text-sm">
-              Loading workspaces…
-            </p>
-          )}
-          {error && (
-            <p className="px-2 py-1 text-destructive text-sm">{error}</p>
-          )}
-          {!loading &&
-            !error &&
-            workspaces.map((workspace) => (
-              <button
-                key={workspace.id}
-                type="button"
-                role="menuitemradio"
-                aria-checked={workspace.id === selectedId}
-                onClick={() => selectWorkspace(workspace.id)}
-                className={`flex items-center gap-2 rounded px-2 py-1.5 text-left text-sm ${
-                  workspace.id === selectedId ? "bg-accent font-medium" : ""
-                }`}
-              >
-                <span className="truncate">{workspace.name}</span>
-                <span className="ml-auto text-muted-foreground text-xs">
-                  {workspace.role}
-                </span>
-              </button>
-            ))}
-          {!loading && !error && (
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => setCreating((value) => !value)}
-              className="rounded px-2 py-1.5 text-left text-muted-foreground text-sm hover:bg-accent"
+    <PopoverPrimitive.Root open={open} onOpenChange={setOpen}>
+      <PopoverPrimitive.Trigger
+        render={(props) => (
+          <button
+            type="button"
+            data-testid="rail-workspace-trigger"
+            {...props}
+            aria-haspopup="menu"
+            aria-expanded={open}
+            className="flex items-center gap-2 rounded-md px-1 py-1 text-left hover:bg-accent"
+          >
+            <span
+              aria-hidden="true"
+              className="grid size-7 shrink-0 place-items-center rounded-md bg-primary font-semibold text-[11px] text-primary-foreground"
             >
-              New workspace
-            </button>
-          )}
-        </div>
-      )}
-      {open && creating && (
-        <div className="rounded-md border border-sidebar-border bg-card p-2">
-          <CreateWorkspaceForm
-            onCreated={(workspace) => {
-              onCreated(workspace)
-              setCreating(false)
-              setOpen(false)
-            }}
-          />
-        </div>
-      )}
-    </div>
+              {selected ? initialsOf(selected.name) : "ZC"}
+            </span>
+            <span className="truncate font-medium text-sm">
+              {selected ? selected.name : "zConnect"}
+            </span>
+            <span
+              aria-hidden="true"
+              className="ml-auto text-muted-foreground text-xs"
+            >
+              {open ? "▴" : "▾"}
+            </span>
+          </button>
+        )}
+      />
+      <PopoverPrimitive.Portal>
+        <PopoverPrimitive.Positioner
+          side="bottom"
+          align="start"
+          sideOffset={6}
+          className="z-50"
+        >
+          <PopoverPrimitive.Popup
+            role="menu"
+            aria-label="Workspaces"
+            className="z-50 w-56 max-w-[calc(100vw-2rem)] rounded-md border bg-popover p-1 text-popover-foreground shadow-xl outline-none"
+          >
+            {loading && (
+              <p className="px-2 py-1 text-muted-foreground text-sm">
+                Loading workspaces…
+              </p>
+            )}
+            {error && (
+              <p className="px-2 py-1 text-destructive text-sm">{error}</p>
+            )}
+            {!loading &&
+              !error &&
+              workspaces.map((workspace) => (
+                <button
+                  key={workspace.id}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={workspace.id === selectedId}
+                  onClick={() => selectWorkspace(workspace.id)}
+                  className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${
+                    workspace.id === selectedId
+                      ? "bg-accent font-medium"
+                      : "hover:bg-accent"
+                  }`}
+                >
+                  <span className="truncate">{workspace.name}</span>
+                  <span className="ml-auto text-muted-foreground text-xs">
+                    {workspace.role}
+                  </span>
+                </button>
+              ))}
+            {!loading && !error && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setOpen(false)
+                  onAdd()
+                }}
+                className="w-full rounded-md px-2 py-1.5 text-left text-muted-foreground text-sm hover:bg-accent"
+              >
+                New workspace
+              </button>
+            )}
+          </PopoverPrimitive.Popup>
+        </PopoverPrimitive.Positioner>
+      </PopoverPrimitive.Portal>
+    </PopoverPrimitive.Root>
   )
 }
 
@@ -236,6 +242,7 @@ function ProjectRailGroup({
         <span aria-hidden="true" className="text-muted-foreground text-xs">
           {expanded ? "▾" : "▸"}
         </span>
+        <ProjectIcon icon={project.icon} color={project.color} size={14} />
         <span className="truncate">{project.name}</span>
         <span className="ml-auto font-mono text-muted-foreground text-xs">
           {project.key}
@@ -279,7 +286,7 @@ function WorkspaceShell({
     replace: replaceProject,
   } = useProjects(selected?.id ?? null)
   const [view, setView] = useState<ShellView>("project")
-  const [creatingProject, setCreatingProject] = useState(false)
+  const [workspaceModalOpen, setWorkspaceModalOpen] = useState(false)
   const [collapsedProjectId, setCollapsedProjectId] = useState<string | null>(
     null
   )
@@ -300,116 +307,113 @@ function WorkspaceShell({
   }
 
   return (
-    <div className="flex min-h-svh w-full">
-      <aside
-        data-testid="rail"
-        className="flex w-60 shrink-0 flex-col gap-4 border-r bg-sidebar p-3"
-      >
-        <WorkspaceDropdown
-          workspaces={workspaces}
-          selectedId={selectedId}
-          selected={selected}
-          loading={loading}
-          error={error}
-          onSelect={select}
-          onCreated={(workspace) => {
-            void refresh().then(() => select(workspace.id))
-          }}
-        />
-        {selected && (
-          <>
-            <nav
-              aria-label="Workspace"
-              className="flex flex-col gap-1 rounded-md border border-sidebar-border bg-card p-1"
-            >
-              <button
-                type="button"
-                disabled
-                aria-disabled="true"
-                title="Dashboard (soon)"
-                className="flex cursor-not-allowed items-center gap-2 rounded-md px-2 py-1.5 text-left text-muted-foreground text-sm opacity-60"
-              >
-                <span aria-hidden="true">⌂</span>
-                Home
-                <span className="ml-auto truncate text-[10px]">
-                  Dashboard (soon)
-                </span>
-              </button>
-              <button
-                type="button"
-                aria-current={view === "settings" ? "page" : undefined}
-                onClick={() => setView("settings")}
-                className={`flex items-center rounded-md px-2 py-1.5 text-left text-sm ${
-                  view === "settings" ? "bg-accent font-medium" : ""
-                }`}
-              >
-                Settings
-              </button>
-            </nav>
-            <RailSection
-              label="Projects"
-              action={
-                <>
-                  <span className="text-muted-foreground text-xs">
-                    {projects.length}
+    <div className="flex h-svh w-full overflow-hidden bg-sidebar">
+      {/* The rail sits directly on the app frame with no borders of its own —
+          the rounded panel beside it is what reads as the app. */}
+      <aside data-testid="rail" className="flex w-60 shrink-0 flex-col">
+        <div className="flex shrink-0 flex-col px-4 pt-3 pb-2">
+          <WorkspaceDropdown
+            workspaces={workspaces}
+            selectedId={selectedId}
+            selected={selected}
+            loading={loading}
+            error={error}
+            onSelect={select}
+            onAdd={() => setWorkspaceModalOpen(true)}
+          />
+        </div>
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-2">
+          {selected && (
+            <>
+              <nav aria-label="Workspace" className="flex flex-col gap-0.5">
+                <button
+                  type="button"
+                  disabled
+                  aria-disabled="true"
+                  title="Dashboard (soon)"
+                  className="flex cursor-not-allowed items-center gap-2 rounded-md px-2 py-1.5 text-left text-muted-foreground text-sm opacity-60"
+                >
+                  <span aria-hidden="true">⌂</span>
+                  Home
+                  <span className="ml-auto truncate text-[10px]">
+                    Dashboard (soon)
                   </span>
-                  {canManageMembers && (
-                    <button
-                      type="button"
-                      aria-label="New project"
-                      aria-expanded={creatingProject}
-                      onClick={() => setCreatingProject((value) => !value)}
-                      className="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                    >
-                      <span aria-hidden="true">+</span>
-                    </button>
-                  )}
-                </>
-              }
-            >
-              {projectsLoading && (
-                <p className="text-muted-foreground text-sm">
-                  Loading projects…
-                </p>
-              )}
-              {projectsError && (
-                <p className="text-destructive text-sm">{projectsError}</p>
-              )}
-              {!projectsLoading &&
-                !projectsError &&
-                projects.length === 0 &&
-                !creatingProject && (
+                </button>
+                <button
+                  type="button"
+                  aria-current={view === "settings" ? "page" : undefined}
+                  onClick={() => setView("settings")}
+                  className={`flex items-center rounded-md px-2 py-1.5 text-left text-sm ${
+                    view === "settings" ? "bg-accent font-medium" : ""
+                  }`}
+                >
+                  Settings
+                </button>
+              </nav>
+              <RailSection
+                label="Projects"
+                action={
+                  <>
+                    <span className="text-muted-foreground text-xs">
+                      {projects.length}
+                    </span>
+                    {canManageMembers && (
+                      <button
+                        type="button"
+                        aria-label="New project"
+                        onClick={() => setView("new-project")}
+                        className="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                      >
+                        <span aria-hidden="true">+</span>
+                      </button>
+                    )}
+                  </>
+                }
+              >
+                {projectsLoading && (
                   <p className="text-muted-foreground text-sm">
-                    No projects yet — create one to get started.
+                    Loading projects…
                   </p>
                 )}
-              {projects.map((project) => (
-                <ProjectRailGroup
-                  key={project.id}
-                  project={project}
-                  selected={project.id === selectedProjectId}
-                  expanded={
-                    project.id === selectedProjectId &&
-                    collapsedProjectId !== project.id
-                  }
-                  onToggle={() => toggleProject(project.id)}
-                  onOpenIssues={() => openProjectIssues(project.id)}
-                />
-              ))}
-              {canManageMembers && creatingProject && (
-                <CreateProjectForm
-                  workspaceId={selected.id}
-                  onCreated={(project) => {
-                    void refreshProjects().then(() => selectProject(project.id))
-                    setCreatingProject(false)
-                  }}
-                  onCancel={() => setCreatingProject(false)}
-                />
-              )}
-            </RailSection>
-          </>
-        )}
-        <div className="mt-auto flex flex-col gap-2 border-t pt-3">
+                {projectsError && (
+                  <p className="text-destructive text-sm">{projectsError}</p>
+                )}
+                {!projectsLoading &&
+                  !projectsError &&
+                  projects.length === 0 && (
+                    <div className="flex flex-col items-start gap-2">
+                      <p className="text-muted-foreground text-sm">
+                        No projects yet — create one to get started.
+                      </p>
+                      {canManageMembers && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setView("new-project")}
+                        >
+                          New project
+                        </Button>
+                      )}
+                    </div>
+                  )}
+                {projects.map((project) => (
+                  <ProjectRailGroup
+                    key={project.id}
+                    project={project}
+                    selected={project.id === selectedProjectId}
+                    expanded={
+                      project.id === selectedProjectId &&
+                      collapsedProjectId !== project.id
+                    }
+                    onToggle={() => toggleProject(project.id)}
+                    onOpenIssues={() => openProjectIssues(project.id)}
+                  />
+                ))}
+              </RailSection>
+            </>
+          )}
+        </div>
+        <div className="flex shrink-0 flex-col gap-2 px-4 py-3">
           <p className="truncate text-muted-foreground text-xs">
             {userEmail ?? userId}
           </p>
@@ -418,17 +422,21 @@ function WorkspaceShell({
           </Button>
         </div>
       </aside>
-      <main className="min-w-0 flex-1 p-6">
-        <div className="mx-auto flex w-full max-w-5xl flex-col">
+      <main className="m-2 min-w-0 flex-1 overflow-hidden rounded-lg bg-background">
+        <div className="flex h-full w-full flex-col overflow-y-auto p-4">
           {!selected ? (
-            <div className="flex max-w-md flex-col gap-2">
+            <div className="flex max-w-md flex-col gap-3">
               <h2 className="font-medium text-sm">Workspaces</h2>
               {!loading && !error && (
-                <CreateWorkspaceForm
-                  onCreated={(workspace) => {
-                    void refresh().then(() => select(workspace.id))
-                  }}
-                />
+                <>
+                  <p className="text-muted-foreground text-sm">
+                    Create a workspace to get started, or pick one from the
+                    dropdown.
+                  </p>
+                  <Button onClick={() => setWorkspaceModalOpen(true)}>
+                    New workspace
+                  </Button>
+                </>
               )}
             </div>
           ) : view === "settings" ? (
@@ -441,6 +449,34 @@ function WorkspaceShell({
                 void refresh().then(() => select(workspace.id))
               }}
             />
+          ) : view === "new-project" ? (
+            <section
+              aria-label="New project"
+              className="flex max-w-2xl flex-col gap-4"
+            >
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setView("project")}
+                >
+                  ← Back
+                </Button>
+                <h2 className="font-medium text-sm">New project</h2>
+              </div>
+              <p className="text-muted-foreground text-sm">
+                Create a project in {selected.name} — the key fills in from the
+                name.
+              </p>
+              <CreateProjectForm
+                workspaceId={selected.id}
+                onCreated={(project) => {
+                  void refreshProjects().then(() => selectProject(project.id))
+                  setView("project")
+                }}
+                onCancel={() => setView("project")}
+              />
+            </section>
           ) : (
             <section className="flex flex-col gap-4">
               {selectedProject ? (
@@ -450,8 +486,6 @@ function WorkspaceShell({
                   canManage={canManageMembers}
                   canWriteIssues={canWriteIssues}
                   userId={userId}
-                  onProjectUpdated={replaceProject}
-                  onOpenSettings={() => setView("settings")}
                 />
               ) : (
                 !projectsLoading &&
@@ -466,6 +500,19 @@ function WorkspaceShell({
           )}
         </div>
       </main>
+      <Modal
+        open={workspaceModalOpen}
+        onOpenChange={setWorkspaceModalOpen}
+        title="New workspace"
+        description="Workspaces group projects and members."
+      >
+        <CreateWorkspaceForm
+          onCreated={(workspace) => {
+            void refresh().then(() => select(workspace.id))
+            setWorkspaceModalOpen(false)
+          }}
+        />
+      </Modal>
     </div>
   )
 }

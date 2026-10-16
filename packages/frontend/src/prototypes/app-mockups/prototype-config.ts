@@ -4,12 +4,13 @@
  *   screen                  which surface (issues, board, detail, settings, signin)
  *   nav/issues/board/detail/settings/signin   per-surface variant, 8 each (1-8)
  *   style                   structural theme style, 8 keys (radius/type/grid only)
- *   color                   palette, 8 keys (all color tokens)
+ *   color                   palette, 11 keys (all color tokens)
  *   mode                    light / dark
  *
  * Style and color are fully independent: any style composes with any color in
- * either mode (8 × 8 × 2 = 128 combos). Style owns radius, type and grid;
- * color owns every color token. See `themes.css`.
+ * either mode (8 × 11 × 2 = 176 combos). Style owns radius, type and grid;
+ * color owns every color token. See `themes.css`. `THEME_IDENTITIES` narrows
+ * the grid to the handful actually worth judging.
  */
 
 export const SCREENS = [
@@ -122,9 +123,12 @@ export type ThemeStyleKey = (typeof THEME_STYLES)[number]["key"]
 
 export const THEME_COLORS = [
   { key: "neutral", name: "Neutral", note: "zinc" },
+  { key: "graphite", name: "Graphite", note: "cool near-black, high contrast" },
+  { key: "oat", name: "Oat", note: "low-chroma warm paper" },
   { key: "blue", name: "Blue", note: "cool SaaS blue" },
-  { key: "violet", name: "Violet", note: "deep indigo" },
-  { key: "clay", name: "Clay", note: "warm paper" },
+  { key: "indigo", name: "Indigo", note: "deep brand indigo" },
+  { key: "violet", name: "Violet", note: "soft purple" },
+  { key: "clay", name: "Clay", note: "warm terracotta" },
   { key: "forest", name: "Forest", note: "green" },
   { key: "ocean", name: "Ocean", note: "teal cyan" },
   { key: "rose", name: "Rose", note: "pink red" },
@@ -136,6 +140,77 @@ export type ThemeColorKey = (typeof THEME_COLORS)[number]["key"]
 export const MODES = ["light", "dark"] as const
 
 export type ModeKey = (typeof MODES)[number]
+
+/**
+ * The curated shortlist — the identities actually worth judging, picked from
+ * the 11 × 11 × 2 grid. The first entry is what ships today, so the arrows
+ * always start from the incumbent rather than a neutral baseline.
+ */
+export const THEME_IDENTITIES: readonly {
+  key: string
+  name: string
+  note: string
+  style: ThemeStyleKey
+  color: ThemeColorKey
+  mode: ModeKey
+}[] = [
+  {
+    key: "incumbent",
+    name: "Today",
+    note: "Mono × Neutral, dark — what is folded in now",
+    style: "mono",
+    color: "neutral",
+    mode: "dark",
+  },
+  {
+    key: "sans-baseline",
+    name: "Sans baseline",
+    note: "Neutral × Neutral, dark — drop the mono, keep zinc",
+    style: "neutral",
+    color: "neutral",
+    mode: "dark",
+  },
+  {
+    key: "graphite",
+    name: "Graphite",
+    note: "Neutral × Graphite, dark — colder and higher contrast",
+    style: "neutral",
+    color: "graphite",
+    mode: "dark",
+  },
+  {
+    key: "mono-graphite",
+    name: "Mono graphite",
+    note: "Mono × Graphite, dark — the incumbent in colder ink",
+    style: "mono",
+    color: "graphite",
+    mode: "dark",
+  },
+  {
+    key: "mono-oat",
+    name: "Mono oat",
+    note: "Mono × Oat, dark — the incumbent with warmth",
+    style: "mono",
+    color: "oat",
+    mode: "dark",
+  },
+  {
+    key: "compact-indigo",
+    name: "Compact indigo",
+    note: "Compact × Indigo, dark — small radii, brand colour",
+    style: "compact",
+    color: "indigo",
+    mode: "dark",
+  },
+  {
+    key: "paper",
+    name: "Paper",
+    note: "Sand × Oat, light — serif headings, warm paper",
+    style: "sand",
+    color: "oat",
+    mode: "light",
+  },
+]
 
 export const DEFAULT_SCREEN: ScreenKey = "issues"
 export const DEFAULT_NAV: VariantKey = "1"

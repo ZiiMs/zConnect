@@ -32,6 +32,45 @@ export interface Project {
   workspaceId: string
   name: string
   key: string
+  /** Mandatory project mark: lucide icon name, colored by `color`. */
+  icon: string
+  /** Icon display color (hex). */
+  color: string
+}
+
+/**
+ * Curated lucide icon names a project may use. The default is the
+ * file/folder mark; the create form offers this list as its selector.
+ */
+export const PROJECT_ICONS = [
+  "Folder",
+  "File",
+  "Rocket",
+  "Globe",
+  "Star",
+  "Zap",
+  "Target",
+  "Layers",
+  "Box",
+  "Compass",
+  "Flag",
+  "Heart",
+] as const
+
+export type ProjectIcon = (typeof PROJECT_ICONS)[number]
+
+/** File/folder default every project starts with unless one is picked. */
+export const DEFAULT_PROJECT_ICON: ProjectIcon = "Folder"
+
+/** Neutral icon color when none is picked. */
+export const DEFAULT_PROJECT_COLOR = "#94a3b8"
+
+export function isValidProjectIcon(icon: string): boolean {
+  return (PROJECT_ICONS as readonly string[]).includes(icon)
+}
+
+export function isValidProjectColor(color: string): boolean {
+  return /^#[0-9a-fA-F]{6}$/.test(color)
 }
 
 /** Status Category buckets per GLOSSARY.md, in roster order (ADR-0001). */
@@ -53,14 +92,15 @@ export type StatusCategory = (typeof STATUS_CATEGORIES)[number]
 export const DEFAULT_STATUS_ROSTER: readonly {
   name: string
   category: StatusCategory
+  color: string
 }[] = [
-  { name: "Backlog", category: "Backlog" },
-  { name: "Todo", category: "Unstarted" },
-  { name: "In Progress", category: "In Progress" },
-  { name: "In Review", category: "In Progress" },
-  { name: "Done", category: "Completed" },
-  { name: "Canceled", category: "Canceled" },
-  { name: "Duplicate", category: "Duplicate" },
+  { name: "Backlog", category: "Backlog", color: "#bec2c8" },
+  { name: "Todo", category: "Unstarted", color: "#e2e2e2" },
+  { name: "In Progress", category: "In Progress", color: "#f2c94c" },
+  { name: "In Review", category: "In Progress", color: "#0f783c" },
+  { name: "Done", category: "Completed", color: "#5e6ad2" },
+  { name: "Canceled", category: "Canceled", color: "#95a2b3" },
+  { name: "Duplicate", category: "Duplicate", color: "#95a2b3" },
 ]
 
 /**
@@ -168,6 +208,7 @@ export interface Status {
   projectId: string
   name: string
   category: StatusCategory
+  color: string
   position: number
 }
 
@@ -259,6 +300,18 @@ export function isValidLabelColor(color: string): boolean {
   return LABEL_COLOR_PATTERN.test(color)
 }
 
+/** Status colors use the same hex shape as label colors. */
+export const DEFAULT_STATUS_COLOR = "#94a3b8"
+
+export function isValidStatusColor(color: string): boolean {
+  return LABEL_COLOR_PATTERN.test(color)
+}
+
+export function defaultStatusColorForName(name: string): string {
+  const entry = DEFAULT_STATUS_ROSTER.find((item) => item.name === name)
+  return entry?.color ?? DEFAULT_STATUS_COLOR
+}
+
 /**
  * T5 label-name normalization shared by both stores: trim, drop blanks,
  * dedupe case-insensitively keeping first-seen casing and order.
@@ -301,13 +354,13 @@ export interface WorkspaceStore {
    */
   createProject(
     workspaceId: string,
-    input: { name: string; key: string }
+    input: { name: string; key: string; icon?: string; color?: string }
   ): Promise<Project>
   listProjects(workspaceId: string): Promise<Project[]>
   getProject(projectId: string): Promise<Project | null>
   updateProject(
     projectId: string,
-    input: { name?: string; key?: string }
+    input: { name?: string; key?: string; icon?: string; color?: string }
   ): Promise<Project>
   /** Next issue number for the project; 1 until the first issue. */
   getNextIssueNumber(projectId: string): Promise<number>
@@ -315,14 +368,19 @@ export interface WorkspaceStore {
   hasIssues(projectId: string): Promise<boolean>
   createStatus(
     projectId: string,
-    input: { name: string; category: StatusCategory }
+    input: { name: string; category: StatusCategory; color?: string }
   ): Promise<Status>
   /** Statuses in Kanban order (ascending position). */
   listStatuses(projectId: string): Promise<Status[]>
   getStatus(statusId: string): Promise<Status | null>
   updateStatus(
     statusId: string,
-    input: { name?: string; category?: StatusCategory; position?: number }
+    input: {
+      name?: string
+      category?: StatusCategory
+      color?: string
+      position?: number
+    }
   ): Promise<Status>
   deleteStatus(statusId: string): Promise<void>
   createIssue(projectId: string, input: CreateIssueInput): Promise<Issue>
@@ -629,11 +687,17 @@ export function createMemoryWorkspaceStore(
         ;(error as { code?: string }).code = "conflict"
         throw error
       }
+      const icon = input.icon ?? DEFAULT_PROJECT_ICON
+      if (!isValidProjectIcon(icon)) throw invalid("Invalid project icon")
+      const color = input.color ?? DEFAULT_PROJECT_COLOR
+      if (!isValidProjectColor(color)) throw invalid("Invalid project color")
       const project: Project = {
         id: crypto.randomUUID(),
         workspaceId,
         name: input.name,
         key,
+        icon,
+        color,
       }
       // ADR-0001 seeding: build the whole waterfall against the new project
       // in staging and commit only once every step succeeded, so a failure
@@ -650,6 +714,7 @@ export function createMemoryWorkspaceStore(
           projectId: project.id,
           name: entry.name,
           category: entry.category,
+          color: entry.color,
           position,
         })
       }
@@ -708,6 +773,18 @@ export function createMemoryWorkspaceStore(
         }
       }
       if (input.name !== undefined) project.name = input.name
+      if (input.icon !== undefined) {
+        if (!isValidProjectIcon(input.icon)) {
+          throw invalid("Invalid project icon")
+        }
+        project.icon = input.icon
+      }
+      if (input.color !== undefined) {
+        if (!isValidProjectColor(input.color)) {
+          throw invalid("Invalid project color")
+        }
+        project.color = input.color
+      }
       return { ...project }
     },
 
@@ -743,6 +820,9 @@ export function createMemoryWorkspaceStore(
         ;(error as { code?: string }).code = "conflict"
         throw error
       }
+      if (input.color !== undefined && !isValidStatusColor(input.color)) {
+        throw invalid("Invalid status color")
+      }
       const position = [...statuses.values()].filter(
         (s) => s.projectId === projectId
       ).length
@@ -751,6 +831,7 @@ export function createMemoryWorkspaceStore(
         projectId,
         name: input.name,
         category: input.category,
+        color: input.color ?? defaultStatusColorForName(input.name),
         position,
       }
       statuses.set(status.id, status)
@@ -791,6 +872,11 @@ export function createMemoryWorkspaceStore(
         status.name = input.name
       }
       if (input.category !== undefined) status.category = input.category
+      if (input.color !== undefined) {
+        if (!isValidStatusColor(input.color))
+          throw invalid("Invalid status color")
+        status.color = input.color
+      }
       if (input.position !== undefined) {
         const ordered = [...statuses.values()]
           .filter((s) => s.projectId === status.projectId)

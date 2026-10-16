@@ -21,6 +21,7 @@ import {
   THEME_STYLES,
   type VariantKey,
 } from "./prototype-config"
+import { REGISTRY_THEMES } from "./registry-themes"
 import {
   activeVariantKey,
   type ProtoState,
@@ -30,7 +31,10 @@ import {
 /** Representative swatches for each color (light-mode primary). */
 const SWATCH: Record<string, string> = {
   neutral: "oklch(0.21 0.006 285.885)",
+  graphite: "oklch(0.175 0.01 265)",
+  oat: "oklch(0.3 0.022 78)",
   blue: "oklch(0.51 0.16 262)",
+  indigo: "oklch(0.46 0.19 272)",
   violet: "oklch(0.54 0.22 296)",
   clay: "oklch(0.5 0.12 45)",
   forest: "oklch(0.46 0.14 155)",
@@ -157,6 +161,37 @@ export function PrototypeSwitcher({
               current={state[axis] as VariantKey}
               onChange={onChange}
             />
+          </Row>
+          <Row label="Registry">
+            <button
+              className={cn(
+                "rounded-full px-2 py-0.5 text-[11px]",
+                state.theme === ""
+                  ? "bg-background text-foreground"
+                  : "opacity-70 hover:bg-background/10 hover:opacity-100"
+              )}
+              onClick={() => onChange({ theme: "" })}
+              title="Compose from the style × color axes instead"
+              type="button"
+            >
+              composable
+            </button>
+            {REGISTRY_THEMES.map((item) => (
+              <button
+                className={cn(
+                  "rounded-full px-2 py-0.5 text-[11px]",
+                  state.theme === item.key
+                    ? "bg-background text-foreground"
+                    : "opacity-70 hover:bg-background/10 hover:opacity-100"
+                )}
+                key={item.key}
+                onClick={() => onChange({ theme: item.key })}
+                title={`${item.label} — radius ${item.radius}`}
+                type="button"
+              >
+                {item.label}
+              </button>
+            ))}
           </Row>
           <Row label="Style">
             {THEME_STYLES.map((item) => (
