@@ -1,6 +1,7 @@
 import {
   DndContext,
   type DragEndEvent,
+  DragOverlay,
   type DragStartEvent,
   KeyboardSensor,
   PointerSensor,
@@ -208,10 +209,17 @@ export function KanbanBoard({
   /** Card title click: opens the detail view. */
   onOpenDetail?: (issue: Issue) => void
 }) {
-  const [, setActiveId] = useState<string | null>(null)
+  const [activeId, setActiveId] = useState<string | null>(null)
   const [collapsedStatusIds, setCollapsedStatusIds] = useState<string[]>(() =>
     loadCollapsedStatuses(userId, projectId)
   )
+
+  /** The issue under the pointer: rendered in a portal overlay above the
+   * boards so the preview never slides underneath a neighbouring board. */
+  const activeIssue =
+    activeId !== null
+      ? (issues.find((issue) => issue.id === activeId) ?? null)
+      : null
 
   function toggleCollapsed(statusId: string) {
     const next = collapsedStatusIds.includes(statusId)
@@ -284,6 +292,23 @@ export function KanbanBoard({
           />
         ))}
       </div>
+      <DragOverlay>
+        {activeIssue ? (
+          <div
+            data-testid="kanban-drag-overlay"
+            className="w-72 rotate-1 cursor-grabbing rounded-md border bg-card p-3 shadow-xl"
+          >
+            <div className="flex items-center gap-1.5">
+              <span className="font-mono text-muted-foreground text-xs">
+                {activeIssue.identifier}
+              </span>
+            </div>
+            <p className="line-clamp-2 break-words font-medium text-sm">
+              {activeIssue.title}
+            </p>
+          </div>
+        ) : null}
+      </DragOverlay>
     </DndContext>
   )
 }

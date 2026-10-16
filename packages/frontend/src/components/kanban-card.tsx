@@ -46,8 +46,10 @@ export function KanbanCard({
   /** Title click: opens the detail view. */
   onOpenDetail?: (issue: Issue) => void
 }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } =
-    useDraggable({ id: issue.id, disabled: !canEdit })
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: issue.id,
+    disabled: !canEdit,
+  })
 
   const colorFor = (name: string) =>
     labels.find((label) => label.name === name)?.color
@@ -68,15 +70,9 @@ export function KanbanCard({
     <article
       ref={setNodeRef}
       data-testid={`kanban-card-${issue.identifier}`}
-      className="rounded-md border bg-card p-3 shadow-sm"
-      style={
-        transform
-          ? {
-              transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
-              opacity: isDragging ? 0.6 : undefined,
-            }
-          : undefined
-      }
+      className={`rounded-md border bg-card p-3 shadow-sm ${
+        isDragging ? "opacity-40" : ""
+      }`}
     >
       <div
         {...(canEdit ? { ...attributes, ...listeners } : {})}

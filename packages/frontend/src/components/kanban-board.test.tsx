@@ -56,9 +56,12 @@ const issues: Issue[] = [
   },
 ]
 
+let capturedDragStart: ((event: { active: { id: string } }) => void) | null =
+  null
 let capturedDragEnd:
   | ((event: { active: { id: string }; over: { id: string } | null }) => void)
   | null = null
+let capturedDragCancel: (() => void) | null = null
 
 vi.mock("@dnd-kit/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@dnd-kit/core")>()
@@ -67,16 +70,28 @@ vi.mock("@dnd-kit/core", async (importOriginal) => {
     DndContext: ({
       children,
       onDragEnd,
+      onDragStart,
+      onDragCancel,
     }: {
       children: React.ReactNode
       onDragEnd?: (event: {
         active: { id: string }
         over: { id: string } | null
       }) => void
+      onDragStart?: (event: { active: { id: string } }) => void
+      onDragCancel?: () => void
     }) => {
       capturedDragEnd = onDragEnd ?? null
+      capturedDragStart = onDragStart ?? null
+      capturedDragCancel = onDragCancel ?? null
       return <>{children}</>
     },
+    // The real overlay portals off the mocked context, so tests observe it
+    // as a plain passthrough: when the board renders preview children the
+    // test DOM contains them, otherwise nothing.
+    DragOverlay: ({ children }: { children?: React.ReactNode }) => (
+      <>{children}</>
+    ),
   }
 })
 
@@ -93,7 +108,9 @@ function setup(
   onMove: (issue: Issue, statusId: string) => void = () => {},
   onAssign: (issue: Issue, assigneeId: string | null) => void = () => {}
 ) {
+  capturedDragStart = null
   capturedDragEnd = null
+  capturedDragCancel = null
   return render(
     <KanbanBoard
       issues={issues}
@@ -207,6 +224,38 @@ describe("kanban board", () => {
     })
 
     expect(onMove).toHaveBeenCalledWith(issues[0], "st-2")
+  })
+
+  test("a drag shows an overlay preview during the drag", () => {
+    setup()
+
+    expect(screen.queryByTestId("kanban-drag-overlay")).not.toBeInTheDocument()
+
+    act(() => {
+      capturedDragStart?.({ active: { id: "is-1" } })
+    })
+
+    const overlay = screen.getByTestId("kanban-drag-overlay")
+    expect(within(overlay).getByText("Fix login")).toBeInTheDocument()
+
+    act(() => {
+      capturedDragEnd?.({ active: { id: "is-1" }, over: { id: "st-2" } })
+    })
+    expect(screen.queryByTestId("kanban-drag-overlay")).not.toBeInTheDocument()
+  })
+
+  test("cancelling a drag clears the overlay preview", () => {
+    setup()
+
+    act(() => {
+      capturedDragStart?.({ active: { id: "is-1" } })
+    })
+    expect(screen.getByTestId("kanban-drag-overlay")).toBeInTheDocument()
+
+    act(() => {
+      capturedDragCancel?.()
+    })
+    expect(screen.queryByTestId("kanban-drag-overlay")).not.toBeInTheDocument()
   })
 
   test("a drop on the same column moves nothing", () => {
