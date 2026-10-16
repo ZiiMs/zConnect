@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react"
+import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import React from "react"
 import { describe, expect, test, vi } from "vitest"
@@ -139,15 +139,20 @@ describe("issue filter bar", () => {
     expect(screen.getByLabelText(/search issues/i)).toHaveValue("fix")
   })
 
-  test("selected status pills wash in the status color", () => {
+  test("selected statuses read as plain text, not a color wash", () => {
     renderBar({ ...emptyIssueFilters(), statusIds: ["st-1"] })
-    // jsdom normalizes the hex inside color-mix(); the authored value wins.
+    const selected = screen.getByRole("button", { name: "Backlog" })
+    const unselected = screen.getByRole("button", { name: "Shipped" })
+    expect(selected).toHaveAttribute("aria-pressed", "true")
+    expect(unselected).toHaveAttribute("aria-pressed", "false")
+    // Text styling only: no pill background wash either way.
+    expect(selected.getAttribute("style")).toBeNull()
+    expect(unselected.getAttribute("style")).toBeNull()
+    expect(selected.className).toContain("font-medium")
+    // The status color cue stays on the dot, not the button.
     expect(
-      screen.getByRole("button", { name: "Backlog" }).getAttribute("style")
-    ).toContain("190, 194, 200")
-    expect(
-      screen.getByRole("button", { name: "Shipped" }).getAttribute("style")
-    ).toBeNull()
+      within(selected).getByTestId("status-dot-Backlog")
+    ).toBeInTheDocument()
   })
 })
 

@@ -10,9 +10,10 @@ import { StatusIcon } from "@/lib/status-icons"
 const MAX_LABELS = 2
 
 /**
- * Kanban card: a draggable Issue. The assignee avatar and the status pill
- * open quick-assign / move menus that call the same `onAssign` / `onMove`
- * seams as drops and keyboard moves, so every path shares one mutation.
+ * Kanban card: a draggable Issue. The assignee avatar and the status text
+ * control open quick-assign / move menus that call the same `onAssign` /
+ * `onMove` seams as drops and keyboard moves, so every path shares one
+ * mutation.
  * Label chips take their swatch color from the T5 workspace registry when
  * `labels` is provided (spec ziim/zConnect#1 story 14 "workspace-shared
  * Labels with color").
@@ -202,7 +203,7 @@ export function KanbanCard({
               (canEdit ? (
                 <PropertyMenu
                   label={`Move ${issue.identifier} to status`}
-                  triggerClassName="inline-flex w-fit items-center gap-1.5 rounded-md border border-input px-2 py-0.5 text-xs hover:bg-accent"
+                  triggerClassName="inline-flex w-fit items-center gap-1.5 rounded px-1 py-0.5 text-muted-foreground text-xs hover:bg-accent hover:text-accent-foreground"
                   preview={
                     <>
                       <StatusIcon status={issueStatus} size={12} />

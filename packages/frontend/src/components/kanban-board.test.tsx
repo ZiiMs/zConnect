@@ -173,7 +173,7 @@ describe("kanban board", () => {
     expect(onMove).not.toHaveBeenCalled()
   })
 
-  test("the status pill menu calls through with the new status", async () => {
+  test("the status text menu calls through with the new status", async () => {
     const user = userEvent.setup()
     const onMove = vi.fn()
     setup(onMove)

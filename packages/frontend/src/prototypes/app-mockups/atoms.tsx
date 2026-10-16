@@ -38,6 +38,12 @@ const PATHS = {
   arrowUp: <path d="M12 19V5M5 12l7-7 7 7" />,
   arrowDown: <path d="M12 5v14M19 12l-7 7-7-7" />,
   minus: <path d="M5 12h14" />,
+  circleMinus: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M8 12h8" />
+    </>
+  ),
   equal: <path d="M5 9h14M5 15h14" />,
   alert: (
     <>
@@ -240,7 +246,7 @@ const PRIORITY: Record<
   Medium: { glyph: "equal", label: "Medium", tone: "var(--proto-info)" },
   Low: { glyph: "arrowDown", label: "Low", tone: "var(--muted-foreground)" },
   None: {
-    glyph: "minus",
+    glyph: "circleMinus",
     label: "No priority",
     tone: "var(--muted-foreground)",
   },
@@ -343,13 +349,9 @@ export function StatusPill({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] leading-4",
+        "inline-flex items-center gap-1.5 whitespace-nowrap text-[11px] leading-4",
         className
       )}
-      style={{
-        borderColor: labelTint(tone, 35),
-        backgroundColor: labelTint(tone, 12),
-      }}
     >
       {withDot ? (
         <span

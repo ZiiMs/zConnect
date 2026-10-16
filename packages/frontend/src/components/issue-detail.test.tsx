@@ -169,7 +169,7 @@ describe("issue detail", () => {
     expect(callbacks.onBack).toHaveBeenCalledTimes(1)
   })
 
-  test("the status pill opens a menu on the status-change path", async () => {
+  test("the status text opens a menu on the status-change path", async () => {
     const user = userEvent.setup()
     const callbacks = renderDetail()
 

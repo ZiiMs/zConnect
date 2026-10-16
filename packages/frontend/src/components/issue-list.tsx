@@ -7,6 +7,7 @@ import type {
 } from "@/components/issue-filter-bar"
 import type { Issue, Label, Priority, Status } from "@/lib/api"
 import { describeDueDate } from "@/lib/due"
+import { PriorityMark } from "@/lib/priority-icons"
 import { statusColor } from "@/lib/status-colors"
 import { StatusIcon } from "@/lib/status-icons"
 
@@ -15,7 +16,7 @@ const PRIORITY_ORDER: Priority[] = ["Urgent", "High", "Medium", "Low", "None"]
 type Group = {
   key: string
   title: string
-  /** Header mark; status groups show the status mark in its color. */
+  /** Header mark; status groups show the status mark, priority groups the priority mark. */
   icon: ReactNode
   /** Gradient wash; only status groups carry their color. */
   wash?: string
@@ -137,7 +138,7 @@ export function IssueList({
       groups.push({
         key: `priority:${priority}`,
         title: priority,
-        icon: null,
+        icon: <PriorityMark priority={priority} />,
         rows,
       })
     }

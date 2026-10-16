@@ -1,6 +1,5 @@
 import { StatusDot } from "@/components/status-dot"
 import type { Label, Priority, Status } from "@/lib/api"
-import { statusColor } from "@/lib/status-colors"
 
 const PRIORITY_OPTIONS: Priority[] = ["Urgent", "High", "Medium", "Low", "None"]
 
@@ -162,6 +161,16 @@ const groupClass = "flex flex-wrap items-center gap-2"
 const labelClass = "text-muted-foreground text-xs"
 const pillClass =
   "inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs"
+/**
+ * Status options read as plain text: the dot keeps the status color cue
+ * and `aria-pressed` + weight mark the selection. No pill wash.
+ */
+const statusOptionClass = (selected: boolean) =>
+  `inline-flex items-center gap-1.5 rounded px-1 py-0.5 text-xs ${
+    selected
+      ? "font-medium text-foreground"
+      : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+  }`
 const inputClass =
   "rounded-md border border-input bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
 const checkClass = "flex items-center gap-1 text-sm"
@@ -212,18 +221,7 @@ export function IssueFilterBar({
                       statusIds: toggle(value.statusIds, status.id),
                     })
                   }
-                  className={`${pillClass} ${
-                    selected
-                      ? "border-transparent font-medium"
-                      : "border-input text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                  }`}
-                  style={
-                    selected
-                      ? {
-                          backgroundColor: `color-mix(in oklch, ${statusColor(status)} 22%, transparent)`,
-                        }
-                      : undefined
-                  }
+                  className={statusOptionClass(selected)}
                 >
                   <StatusDot status={status} size={8} />
                   {status.name}

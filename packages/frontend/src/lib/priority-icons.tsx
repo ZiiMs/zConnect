@@ -1,9 +1,9 @@
 import {
   ArrowDown,
   ArrowUp,
+  CircleMinus,
   Equal,
   type LucideIcon,
-  Minus,
   TriangleAlert,
 } from "lucide-react"
 import type { Priority } from "@/lib/api"
@@ -31,7 +31,13 @@ const PRIORITY_MARKS: Record<
   High: { icon: ArrowUp, label: "High", tone: "var(--priority-high)" },
   Medium: { icon: Equal, label: "Medium", tone: "var(--priority-medium)" },
   Low: { icon: ArrowDown, label: "Low", tone: "var(--muted-foreground)" },
-  None: { icon: Minus, label: "No priority", tone: "var(--muted-foreground)" },
+  // Circled, not bare Minus: the ring keeps the mark visible at the muted
+  // tone, where a single stroke reads as a layout hairline or vanishes.
+  None: {
+    icon: CircleMinus,
+    label: "No priority",
+    tone: "var(--muted-foreground)",
+  },
 }
 
 function priorityTone(priority: Priority): string {

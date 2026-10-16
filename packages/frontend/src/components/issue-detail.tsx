@@ -85,9 +85,7 @@ export function IssueDetail({
             {issue.title}
           </h2>
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            <span className="rounded-full border px-2 py-0.5 text-xs">
-              {statusName}
-            </span>
+            <span className="text-muted-foreground text-xs">{statusName}</span>
             <span className="text-muted-foreground text-xs">
               {issue.priority}
             </span>
@@ -124,7 +122,7 @@ export function IssueDetail({
                 {canEdit && status ? (
                   <PropertyMenu
                     label={`Status for ${issue.identifier}`}
-                    triggerClassName="flex min-w-0 items-center gap-1.5 rounded-md border border-input px-2 py-0.5 text-xs hover:bg-accent"
+                    triggerClassName="flex min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-accent"
                     preview={
                       <>
                         <StatusIcon status={status} size={12} />

@@ -49,7 +49,7 @@ const issues: Issue[] = [
 const members = [{ userId: "user-member" }]
 
 describe("kanban card menus under real sensors", () => {
-  test("status pill menu moves the card", async () => {
+  test("status text menu moves the card", async () => {
     const user = userEvent.setup()
     const onMove = vi.fn()
     render(
