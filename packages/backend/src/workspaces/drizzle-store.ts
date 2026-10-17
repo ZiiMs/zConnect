@@ -1,4 +1,5 @@
 import { and, asc, eq, inArray, isNull } from "drizzle-orm"
+import { user } from "../db/auth-schema.js"
 import type { getDb } from "../db/index.js"
 import {
   invitation,
@@ -245,13 +246,22 @@ export function createDrizzleWorkspaceStore(
     async listMembers(workspaceId) {
       const db = resolveDb()
       const rows = await db
-        .select()
+        .select({
+          workspaceId: workspaceMember.workspaceId,
+          userId: workspaceMember.userId,
+          role: workspaceMember.role,
+          name: user.name,
+          image: user.image,
+        })
         .from(workspaceMember)
+        .leftJoin(user, eq(user.id, workspaceMember.userId))
         .where(eq(workspaceMember.workspaceId, workspaceId))
       return rows.map((row) => ({
         workspaceId: row.workspaceId,
         userId: row.userId,
         role: row.role,
+        name: row.name ?? undefined,
+        image: row.image ?? null,
       }))
     },
 

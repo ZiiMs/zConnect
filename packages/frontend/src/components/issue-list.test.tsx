@@ -94,7 +94,7 @@ describe("issue list", () => {
     expect(within(row).getByText("WEB-2")).toBeInTheDocument()
     expect(within(row).getByText("Ship homepage")).toBeInTheDocument()
     expect(within(row).getByTestId("status-icon-Shipped")).toBeInTheDocument()
-    expect(within(row).getByTitle("user-member")).toBeInTheDocument()
+    expect(within(row).getByTestId("assignee-user-member")).toBeInTheDocument()
     // Priority moved to the Table/Detail views; the row stays dense.
     expect(screen.queryByText("High")).not.toBeInTheDocument()
     expect(screen.queryByText("Low")).not.toBeInTheDocument()
@@ -468,7 +468,9 @@ describe("issue list", () => {
     const row = screen.getByTestId("issue-WEB-2")
     expect(within(row).queryByText("WEB-2")).not.toBeInTheDocument()
     expect(within(row).queryByText("feature")).not.toBeInTheDocument()
-    expect(within(row).queryByTitle("user-member")).not.toBeInTheDocument()
+    expect(
+      within(row).queryByTestId("assignee-user-member")
+    ).not.toBeInTheDocument()
     expect(
       within(row).queryByTestId("status-icon-Shipped")
     ).not.toBeInTheDocument()

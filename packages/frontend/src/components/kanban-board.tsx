@@ -12,7 +12,7 @@ import {
 import { ChevronLeft, ChevronRight } from "lucide-react"
 import { useState } from "react"
 import { KanbanCard } from "@/components/kanban-card"
-import type { Issue, Label, Status } from "@/lib/api"
+import type { Issue, Label, MemberRef, Status } from "@/lib/api"
 import { StatusIcon } from "@/lib/status-icons"
 
 /**
@@ -90,7 +90,7 @@ function KanbanColumn({
   status: Status
   issues: Issue[]
   statuses: Status[]
-  members: { userId: string }[]
+  members: MemberRef[]
   labels: Label[]
   canEdit: boolean
   /** Collapsed to a strip: header and count stay, the cards are hidden. */
@@ -190,7 +190,7 @@ export function KanbanBoard({
   issues: Issue[]
   statuses: Status[]
   /** Workspace members for the card quick-assign menus. */
-  members?: { userId: string }[]
+  members?: MemberRef[]
   /** T5 workspace registry for card label chip colors. */
   labels?: Label[]
   /** The collapsed-status store is keyed by viewer and project. */

@@ -1,15 +1,17 @@
-import { UserRound } from "lucide-react"
 import { ExternalLinkSection } from "@/components/external-link-section"
 import { IssueActions } from "@/components/issue-actions"
 import { PropertyMenu, PropertyMenuOption } from "@/components/property-menu"
 import { SubtaskList } from "@/components/subtask-list"
-import type {
-  Issue,
-  Label,
-  Member,
-  Priority,
-  Status,
-  UpdateIssueInput,
+import { AssigneeAvatar, UserAvatar } from "@/components/user-avatar"
+import {
+  findMember,
+  type Issue,
+  type Label,
+  type Member,
+  memberName,
+  type Priority,
+  type Status,
+  type UpdateIssueInput,
 } from "@/lib/api"
 import { StatusIcon } from "@/lib/status-icons"
 
@@ -65,6 +67,10 @@ export function IssueDetail({
   const colorFor = (name: string) =>
     labels.find((label) => label.name === name)?.color
   const dueDay = issue.dueDate?.slice(0, 10) ?? ""
+  const assignee = findMember(members, issue.assigneeId)
+  const assigneeName = issue.assigneeId
+    ? memberName(assignee, issue.assigneeId)
+    : "Unassigned"
 
   return (
     <div data-testid={`issue-detail-${issue.identifier}`}>
@@ -162,23 +168,19 @@ export function IssueDetail({
                 {canEdit ? (
                   <PropertyMenu
                     label={`Assignee for ${issue.identifier}`}
-                    triggerClassName="grid size-6 shrink-0 place-items-center rounded-full hover:bg-accent"
+                    triggerClassName="flex min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-accent"
                     preview={
-                      issue.assigneeId ? (
-                        <span
-                          className="grid size-6 place-items-center rounded-full bg-muted text-muted-foreground"
-                          title={issue.assigneeId}
-                        >
-                          <UserRound aria-hidden="true" size={12} />
+                      <>
+                        <AssigneeAvatar
+                          member={assignee}
+                          userId={issue.assigneeId}
+                          size={20}
+                          tooltip={false}
+                        />
+                        <span className="truncate">
+                          {issue.assigneeId ? assigneeName : "Unassigned"}
                         </span>
-                      ) : (
-                        <span
-                          className="grid size-6 place-items-center rounded-full border border-muted-foreground border-dashed text-muted-foreground"
-                          title="Unassigned"
-                        >
-                          <UserRound aria-hidden="true" size={12} />
-                        </span>
-                      )
+                      </>
                     }
                   >
                     {(close) => (
@@ -190,7 +192,9 @@ export function IssueDetail({
                             close()
                           }}
                         >
-                          Unassigned
+                          <span className="truncate text-muted-foreground">
+                            Unassigned
+                          </span>
                         </PropertyMenuOption>
                         {members.map((member) => (
                           <PropertyMenuOption
@@ -201,27 +205,27 @@ export function IssueDetail({
                               close()
                             }}
                           >
-                            <span
-                              className="grid size-5 shrink-0 place-items-center rounded-full bg-muted text-muted-foreground"
-                              title={member.userId}
-                            >
-                              <UserRound aria-hidden="true" size={10} />
+                            <UserAvatar
+                              name={memberName(member, member.userId)}
+                              image={member.image}
+                              size={20}
+                            />
+                            <span className="truncate">
+                              {memberName(member, member.userId)}
                             </span>
-                            <span className="truncate">{member.userId}</span>
                           </PropertyMenuOption>
                         ))}
                       </>
                     )}
                   </PropertyMenu>
                 ) : issue.assigneeId ? (
-                  <span className="flex items-center gap-1.5">
-                    <span
-                      className="grid size-5 shrink-0 place-items-center rounded-full bg-muted text-muted-foreground"
-                      title={issue.assigneeId}
-                    >
-                      <UserRound aria-hidden="true" size={10} />
-                    </span>
-                    {issue.assigneeId}
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <AssigneeAvatar
+                      member={assignee}
+                      userId={issue.assigneeId}
+                      size={20}
+                    />
+                    <span className="truncate">{assigneeName}</span>
                   </span>
                 ) : (
                   <span className="text-muted-foreground">Unassigned</span>

@@ -5,6 +5,8 @@ import {
   api,
   type Issue,
   type Label,
+  type MemberRef,
+  memberName,
   type Priority,
   type Status,
 } from "@/lib/api"
@@ -25,7 +27,7 @@ export function CreateIssueForm({
 }: {
   projectId: string
   statuses: Status[]
-  members: { userId: string }[]
+  members: MemberRef[]
   /** T5 workspace registry for optional label selection. */
   labels?: Label[]
   /** Preselects the status (group quick-add); defaults to the first status. */
@@ -126,7 +128,7 @@ export function CreateIssueForm({
             <option value="">Unassigned</option>
             {members.map((member) => (
               <option key={member.userId} value={member.userId}>
-                {member.userId}
+                {memberName(member, member.userId)}
               </option>
             ))}
           </select>

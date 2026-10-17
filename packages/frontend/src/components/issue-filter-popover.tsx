@@ -13,7 +13,7 @@ import {
   type IssueOrder,
 } from "@/components/issue-filter-bar"
 import { Button } from "@/components/ui/button"
-import type { Label, Status } from "@/lib/api"
+import type { Label, MemberRef, Status } from "@/lib/api"
 
 /** Count of active filter facets (statuses + priorities + labels + assignee + text). */
 export function activeFilterCount(value: IssueFilterValue): number {
@@ -92,7 +92,7 @@ export function IssueFilterPopover({
   onViewChange,
 }: {
   statuses: Status[]
-  members: { userId: string }[]
+  members: MemberRef[]
   labels?: Label[]
   value: IssueFilterValue
   onChange: (value: IssueFilterValue) => void

@@ -1,4 +1,10 @@
-import type { Label, Priority, Status } from "@/lib/api"
+import {
+  type Label,
+  type MemberRef,
+  memberName,
+  type Priority,
+  type Status,
+} from "@/lib/api"
 import { StatusIcon } from "@/lib/status-icons"
 
 const PRIORITY_OPTIONS: Priority[] = ["Urgent", "High", "Medium", "Low", "None"]
@@ -189,7 +195,7 @@ export function IssueFilterBar({
   onChange,
 }: {
   statuses: Status[]
-  members: { userId: string }[]
+  members: MemberRef[]
   /** T5 workspace registry; the group hides when no labels exist yet. */
   labels?: Label[]
   value: IssueFilterValue
@@ -314,7 +320,7 @@ export function IssueFilterBar({
           <option value="none">Unassigned</option>
           {members.map((member) => (
             <option key={member.userId} value={member.userId}>
-              {member.userId}
+              {memberName(member, member.userId)}
             </option>
           ))}
         </select>

@@ -4,9 +4,10 @@ import { describe, expect, test, vi } from "vitest"
 import { api, type Issue, type Status } from "@/lib/api"
 import { CreateIssueForm } from "./create-issue-form.js"
 
-vi.mock("@/lib/api", () => ({
-  api: { createIssue: vi.fn() },
-}))
+vi.mock("@/lib/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api")>()
+  return { ...actual, api: { createIssue: vi.fn() } }
+})
 
 const createIssue = vi.mocked(api.createIssue)
 

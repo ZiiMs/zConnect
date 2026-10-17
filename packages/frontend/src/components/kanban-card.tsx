@@ -1,7 +1,15 @@
 import { useDraggable } from "@dnd-kit/core"
-import { Clock, UserRound } from "lucide-react"
+import { Clock } from "lucide-react"
 import { PropertyMenu, PropertyMenuOption } from "@/components/property-menu"
-import type { Issue, Label, Status } from "@/lib/api"
+import { AssigneeAvatar, UserAvatar } from "@/components/user-avatar"
+import {
+  findMember,
+  type Issue,
+  type Label,
+  type MemberRef,
+  memberName,
+  type Status,
+} from "@/lib/api"
 import { describeDueDate } from "@/lib/due"
 import { PriorityMark } from "@/lib/priority-icons"
 import { StatusIcon } from "@/lib/status-icons"
@@ -36,7 +44,7 @@ export function KanbanCard({
   issue: Issue
   statuses: Status[]
   /** Workspace members for the quick-assign menu. */
-  members?: { userId: string }[]
+  members?: MemberRef[]
   /** T5 workspace registry for label chip colors; chips stay plain without it. */
   labels?: Label[]
   canEdit: boolean
@@ -57,6 +65,7 @@ export function KanbanCard({
   const issueStatus = statuses.find((status) => status.id === issue.statusId)
   const due = describeDueDate(issue.dueDate)
   const canAssign = canEdit && onAssign !== undefined
+  const assignee = findMember(members, issue.assigneeId)
   const title = (
     <span
       title={issue.title}
@@ -91,21 +100,12 @@ export function KanbanCard({
               label={`Assignee for ${issue.identifier}`}
               triggerClassName="ml-auto grid size-6 shrink-0 place-items-center rounded-full hover:bg-accent"
               preview={
-                issue.assigneeId ? (
-                  <span
-                    className="grid size-6 place-items-center rounded-full bg-muted text-muted-foreground"
-                    title={issue.assigneeId}
-                  >
-                    <UserRound aria-hidden="true" size={12} />
-                  </span>
-                ) : (
-                  <span
-                    className="grid size-6 place-items-center rounded-full border border-muted-foreground border-dashed text-muted-foreground"
-                    title="Unassigned"
-                  >
-                    <UserRound aria-hidden="true" size={12} />
-                  </span>
-                )
+                <AssigneeAvatar
+                  member={assignee}
+                  userId={issue.assigneeId}
+                  size={24}
+                  tooltip={false}
+                />
               }
             >
               {(close) => (
@@ -117,7 +117,9 @@ export function KanbanCard({
                       close()
                     }}
                   >
-                    Unassigned
+                    <span className="truncate text-muted-foreground">
+                      Unassigned
+                    </span>
                   </PropertyMenuOption>
                   {members.map((member) => (
                     <PropertyMenuOption
@@ -128,25 +130,26 @@ export function KanbanCard({
                         close()
                       }}
                     >
-                      <span
-                        className="grid size-5 shrink-0 place-items-center rounded-full bg-muted text-muted-foreground"
-                        title={member.userId}
-                      >
-                        <UserRound aria-hidden="true" size={10} />
+                      <UserAvatar
+                        name={memberName(member, member.userId)}
+                        image={member.image}
+                        size={20}
+                      />
+                      <span className="truncate">
+                        {memberName(member, member.userId)}
                       </span>
-                      <span className="truncate">{member.userId}</span>
                     </PropertyMenuOption>
                   ))}
                 </>
               )}
             </PropertyMenu>
           ) : issue.assigneeId ? (
-            <span
-              className="ml-auto grid size-6 shrink-0 place-items-center rounded-full bg-muted text-muted-foreground"
-              title={issue.assigneeId}
-            >
-              <UserRound aria-hidden="true" size={12} />
-            </span>
+            <AssigneeAvatar
+              member={assignee}
+              userId={issue.assigneeId}
+              size={24}
+              className="ml-auto"
+            />
           ) : null}
         </span>
         {onOpenDetail ? (

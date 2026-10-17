@@ -7,6 +7,7 @@ import { CreateWorkspaceForm } from "@/components/create-workspace-form"
 import { ProjectPage } from "@/components/project-page"
 import { Button } from "@/components/ui/button"
 import { Modal } from "@/components/ui/dialog"
+import { initialsOf, UserAvatar } from "@/components/user-avatar"
 import { WorkspaceSettings } from "@/components/workspace-settings"
 import { useProjects } from "@/hooks/use-projects"
 import { useWorkspaces } from "@/hooks/use-workspaces"
@@ -78,15 +79,6 @@ function RailSection({
       )}
     </section>
   )
-}
-
-function initialsOf(name: string) {
-  return name
-    .split(/\s+/)
-    .map((part) => part[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase()
 }
 
 /**
@@ -266,9 +258,13 @@ function ProjectRailGroup({
 function WorkspaceShell({
   userId,
   userEmail,
+  userName,
+  userImage,
 }: {
   userId: string
   userEmail?: string
+  userName?: string
+  userImage?: string | null
 }) {
   const { workspaces, selectedId, selected, select, loading, error, refresh } =
     useWorkspaces()
@@ -414,9 +410,23 @@ function WorkspaceShell({
           )}
         </div>
         <div className="flex shrink-0 flex-col gap-2 px-4 py-3">
-          <p className="truncate text-muted-foreground text-xs">
-            {userEmail ?? userId}
-          </p>
+          <div className="flex items-center gap-2">
+            <UserAvatar
+              name={userName ?? userEmail ?? userId}
+              image={userImage}
+              size={28}
+            />
+            <span className="flex min-w-0 flex-col">
+              <span className="truncate font-medium text-sm">
+                {userName ?? userEmail ?? userId}
+              </span>
+              {userEmail && (
+                <span className="truncate text-muted-foreground text-xs">
+                  {userEmail}
+                </span>
+              )}
+            </span>
+          </div>
           <Button variant="outline" onClick={() => void signOut()}>
             Sign out
           </Button>
@@ -531,7 +541,12 @@ export function App() {
   const user = session?.user
 
   return user ? (
-    <WorkspaceShell userId={user.id} userEmail={user.email} />
+    <WorkspaceShell
+      userId={user.id}
+      userEmail={user.email}
+      userName={user.name}
+      userImage={user.image}
+    />
   ) : (
     <SignedOut />
   )

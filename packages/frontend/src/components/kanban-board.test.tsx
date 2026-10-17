@@ -344,7 +344,7 @@ describe("kanban board", () => {
       color: "#5e6ad2",
     })
     // Assignee avatar, and no description/priority filler lines.
-    expect(within(card).getByTitle("user-member")).toBeInTheDocument()
+    expect(within(card).getByTestId("assignee-user-member")).toBeInTheDocument()
     expect(
       within(card).queryByText("No description yet.")
     ).not.toBeInTheDocument()
