@@ -16,6 +16,10 @@ export const memberSchema = z.object({
   workspaceId: z.string(),
   userId: z.string(),
   role: workspaceRoleSchema,
+  /** Display name from the auth user; absent until the API enriches it. */
+  name: z.string().optional(),
+  /** Avatar URL from the auth user; null when the user has none. */
+  image: z.string().nullable().optional(),
 })
 
 export const invitationSchema = z.object({
@@ -150,6 +154,34 @@ export type Project = z.infer<typeof projectSchema>
 export type StatusCategory = z.infer<typeof statusCategorySchema>
 export type Status = z.infer<typeof statusSchema>
 export type Label = z.infer<typeof labelSchema>
+
+/**
+ * The subset of a Member that assignee surfaces read. Views accept this
+ * looser shape so fixtures can pass a bare `{ userId }`; the API returns
+ * the full Member with `name`/`image` filled in from the auth user.
+ */
+export type MemberRef = {
+  userId: string
+  name?: string
+  image?: string | null
+}
+
+/** Resolve a member by id from a roster. */
+export function findMember(
+  members: MemberRef[],
+  userId: string | null | undefined
+): MemberRef | undefined {
+  if (userId === null || userId === undefined) return undefined
+  return members.find((member) => member.userId === userId)
+}
+
+/** Display name for a member, falling back to the raw user id. */
+export function memberName(
+  member: MemberRef | undefined,
+  userId: string
+): string {
+  return member?.name ?? userId
+}
 
 /**
  * Terminal Status Categories (ADR-0001): Completed, Canceled, and Duplicate

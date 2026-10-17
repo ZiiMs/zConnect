@@ -1,15 +1,17 @@
-import { UserRound } from "lucide-react"
 import { ExternalLinkSection } from "@/components/external-link-section"
 import { IssueActions } from "@/components/issue-actions"
 import { PropertyMenu, PropertyMenuOption } from "@/components/property-menu"
 import { SubtaskList } from "@/components/subtask-list"
-import type {
-  Issue,
-  Label,
-  Member,
-  Priority,
-  Status,
-  UpdateIssueInput,
+import { AssigneeAvatar, UserAvatar } from "@/components/user-avatar"
+import {
+  findMember,
+  type Issue,
+  type Label,
+  type Member,
+  memberName,
+  type Priority,
+  type Status,
+  type UpdateIssueInput,
 } from "@/lib/api"
 import { StatusIcon } from "@/lib/status-icons"
 
@@ -66,6 +68,10 @@ export function IssueDetail({
   const colorFor = (name: string) =>
     labels.find((label) => label.name === name)?.color
   const dueDay = issue.dueDate?.slice(0, 10) ?? ""
+  const assignee = findMember(members, issue.assigneeId)
+  const assigneeName = issue.assigneeId
+    ? memberName(assignee, issue.assigneeId)
+    : "Unassigned"
 
   return (
     <div
@@ -156,22 +162,18 @@ export function IssueDetail({
                 triggerClassName="flex min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-accent"
                 preview={
                   <>
-                    <span
-                      className={`grid size-5 shrink-0 place-items-center rounded-full ${
-                        issue.assigneeId
-                          ? "bg-muted text-muted-foreground"
-                          : "border border-muted-foreground border-dashed text-muted-foreground"
-                      }`}
-                      title={issue.assigneeId ?? "Unassigned"}
-                    >
-                      <UserRound aria-hidden="true" size={11} />
-                    </span>
+                    <AssigneeAvatar
+                      member={assignee}
+                      userId={issue.assigneeId}
+                      size={20}
+                      tooltip={false}
+                    />
                     <span
                       className={
                         issue.assigneeId ? "truncate" : "text-muted-foreground"
                       }
                     >
-                      {issue.assigneeId ?? "Assign"}
+                      {issue.assigneeId ? assigneeName : "Assign"}
                     </span>
                   </>
                 }
@@ -196,13 +198,14 @@ export function IssueDetail({
                           close()
                         }}
                       >
-                        <span
-                          className="grid size-5 shrink-0 place-items-center rounded-full bg-muted text-muted-foreground"
-                          title={member.userId}
-                        >
-                          <UserRound aria-hidden="true" size={10} />
+                        <UserAvatar
+                          name={memberName(member, member.userId)}
+                          image={member.image}
+                          size={20}
+                        />
+                        <span className="truncate">
+                          {memberName(member, member.userId)}
                         </span>
-                        <span className="truncate">{member.userId}</span>
                       </PropertyMenuOption>
                     ))}
                   </>
@@ -210,22 +213,16 @@ export function IssueDetail({
               </PropertyMenu>
             ) : issue.assigneeId ? (
               <span className="flex min-w-0 items-center gap-1.5 px-1 py-0.5">
-                <span
-                  className="grid size-5 shrink-0 place-items-center rounded-full bg-muted text-muted-foreground"
-                  title={issue.assigneeId}
-                >
-                  <UserRound aria-hidden="true" size={11} />
-                </span>
-                {issue.assigneeId}
+                <AssigneeAvatar
+                  member={assignee}
+                  userId={issue.assigneeId}
+                  size={20}
+                />
+                <span className="truncate">{assigneeName}</span>
               </span>
             ) : (
               <span className="flex items-center gap-1.5 px-1 py-0.5 text-muted-foreground">
-                <span
-                  className="grid size-5 shrink-0 place-items-center rounded-full border border-muted-foreground border-dashed"
-                  title="Unassigned"
-                >
-                  <UserRound aria-hidden="true" size={11} />
-                </span>
+                <AssigneeAvatar member={assignee} userId={null} size={20} />
                 Unassigned
               </span>
             )}

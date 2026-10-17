@@ -1,11 +1,20 @@
-import { Circle, Clock, UserRound } from "lucide-react"
+import { Circle, Clock } from "lucide-react"
 import { type ReactNode, useState } from "react"
 import type {
   IssueDisplayProps,
   IssueGroupBy,
   IssueOrder,
 } from "@/components/issue-filter-bar"
-import type { Issue, Label, Priority, Status } from "@/lib/api"
+import { AssigneeAvatar } from "@/components/user-avatar"
+import {
+  findMember,
+  type Issue,
+  type Label,
+  type MemberRef,
+  memberName,
+  type Priority,
+  type Status,
+} from "@/lib/api"
 import { describeDueDate } from "@/lib/due"
 import { PriorityMark } from "@/lib/priority-icons"
 import { statusColor } from "@/lib/status-colors"
@@ -25,7 +34,13 @@ type Group = {
   addStatusId?: string
 }
 
-function AssigneeMark({ assigneeId }: { assigneeId: string | null }) {
+function AssigneeMark({
+  member,
+  assigneeId,
+}: {
+  member?: MemberRef
+  assigneeId: string | null
+}) {
   if (assigneeId === null) {
     return (
       <Circle
@@ -35,14 +50,7 @@ function AssigneeMark({ assigneeId }: { assigneeId: string | null }) {
       />
     )
   }
-  return (
-    <span
-      className="grid size-5 shrink-0 place-items-center rounded-full bg-muted text-muted-foreground"
-      title={assigneeId}
-    >
-      <UserRound aria-hidden="true" size={10} />
-    </span>
-  )
+  return <AssigneeAvatar member={member} userId={assigneeId} size={20} />
 }
 
 /**
@@ -86,7 +94,7 @@ export function IssueList({
   issues: Issue[]
   statuses: Status[]
   /** Workspace members; feeds the assignee lanes (with empty groups). */
-  members?: { userId: string }[]
+  members?: MemberRef[]
   /** T5 workspace registry for label chip colors; chips stay plain without it. */
   labels?: Label[]
   canEdit: boolean
@@ -162,10 +170,11 @@ export function IssueList({
         issues.filter((issue) => issue.assigneeId === assigneeId)
       )
       if (rows.length === 0 && !showEmptyGroups) continue
+      const member = findMember(members, assigneeId)
       groups.push({
         key: `assignee:${assigneeId ?? "none"}`,
-        title: assigneeId ?? "Unassigned",
-        icon: <AssigneeMark assigneeId={assigneeId} />,
+        title: assigneeId ? memberName(member, assigneeId) : "Unassigned",
+        icon: <AssigneeMark member={member} assigneeId={assigneeId} />,
         rows,
       })
     }
@@ -320,12 +329,11 @@ export function IssueList({
                             )
                           })}
                         {display.assignee && issue.assigneeId && (
-                          <span
-                            className="grid size-5 shrink-0 place-items-center rounded-full bg-muted text-muted-foreground"
-                            title={issue.assigneeId}
-                          >
-                            <UserRound aria-hidden="true" size={10} />
-                          </span>
+                          <AssigneeAvatar
+                            member={findMember(members, issue.assigneeId)}
+                            userId={issue.assigneeId}
+                            size={20}
+                          />
                         )}
                         {display.due && due && (
                           <span

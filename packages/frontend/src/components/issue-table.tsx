@@ -3,14 +3,17 @@ import {
   tableFeatures,
   useTable,
 } from "@tanstack/react-table"
-import { UserRound } from "lucide-react"
 import { useMemo, useState } from "react"
-import type {
-  Issue,
-  Label,
-  Priority,
-  Status,
-  UpdateIssueInput,
+import { AssigneeAvatar } from "@/components/user-avatar"
+import {
+  findMember,
+  type Issue,
+  type Label,
+  type MemberRef,
+  memberName,
+  type Priority,
+  type Status,
+  type UpdateIssueInput,
 } from "@/lib/api"
 import { formatDueDate } from "@/lib/due"
 import { StatusIcon } from "@/lib/status-icons"
@@ -59,7 +62,7 @@ export function IssueTable({
 }: {
   issues: Issue[]
   statuses: Status[]
-  members: { userId: string }[]
+  members: MemberRef[]
   /** T5 workspace registry for label chip colors; chips stay plain without it. */
   labels?: Label[]
   canEdit: boolean
@@ -176,19 +179,21 @@ export function IssueTable({
         header: "Assignee",
         cell: (info) => {
           const issue = info.row.original
+          const assignee = findMember(members, issue.assigneeId)
           const avatar = issue.assigneeId ? (
-            <span
-              className="grid size-5 shrink-0 place-items-center rounded-full bg-muted text-muted-foreground"
-              title={issue.assigneeId}
-            >
-              <UserRound aria-hidden="true" size={10} />
-            </span>
+            <AssigneeAvatar
+              member={assignee}
+              userId={issue.assigneeId}
+              size={20}
+            />
           ) : null
           if (!canEdit) {
             return (
               <span className="flex items-center gap-1.5 text-sm">
                 {avatar}
-                {issue.assigneeId ?? (
+                {issue.assigneeId ? (
+                  memberName(assignee, issue.assigneeId)
+                ) : (
                   <span className="text-muted-foreground">Unassigned</span>
                 )}
               </span>
@@ -210,7 +215,7 @@ export function IssueTable({
                 <option value="">Unassigned</option>
                 {members.map((member) => (
                   <option key={member.userId} value={member.userId}>
-                    {member.userId}
+                    {memberName(member, member.userId)}
                   </option>
                 ))}
               </select>

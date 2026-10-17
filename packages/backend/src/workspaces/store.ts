@@ -17,6 +17,14 @@ export interface Membership {
   workspaceId: string
   userId: string
   role: WorkspaceRole
+  /**
+   * Display name from the auth user record. Absent when the store cannot
+   * resolve the user (e.g. the in-memory store without a user directory);
+   * clients fall back to the raw `userId`.
+   */
+  name?: string
+  /** Avatar URL from the auth user record; null when the user has none. */
+  image?: string | null
 }
 
 export interface Invitation {
@@ -438,6 +446,12 @@ export interface MemoryWorkspaceStoreOptions {
     index: number
     projectId: string
   }) => void
+  /**
+   * Auth users keyed by id, so `listMembers` can echo the display name and
+   * avatar the real store joins from the user table. Omitted in tests that
+   * do not care about member identity.
+   */
+  users?: Record<string, { name: string; image?: string | null }>
 }
 
 export function createMemoryWorkspaceStore(
@@ -626,7 +640,14 @@ export function createMemoryWorkspaceStore(
     },
 
     async listMembers(workspaceId) {
-      return [...members.values()].filter((m) => m.workspaceId === workspaceId)
+      return [...members.values()]
+        .filter((m) => m.workspaceId === workspaceId)
+        .map((m) => {
+          const profile = options.users?.[m.userId]
+          return profile
+            ? { ...m, name: profile.name, image: profile.image ?? null }
+            : m
+        })
     },
 
     async createInvitation(input) {
