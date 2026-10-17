@@ -4,6 +4,7 @@ import { getDb } from "./db/index.js"
 import { createDrizzleGitHubStore } from "./github/drizzle-store.js"
 import type { GitHubWebhookPayload } from "./github/job.js"
 import { createGitHubApp } from "./github/routes.js"
+import { allowedOrigins } from "./lib/origins.js"
 import { createDrizzleTokenStore } from "./mcp/drizzle-tokens.js"
 import { createMcpApp } from "./mcp/routes.js"
 import { createDrizzleWorkspaceStore } from "./workspaces/drizzle-store.js"
@@ -14,7 +15,7 @@ const app = new Hono()
 app.use(
   "/api/*",
   cors({
-    origin: process.env.FRONTEND_URL ?? "http://localhost:5173",
+    origin: allowedOrigins(),
     credentials: true,
   })
 )
