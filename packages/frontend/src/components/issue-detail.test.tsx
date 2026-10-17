@@ -175,7 +175,10 @@ describe("issue detail", () => {
   test("falls back to the empty description", () => {
     renderDetail({ ...baseIssue, description: null })
 
-    expect(screen.getByText("No description yet.")).toBeInTheDocument()
+    // Doc mode: empty body mounts the editor with a placeholder overlay,
+    // not the read-only "No description yet." copy.
+    expect(screen.getByText("Write a description…")).toBeInTheDocument()
+    expect(screen.getByLabelText(/description for WEB-1/i)).toBeInTheDocument()
   })
 
   test("back calls onBack", async () => {

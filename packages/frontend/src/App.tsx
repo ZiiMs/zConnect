@@ -1,6 +1,6 @@
 import { Popover as PopoverPrimitive } from "@base-ui/react/popover"
 import type { ReactNode } from "react"
-import { useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { AuthForm } from "@/components/auth-form"
 import { CreateProjectForm } from "@/components/create-project-form"
 import { CreateWorkspaceForm } from "@/components/create-workspace-form"
@@ -9,11 +9,19 @@ import { Button } from "@/components/ui/button"
 import { Modal } from "@/components/ui/dialog"
 import { initialsOf, UserAvatar } from "@/components/user-avatar"
 import { WorkspaceSettings } from "@/components/workspace-settings"
+import { navigate, usePathname } from "@/hooks/use-pathname"
 import { useProjects } from "@/hooks/use-projects"
 import { useWorkspaces } from "@/hooks/use-workspaces"
-import type { Project, Workspace } from "@/lib/api"
+import { api, type Issue, type Project, type Workspace } from "@/lib/api"
 import { signOut, useSession } from "@/lib/auth-client"
 import { ProjectIcon } from "@/lib/project-icons"
+import {
+  buildIssuePath,
+  buildWorkspacePath,
+  findWorkspaceBySlug,
+  parseAppPath,
+  slugifyWorkspace,
+} from "@/lib/routes"
 
 function SignedOut() {
   return (
@@ -287,6 +295,139 @@ function WorkspaceShell({
     null
   )
 
+  /**
+   * URL as the state store for workspace + open issue:
+   * `/{workspaceSlug}` and `/{workspaceSlug}/issue/{IDENTIFIER}/{title?}`.
+   * The identifier is the lookup key; workspace/title segments are context.
+   */
+  const pathname = usePathname()
+  const parsed = useMemo(() => parseAppPath(pathname), [pathname])
+  const activeIdentifier = parsed.identifier
+  const selectedSlug = selected ? slugifyWorkspace(selected.name) : null
+  const urlWorkspaceMatches =
+    parsed.workspaceSlug === null ||
+    selectedSlug === null ||
+    parsed.workspaceSlug === selectedSlug
+
+  // Deep-linked row: fetch once per identifier so a share link resolves even
+  // when the filtered list query would exclude it (or before lists load).
+  const [deepIssue, setDeepIssue] = useState<Issue | null>(null)
+  useEffect(() => {
+    if (!activeIdentifier) {
+      setDeepIssue(null)
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      try {
+        const fetched = await api.getIssue(activeIdentifier)
+        if (!cancelled) setDeepIssue(fetched)
+      } catch {
+        if (!cancelled) setDeepIssue(null)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [activeIdentifier])
+
+  // URL -> workspace: a slug in the path selects that workspace. Skipped
+  // when the selected workspace already matches the slug so a local
+  // selection + navigation applied in the same tick never snaps back.
+  useEffect(() => {
+    if (workspaces.length === 0 || !parsed.workspaceSlug) return
+    if (selected && slugifyWorkspace(selected.name) === parsed.workspaceSlug) {
+      return
+    }
+    const match = findWorkspaceBySlug(workspaces, parsed.workspaceSlug)
+    if (match && match.id !== selectedId) select(match.id)
+  }, [workspaces, parsed.workspaceSlug, selectedId, select, selected])
+
+  // Workspace -> URL: keep the path canonical without stacking history.
+  useEffect(() => {
+    if (!selected || loading || workspaces.length === 0) return
+    if (parsed.identifier) return
+    if (parsed.workspaceSlug === selectedSlug) return
+    const match = findWorkspaceBySlug(workspaces, parsed.workspaceSlug)
+    // Fresh landing (root) or an unknown slug replaces; a UI workspace
+    // switch pushes so Back returns to the previous workspace.
+    navigate(`/${selectedSlug}`, {
+      replace: parsed.workspaceSlug === null || !match,
+    })
+  }, [
+    selected,
+    loading,
+    workspaces,
+    parsed.workspaceSlug,
+    parsed.identifier,
+    selectedSlug,
+  ])
+
+  // A deep link forces the project view (not settings/new-project).
+  useEffect(() => {
+    if (activeIdentifier) setView("project")
+  }, [activeIdentifier])
+
+  // Deep link -> project: the issue's project becomes the selected one.
+  useEffect(() => {
+    if (!deepIssue) return
+    if (selectedProjectId === deepIssue.projectId) return
+    if (projects.some((p) => p.id === deepIssue.projectId)) {
+      selectProject(deepIssue.projectId)
+      setCollapsedProjectId(null)
+    }
+  }, [deepIssue, projects, selectedProjectId, selectProject])
+
+  // Cross-workspace share link: the issue lives elsewhere, so follow it and
+  // rewrite the path to the owning workspace's canonical issue URL.
+  useEffect(() => {
+    if (!deepIssue || workspaces.length === 0 || projectsLoading) return
+    if (projects.some((p) => p.id === deepIssue.projectId)) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const owner = await api.getProject(deepIssue.projectId)
+        if (cancelled) return
+        const home = workspaces.find((w) => w.id === owner.workspaceId)
+        if (home && home.id !== selectedId) {
+          select(home.id)
+          navigate(
+            buildIssuePath(home.name, deepIssue.identifier, deepIssue.title),
+            { replace: true }
+          )
+        }
+      } catch {
+        // Unknown project: stay where we are; the detail shows not-found.
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [deepIssue, projects, projectsLoading, workspaces, selectedId, select])
+
+  function handleOpenIssue(issue: Issue, opts?: { replace?: boolean }) {
+    if (!selected) return
+    navigate(buildIssuePath(selected.name, issue.identifier, issue.title), opts)
+  }
+
+  /**
+   * Workspace switch from the UI: select + navigate atomically so the
+   * URL <-> state effects observe a consistent pair and never snap back.
+   */
+  function handleSelectWorkspace(id: string) {
+    const target = workspaces.find((w) => w.id === id)
+    select(id)
+    if (target) {
+      const path = `/${slugifyWorkspace(target.name)}`
+      if (window.location.pathname !== path) navigate(path)
+    }
+  }
+
+  function handleCloseIssue() {
+    if (!selected) return
+    navigate(buildWorkspacePath(selected.name))
+  }
+
   /** Header click: expand-and-select, or collapse the selected group. */
   function toggleProject(projectId: string) {
     if (projectId === selectedProjectId && collapsedProjectId !== projectId) {
@@ -314,7 +455,7 @@ function WorkspaceShell({
             selected={selected}
             loading={loading}
             error={error}
-            onSelect={select}
+            onSelect={handleSelectWorkspace}
             onAdd={() => setWorkspaceModalOpen(true)}
           />
         </div>
@@ -456,7 +597,7 @@ function WorkspaceShell({
               canManage={canManageMembers}
               onProjectUpdated={replaceProject}
               onWorkspaceCreated={(workspace) => {
-                void refresh().then(() => select(workspace.id))
+                void refresh().then(() => handleSelectWorkspace(workspace.id))
               }}
             />
           ) : view === "new-project" ? (
@@ -496,6 +637,12 @@ function WorkspaceShell({
                   canManage={canManageMembers}
                   canWriteIssues={canWriteIssues}
                   userId={userId}
+                  activeIssueIdentifier={
+                    urlWorkspaceMatches ? activeIdentifier : null
+                  }
+                  deepIssue={deepIssue}
+                  onOpenIssue={handleOpenIssue}
+                  onCloseIssue={handleCloseIssue}
                 />
               ) : (
                 !projectsLoading &&
@@ -518,7 +665,7 @@ function WorkspaceShell({
       >
         <CreateWorkspaceForm
           onCreated={(workspace) => {
-            void refresh().then(() => select(workspace.id))
+            void refresh().then(() => handleSelectWorkspace(workspace.id))
             setWorkspaceModalOpen(false)
           }}
         />

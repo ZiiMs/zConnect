@@ -16,7 +16,7 @@ describe("external link form", () => {
       screen.getByLabelText(/paste.*url/i),
       "https://github.com/acme/web/pull/7"
     )
-    await user.click(screen.getByRole("button", { name: /add link/i }))
+    await user.keyboard("{Enter}")
 
     expect(onAdd).toHaveBeenCalledWith("https://github.com/acme/web/pull/7")
     expect(screen.getByLabelText(/paste.*url/i)).toHaveValue("")
@@ -27,7 +27,7 @@ describe("external link form", () => {
     render(<ExternalLinkForm onAdd={() => Promise.reject(new Error("Nope"))} />)
 
     await user.type(screen.getByLabelText(/paste.*url/i), "https://x.example/y")
-    await user.click(screen.getByRole("button", { name: /add link/i }))
+    await user.keyboard("{Enter}")
 
     expect(await screen.findByText("Nope")).toBeInTheDocument()
   })

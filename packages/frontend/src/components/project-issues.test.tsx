@@ -169,7 +169,7 @@ describe("project issues list view", () => {
     )
   })
 
-  test("group quick-add opens the composer preselected to that status", async () => {
+  test("group quick-add opens create-mode detail preselected to that status", async () => {
     const user = userEvent.setup()
     setup()
     await screen.findByText("WEB-1")
@@ -178,7 +178,10 @@ describe("project issues list view", () => {
       screen.getByRole("button", { name: /add issue to backlog/i })
     )
 
-    expect(screen.getByLabelText(/issue status/i)).toHaveValue("st-1")
+    expect(screen.getByTestId("issue-create-detail")).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: /status for new/i })
+    ).toHaveTextContent("Backlog")
   })
 
   test("grouping by priority regroups the list end to end", async () => {
@@ -323,7 +326,7 @@ describe("project issues list view", () => {
     expect(listSubtasks).toHaveBeenCalledWith("WEB-1")
   })
 
-  test("creating an issue happens in a modal that closes on success", async () => {
+  test("creating an issue happens in create-mode detail on title commit", async () => {
     const user = userEvent.setup()
     const createIssue = vi.mocked(api.createIssue)
     createIssue.mockResolvedValue({
@@ -331,24 +334,25 @@ describe("project issues list view", () => {
       id: "is-2",
       number: 2,
       identifier: "WEB-2",
-      title: "New from modal",
+      title: "New from detail",
     })
     setup()
     await screen.findByText("WEB-1")
 
     expect(screen.queryByLabelText(/issue title/i)).not.toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: /^new issue$/i }))
-    await user.type(screen.getByLabelText(/issue title/i), "New from modal")
-    await user.click(screen.getByRole("button", { name: /^create issue$/i }))
+    expect(screen.getByTestId("issue-create-detail")).toBeInTheDocument()
+    await user.type(screen.getByLabelText(/issue title/i), "New from detail")
+    await user.keyboard("{Enter}")
 
     await waitFor(() =>
       expect(createIssue).toHaveBeenCalledWith(
         "pr-1",
-        expect.objectContaining({ title: "New from modal" })
+        expect.objectContaining({ title: "New from detail" })
       )
     )
-    expect(await screen.findByText("WEB-2")).toBeInTheDocument()
-    expect(screen.queryByLabelText(/issue title/i)).not.toBeInTheDocument()
+    expect(await screen.findByTestId("issue-detail-WEB-2")).toBeInTheDocument()
+    expect(screen.queryByTestId("issue-create-detail")).not.toBeInTheDocument()
   })
 })
 

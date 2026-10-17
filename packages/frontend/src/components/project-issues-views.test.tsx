@@ -239,6 +239,8 @@ describe("project issues views", () => {
     setup([baseIssue])
     await screen.findByText("WEB-1")
 
+    // Active preset hides the terminal Shipped column; show all boards first.
+    await user.click(screen.getByRole("tab", { name: "All Issues" }))
     await user.click(screen.getByRole("button", { name: /^filters/i }))
     await user.click(screen.getByRole("tab", { name: "Kanban" }))
     await screen.findByTestId("kanban-card-WEB-1")

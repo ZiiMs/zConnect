@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { afterEach, describe, expect, test, vi } from "vitest"
 import { ExternalLinkSection } from "./external-link-section.js"
 
@@ -51,10 +52,13 @@ describe("external link section", () => {
   })
 
   test("shows the empty state and paste form when writable", async () => {
+    const user = userEvent.setup()
     mockFetchSequence([[], []])
     render(<ExternalLinkSection issueIdentifier="WEB-1" canWrite={true} />)
 
     expect(await screen.findByText(/no linked prs/i)).toBeInTheDocument()
+    expect(screen.queryByLabelText(/paste.*url/i)).not.toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: /add link/i }))
     expect(screen.getByLabelText(/paste.*url/i)).toBeInTheDocument()
   })
 })

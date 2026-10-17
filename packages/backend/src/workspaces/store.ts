@@ -156,6 +156,7 @@ export interface SeedIssueFields {
   archived: false
   labels: string[]
   parentId: null
+  updatedAt: string
 }
 
 /**
@@ -182,6 +183,7 @@ export function seedIssueFields(
     archived: false,
     labels: [],
     parentId: null,
+    updatedAt: new Date().toISOString(),
   }
 }
 
@@ -244,6 +246,8 @@ export interface Issue {
    * with subtasks cannot become a subtask.
    */
   parentId: string | null
+  /** Last-write marker for realtime conflict resolution (T4). */
+  updatedAt: string
 }
 
 export interface CreateIssueInput {
@@ -597,6 +601,7 @@ export function createMemoryWorkspaceStore(
       archived: false,
       labels: normalizeLabelNames(input.labels ?? []),
       parentId: input.parentId ?? null,
+      updatedAt: new Date().toISOString(),
     }
   }
 
@@ -1108,6 +1113,7 @@ export function createMemoryWorkspaceStore(
           ensureLabelRows(project.workspaceId, input.labels)
         )
       }
+      stored.updatedAt = new Date().toISOString()
       return { ...stored, labels: [...stored.labels] }
     },
 

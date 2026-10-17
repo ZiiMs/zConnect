@@ -354,6 +354,7 @@ export function createDrizzleWorkspaceStore(
             await tx.insert(issue).values({
               projectId: projectRow.id,
               ...seedIssueFields(projectRow.key, nextNumber, statusId, seed),
+              updatedAt: new Date(),
             })
             nextNumber += 1
           }
@@ -1127,6 +1128,7 @@ function toIssue(row: typeof issue.$inferSelect): Issue {
     archived: row.archived,
     labels: [...(row.labels ?? [])],
     parentId: row.parentId,
+    updatedAt: row.updatedAt ? row.updatedAt.toISOString() : new Date().toISOString(),
   }
 }
 

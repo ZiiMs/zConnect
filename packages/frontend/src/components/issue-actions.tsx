@@ -1,3 +1,4 @@
+import { Archive, ArchiveRestore, Trash2 } from "lucide-react"
 import { useState } from "react"
 import { api, type Issue } from "@/lib/api"
 
@@ -33,11 +34,13 @@ export function IssueActions({
   }
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-1">
       {issue.archived ? (
         <button
           type="button"
-          className="rounded-md border border-input px-2 py-1 text-xs"
+          aria-label="Restore"
+          title="Restore"
+          className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
           disabled={busy}
           onClick={() =>
             void run(async () =>
@@ -47,12 +50,14 @@ export function IssueActions({
             )
           }
         >
-          Restore
+          <ArchiveRestore aria-hidden="true" size={14} />
         </button>
       ) : (
         <button
           type="button"
-          className="rounded-md border border-input px-2 py-1 text-xs"
+          aria-label="Archive"
+          title="Archive"
+          className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
           disabled={busy}
           onClick={() =>
             void run(async () =>
@@ -62,13 +67,15 @@ export function IssueActions({
             )
           }
         >
-          Archive
+          <Archive aria-hidden="true" size={14} />
         </button>
       )}
       {canAdmin && (
         <button
           type="button"
-          className="rounded-md border border-destructive px-2 py-1 text-destructive text-xs"
+          aria-label="Delete permanently"
+          title="Delete permanently"
+          className="rounded-md p-1.5 text-destructive hover:bg-accent disabled:opacity-50"
           disabled={busy}
           onClick={() =>
             void run(async () => {
@@ -77,7 +84,7 @@ export function IssueActions({
             })
           }
         >
-          Delete permanently
+          <Trash2 aria-hidden="true" size={14} />
         </button>
       )}
       {error && <p className="text-destructive text-xs">{error}</p>}
