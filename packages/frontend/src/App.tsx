@@ -488,7 +488,7 @@ function WorkspaceShell({
               />
             </section>
           ) : (
-            <section className="flex flex-col gap-4">
+            <section className="flex min-h-0 flex-1 flex-col gap-4">
               {selectedProject ? (
                 <ProjectPage
                   key={selectedProject.id}

@@ -20,7 +20,7 @@ export function ProjectPage({
   userId: string
 }) {
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex min-h-0 flex-1 flex-col gap-2">
       <h2 className="sr-only">{project.name}</h2>
       <ProjectIssues
         project={project}

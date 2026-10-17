@@ -204,7 +204,7 @@ describe("kanban board", () => {
     expect(screen.getByTestId("kanban-column-st-2")).toBeInTheDocument()
   })
 
-  test("lanes stretch full height with tight gutters", () => {
+  test("lanes fill the remaining height with tight gutters", () => {
     setup()
 
     const column = screen.getByTestId("kanban-column-st-1")
@@ -212,7 +212,12 @@ describe("kanban board", () => {
     const lanes = column.parentElement as HTMLElement
     expect(lanes.className).toContain("items-stretch")
     expect(lanes.className).toContain("gap-2")
-    expect(lanes.className).toContain("calc(100svh-5rem)")
+    expect(lanes.className).toContain("min-h-0")
+    expect(lanes.className).toContain("flex-1")
+    // Only sideways: `overflow-x-auto` alone would also enable a vertical
+    // scrollbar, so the lanes pin the vertical axis shut.
+    expect(lanes.className).toContain("overflow-x-auto")
+    expect(lanes.className).toContain("overflow-y-hidden")
   })
 
   test("a drop on another column moves the card", () => {

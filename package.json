@@ -7,7 +7,7 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "bun run --parallel --filter '*' dev",
+    "dev": "concurrently -k -n backend,frontend -c blue,magenta \"bun run dev:backend\" \"bun run dev:frontend\"",
     "dev:backend": "bun run --cwd packages/backend dev",
     "dev:frontend": "bun run --cwd packages/frontend dev",
     "test": "bun run --cwd packages/backend test && bun run --cwd packages/frontend test",
@@ -16,7 +16,8 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "concurrently": "^10.0.6"
   },
   "peerDependencies": {
     "typescript": "^5"

@@ -274,7 +274,7 @@ export function KanbanBoard({
       onDragEnd={handleDragEnd}
       onDragCancel={() => setActiveId(null)}
     >
-      <div className="flex h-[calc(100svh-5rem)] items-stretch gap-2 overflow-x-auto pb-2">
+      <div className="flex min-h-0 flex-1 items-stretch gap-2 overflow-x-auto overflow-y-hidden pb-2">
         {visible.map((status) => (
           <KanbanColumn
             key={status.id}
