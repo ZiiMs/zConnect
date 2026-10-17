@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Breadcrumb, type BreadcrumbItem } from "@/components/breadcrumb"
-import { CreateIssueForm } from "@/components/create-issue-form"
-import { IssueDetail } from "@/components/issue-detail"
+import { IssueCreateDetail, IssueDetail } from "@/components/issue-detail"
 import {
   emptyIssueFilters,
   type IssueFilterValue,
@@ -17,11 +16,11 @@ import { IssueList } from "@/components/issue-list"
 import { IssueTable } from "@/components/issue-table"
 import { KanbanBoard } from "@/components/kanban-board"
 import { Button } from "@/components/ui/button"
-import { Modal } from "@/components/ui/dialog"
 import { useIssueSubscription } from "@/hooks/use-issue-subscription"
 import {
   api,
   applyRemoteIssue,
+  type CreateIssueInput,
   type Issue,
   type Label,
   type Member,
@@ -86,12 +85,28 @@ export function ProjectIssues({
   userId,
   canWrite,
   canAdmin = false,
+  activeIssueIdentifier,
+  deepIssue = null,
+  onOpenIssue,
+  onCloseIssue,
 }: {
   project: Project
   userId: string
   canWrite: boolean
   /** Owner/Admin: enables permanent deletion in the row actions. */
   canAdmin?: boolean
+  /**
+   * URL-driven selection: the identifier from the path (`undefined` keeps the
+   * legacy uncontrolled behavior for tests/embeds; `null` means the list
+   * root, a string opens that detail). The title slug is never read.
+   */
+  activeIssueIdentifier?: string | null
+  /** Deep-linked row fetched by the shell (cross-filter, pre-list). */
+  deepIssue?: Issue | null
+  /** Notify the shell so it can push the canonical issue URL. */
+  onOpenIssue?: (issue: Issue, opts?: { replace?: boolean }) => void
+  /** Notify the shell so it can push the workspace root URL. */
+  onCloseIssue?: () => void
 }) {
   const [statuses, setStatuses] = useState<Status[]>([])
   const [members, setMembers] = useState<Member[]>([])
@@ -121,9 +136,21 @@ export function ProjectIssues({
   const [notice, setNotice] = useState<string | null>(null)
   const [subtasks, setSubtasks] = useState<Record<string, Issue[]>>({})
   const [toast, setToast] = useState<string | null>(null)
-  const [composerOpen, setComposerOpen] = useState(false)
-  const [composerStatusId, setComposerStatusId] = useState<string | null>(null)
+  const [creating, setCreating] = useState<{
+    statusId: string | null
+    parentId?: string | null
+  } | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  /**
+   * Deep-linked row that the filtered list query may not contain (e.g. a
+   * completed issue opened from a share link while landing on Active).
+   * Shown as the detail without polluting the list rows.
+   */
+  const [extraIssue, setExtraIssue] = useState<Issue | null>(null)
+  /** Remote rows held while the open issue has unsaved edits (§7). */
+  const [pendingConflicts, setPendingConflicts] = useState<
+    Record<string, Issue>
+  >({})
   const [starred, setStarred] = useState(() => {
     try {
       return localStorage.getItem(`zconnect:starred:${project.id}`) === "1"
@@ -152,6 +179,8 @@ export function ProjectIssues({
   const requestRef = useRef(0)
   /** True after the first query lands; later ones never unmount the views. */
   const loadedOnceRef = useRef(false)
+  /** Which open issues currently hold unsaved edits (sender/conflict gate). */
+  const editingRef = useRef<Record<string, boolean>>({})
 
   /**
    * The project's workflow loads once per project: a filter change only
@@ -231,6 +260,17 @@ export function ProjectIssues({
     if (event.type === "INSERT" && !matchesIssueFilters(event.issue, filters)) {
       return
     }
+    // Conflict-while-editing (§7): pause autosave and hold the remote row
+    // behind a Load-latest / Keep-editing banner instead of silently
+    // overwriting the draft. Otherwise LWW + toast as before. Any open
+    // editor (detail or subtask modal) gates its own id via editingRef.
+    if (event.type === "UPDATE" && editingRef.current[event.issue.id]) {
+      setPendingConflicts((current) => ({
+        ...current,
+        [event.issue.id]: event.issue,
+      }))
+      return
+    }
     const { issues: next, applied } = applyRemoteIssue(
       issuesRef.current,
       event.issue
@@ -240,6 +280,23 @@ export function ProjectIssues({
       return
     }
     setIssues(next)
+    // Keep an open subtask footer fresh when its rows move remotely.
+    setSubtasks((current) => {
+      let changed = false
+      const nextMap: Record<string, Issue[]> = {}
+      for (const [parentId, rows] of Object.entries(current)) {
+        const idx = rows.findIndex((r) => r.id === event.issue.id)
+        if (idx === -1) {
+          nextMap[parentId] = rows
+          continue
+        }
+        changed = true
+        const updated = [...rows]
+        updated[idx] = event.issue
+        nextMap[parentId] = updated
+      }
+      return changed ? nextMap : current
+    })
   })
 
   function handleFilters(next: IssueFilterValue) {
@@ -253,19 +310,52 @@ export function ProjectIssues({
     saveIssueView(userId, project.id, next)
   }
 
-  async function handleUpdate(issue: Issue, input: UpdateIssueInput) {
+  function applyUpdated(updated: Issue) {
+    setIssues((current) =>
+      current.map((item) => (item.id === updated.id ? updated : item))
+    )
+    setExtraIssue((current) =>
+      current && current.id === updated.id ? updated : current
+    )
+    setSubtasks((current) => {
+      let changed = false
+      const nextMap: Record<string, Issue[]> = {}
+      for (const [parentId, rows] of Object.entries(current)) {
+        if (!rows.some((r) => r.id === updated.id)) {
+          nextMap[parentId] = rows
+          continue
+        }
+        changed = true
+        nextMap[parentId] = rows.map((r) => (r.id === updated.id ? updated : r))
+      }
+      return changed ? nextMap : current
+    })
+  }
+
+  async function handleUpdate(
+    issue: Issue,
+    input: UpdateIssueInput
+  ): Promise<Issue> {
     setActionError(null)
     setNotice(null)
     try {
       const updated = await api.updateIssue(issue.identifier, input)
-      setIssues((current) =>
-        current.map((item) => (item.id === updated.id ? updated : item))
-      )
+      applyUpdated(updated)
+      // A held conflict for this row is resolved by our own save.
+      setPendingConflicts((current) => {
+        if (!(issue.id in current)) return current
+        const next = { ...current }
+        delete next[issue.id]
+        return next
+      })
       if (updated.warnings && updated.warnings.length > 0) {
         setNotice(updated.warnings.join(" "))
       }
+      return updated
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Update failed")
+      const message = err instanceof Error ? err.message : "Update failed"
+      setActionError(message)
+      throw err instanceof Error ? err : new Error(message)
     }
   }
 
@@ -284,9 +374,7 @@ export function ProjectIssues({
     )
     try {
       const updated = await api.updateIssue(issue.identifier, { statusId })
-      setIssues((current) =>
-        current.map((item) => (item.id === updated.id ? updated : item))
-      )
+      applyUpdated(updated)
       if (updated.warnings && updated.warnings.length > 0) {
         setNotice(updated.warnings.join(" "))
       }
@@ -300,16 +388,55 @@ export function ProjectIssues({
   }
 
   function handleArchivedChanged(updated: Issue) {
-    setIssues((current) =>
-      current.map((item) => (item.id === updated.id ? updated : item))
-    )
+    applyUpdated(updated)
   }
 
   function handleDeleted(deleted: Issue) {
     setIssues((current) => current.filter((item) => item.id !== deleted.id))
+    setExtraIssue((current) =>
+      current && current.id === deleted.id ? null : current
+    )
+    setSubtasks((current) => {
+      const next: Record<string, Issue[]> = {}
+      for (const [parentId, rows] of Object.entries(current)) {
+        if (parentId === deleted.id) continue
+        next[parentId] = rows.filter((r) => r.id !== deleted.id)
+      }
+      return next
+    })
+    setPendingConflicts((current) => {
+      if (!(deleted.id in current)) return current
+      const next = { ...current }
+      delete next[deleted.id]
+      return next
+    })
+    delete editingRef.current[deleted.id]
   }
 
-  const selectedIssue = issues.find((item) => item.id === selectedId) ?? null
+  async function handleCreate(input: CreateIssueInput): Promise<Issue> {
+    setActionError(null)
+    const created = await api.createIssue(project.id, input)
+    setIssues((current) =>
+      [...current, created].sort((a, b) => a.number - b.number)
+    )
+    if (created.parentId) {
+      setSubtasks((current) => ({
+        ...current,
+        [created.parentId as string]: [
+          ...(current[created.parentId as string] ?? []),
+          created,
+        ].sort((a, b) => a.number - b.number),
+      }))
+    }
+    return created
+  }
+
+  const selectedIssue =
+    issues.find((item) => item.id === selectedId) ??
+    (extraIssue && extraIssue.id === selectedId ? extraIssue : null) ??
+    (deepIssue && deepIssue.id === selectedId ? deepIssue : null) ??
+    null
+  const inCreateMode = creating !== null
   const viewLabel =
     view === "list" ? "List" : view === "table" ? "Table" : "Kanban"
 
@@ -320,11 +447,111 @@ export function ProjectIssues({
    * drilled into and keep the chosen View.
    */
   function showIssuesRoot() {
+    if (selectedId !== null) delete editingRef.current[selectedId]
     setSelectedId(null)
+    setExtraIssue(null)
+    setCreating(null)
+    onCloseIssue?.()
   }
 
+  /** User opened a row: select it and let the shell push the canonical URL. */
+  function openIssue(issue: Issue, opts?: { replace?: boolean }) {
+    setSelectedId(issue.id)
+    setCreating(null)
+    if (
+      issue.projectId === project.id &&
+      !issues.some((item) => item.id === issue.id) &&
+      extraIssue?.id !== issue.id
+    ) {
+      setExtraIssue(issue)
+    }
+    onOpenIssue?.(issue, opts)
+  }
+
+  /**
+   * URL -> state: back/forward, reload, or a pasted share link drives the
+   * open detail. `undefined` means uncontrolled (legacy/tests): ignore.
+   * List hits select directly; cross-filter deep links resolve via the
+   * shell's `deepIssue` or a direct `getIssue` fetch scoped to this project.
+   */
+  const urlControlled = activeIssueIdentifier !== undefined
+  useEffect(() => {
+    if (!urlControlled) return
+    const wanted =
+      activeIssueIdentifier === null || activeIssueIdentifier === undefined
+        ? null
+        : activeIssueIdentifier.toUpperCase()
+    if (wanted === null) {
+      if (selectedId !== null) {
+        if (selectedId) delete editingRef.current[selectedId]
+        setSelectedId(null)
+        setExtraIssue(null)
+        setCreating(null)
+      }
+      return
+    }
+    if (
+      selectedIssue &&
+      selectedIssue.identifier.toUpperCase() === wanted &&
+      selectedIssue.projectId === project.id
+    ) {
+      return
+    }
+    const inList =
+      issues.find((item) => item.identifier.toUpperCase() === wanted) ?? null
+    if (inList) {
+      setExtraIssue(null)
+      setCreating(null)
+      setSelectedId(inList.id)
+      return
+    }
+    if (
+      deepIssue &&
+      deepIssue.identifier.toUpperCase() === wanted &&
+      deepIssue.projectId === project.id
+    ) {
+      setCreating(null)
+      setExtraIssue(deepIssue)
+      setSelectedId(deepIssue.id)
+      return
+    }
+    if (extraIssue && extraIssue.identifier.toUpperCase() === wanted) {
+      setCreating(null)
+      setSelectedId(extraIssue.id)
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      try {
+        if (typeof api.getIssue !== "function") return
+        const fetched = await api.getIssue(wanted)
+        if (cancelled) return
+        if (fetched.projectId !== project.id) return
+        setCreating(null)
+        setExtraIssue(fetched)
+        setSelectedId(fetched.id)
+      } catch {
+        if (!cancelled) setActionError("Issue not found")
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeIssueIdentifier, project.id, urlControlled])
+
+  /** Keep the tab title in sync so shared links show `WEB-123: title`. */
+  useEffect(() => {
+    if (!urlControlled) return
+    if (selectedIssue) {
+      document.title = `${selectedIssue.identifier}: ${selectedIssue.title}`
+    } else {
+      document.title = `${project.name} Issues`
+    }
+  }, [selectedIssue, project.name, urlControlled])
+
   const breadcrumbItems: BreadcrumbItem[] =
-    selectedIssue === null
+    selectedIssue === null && !inCreateMode
       ? [
           {
             label: project.name,
@@ -338,20 +565,30 @@ export function ProjectIssues({
             current: true,
           },
         ]
-      : [
-          {
-            label: project.name,
-            onClick: showIssuesRoot,
-            icon: { name: project.icon, color: project.color },
-          },
-          { label: "Issues", onClick: showIssuesRoot },
-          {
-            label: selectedIssue.identifier,
-            onClick: () => setSelectedId(selectedIssue.id),
-            mono: true,
-            current: true,
-          },
-        ]
+      : selectedIssue !== null
+        ? [
+            {
+              label: project.name,
+              onClick: showIssuesRoot,
+              icon: { name: project.icon, color: project.color },
+            },
+            { label: "Issues", onClick: showIssuesRoot },
+            {
+              label: selectedIssue.identifier,
+              onClick: () => setSelectedId(selectedIssue.id),
+              mono: true,
+              current: true,
+            },
+          ]
+        : [
+            {
+              label: project.name,
+              onClick: showIssuesRoot,
+              icon: { name: project.icon, color: project.color },
+            },
+            { label: "Issues", onClick: showIssuesRoot },
+            { label: "New issue", current: true },
+          ]
 
   useEffect(() => {
     if (!selectedIssue || subtasks[selectedIssue.id] !== undefined) return
@@ -417,8 +654,8 @@ export function ProjectIssues({
             <Button
               size="sm"
               onClick={() => {
-                setComposerStatusId(null)
-                setComposerOpen(true)
+                setSelectedId(null)
+                setCreating({ statusId: null })
               }}
             >
               New issue
@@ -426,26 +663,6 @@ export function ProjectIssues({
           )}
         </div>
       </div>
-      <Modal
-        open={composerOpen}
-        onOpenChange={setComposerOpen}
-        title="New issue"
-      >
-        <CreateIssueForm
-          key={composerStatusId ?? "default"}
-          projectId={project.id}
-          statuses={statuses}
-          members={members}
-          labels={labels}
-          initialStatusId={composerStatusId ?? undefined}
-          onCreated={(created) => {
-            setIssues((current) =>
-              [...current, created].sort((a, b) => a.number - b.number)
-            )
-            setComposerOpen(false)
-          }}
-        />
-      </Modal>
       {loading && (
         <p className="text-muted-foreground text-sm">Loading issues…</p>
       )}
@@ -466,8 +683,26 @@ export function ProjectIssues({
           {toast}
         </p>
       )}
-      {!loading && !error && selectedIssue !== null && (
+      {!loading && !error && inCreateMode && (
+        <IssueCreateDetail
+          projectId={project.id}
+          statuses={statuses}
+          members={members}
+          labels={labels}
+          initialStatusId={creating?.statusId ?? undefined}
+          canEdit={canWrite}
+          onBack={() => setCreating(null)}
+          onCreated={async (input) => {
+            const created = await handleCreate(input)
+            setCreating(null)
+            openIssue(created)
+            return created
+          }}
+        />
+      )}
+      {!loading && !error && !inCreateMode && selectedIssue !== null && (
         <IssueDetail
+          key={selectedIssue.id}
           issue={selectedIssue}
           statuses={statuses}
           members={members}
@@ -475,70 +710,141 @@ export function ProjectIssues({
           subtasks={subtasks[selectedIssue.id] ?? []}
           canEdit={canWrite}
           canAdmin={canAdmin}
-          onBack={() => setSelectedId(null)}
+          conflictRemote={pendingConflicts[selectedIssue.id] ?? null}
+          onBack={() => {
+            delete editingRef.current[selectedIssue.id]
+            setSelectedId(null)
+            setExtraIssue(null)
+            onCloseIssue?.()
+          }}
           onStatusChange={(issue, statusId) =>
             void handleStatusChange(issue, statusId)
           }
-          onUpdate={(issue, input) => void handleUpdate(issue, input)}
+          onUpdate={(issue, input) => {
+            void handleUpdate(issue, input)
+          }}
           onArchivedChanged={handleArchivedChanged}
           onDeleted={(deleted) => {
             handleDeleted(deleted)
+            delete editingRef.current[selectedIssue.id]
             setSelectedId(null)
+            setExtraIssue(null)
+            onCloseIssue?.()
+          }}
+          onEditingChange={(editing) => {
+            if (editing) editingRef.current[selectedIssue.id] = true
+            else delete editingRef.current[selectedIssue.id]
+          }}
+          onKeepEditing={() => {
+            setPendingConflicts((current) => {
+              const next = { ...current }
+              delete next[selectedIssue.id]
+              return next
+            })
+            setToast("Conflict resolved: kept the latest change.")
+          }}
+          onLoadLatest={() => {
+            const remote = pendingConflicts[selectedIssue.id]
+            if (remote) {
+              applyUpdated(remote)
+              setPendingConflicts((current) => {
+                const next = { ...current }
+                delete next[selectedIssue.id]
+                return next
+              })
+            }
+          }}
+          onCreateSubtask={(parent, input) => handleCreate(input)}
+          onSubtaskEditingChange={(subtaskId, editing) => {
+            if (editing) editingRef.current[subtaskId] = true
+            else delete editingRef.current[subtaskId]
+          }}
+          subtaskConflicts={pendingConflicts}
+          onSubtaskKeepEditing={(subtaskId) => {
+            setPendingConflicts((current) => {
+              const next = { ...current }
+              delete next[subtaskId]
+              return next
+            })
+            setToast("Conflict resolved: kept the latest change.")
+          }}
+          onSubtaskLoadLatest={(subtaskId) => {
+            const remote = pendingConflicts[subtaskId]
+            if (remote) {
+              applyUpdated(remote)
+              setPendingConflicts((current) => {
+                const next = { ...current }
+                delete next[subtaskId]
+                return next
+              })
+            }
           }}
         />
       )}
-      {!loading && !error && selectedIssue === null && view === "list" && (
-        <IssueList
-          issues={issues}
-          statuses={statuses}
-          members={members}
-          labels={labels}
-          canEdit={canWrite}
-          onStatusChange={(issue, statusId) =>
-            void handleStatusChange(issue, statusId)
-          }
-          onAddIssue={
-            canWrite
-              ? (statusId) => {
-                  setComposerStatusId(statusId)
-                  setComposerOpen(true)
-                }
-              : undefined
-          }
-          onOpenDetail={(issue) => setSelectedId(issue.id)}
-          groupBy={filters.groupBy}
-          order={filters.order}
-          showEmptyGroups={filters.showEmptyGroups}
-          display={filters.display}
-        />
-      )}
-      {!loading && !error && selectedIssue === null && view === "table" && (
-        <IssueTable
-          issues={issues}
-          statuses={statuses}
-          members={members}
-          labels={labels}
-          canEdit={canWrite}
-          onUpdate={(issue, input) => void handleUpdate(issue, input)}
-        />
-      )}
-      {!loading && !error && selectedIssue === null && view === "kanban" && (
-        <KanbanBoard
-          issues={issues}
-          statuses={statuses}
-          members={members}
-          labels={labels}
-          userId={userId}
-          projectId={project.id}
-          canEdit={canWrite}
-          visibleStatusIds={filters.statusIds}
-          onMove={(issue, statusId) => void handleMove(issue, statusId)}
-          onAssign={(issue, assigneeId) =>
-            void handleUpdate(issue, { assigneeId })
-          }
-          onOpenDetail={(issue) => setSelectedId(issue.id)}
-        />
-      )}
+      {!loading &&
+        !error &&
+        !inCreateMode &&
+        selectedIssue === null &&
+        view === "list" && (
+          <IssueList
+            issues={issues}
+            statuses={statuses}
+            members={members}
+            labels={labels}
+            canEdit={canWrite}
+            onStatusChange={(issue, statusId) =>
+              void handleStatusChange(issue, statusId)
+            }
+            onAddIssue={
+              canWrite
+                ? (statusId) => {
+                    setSelectedId(null)
+                    setCreating({ statusId })
+                  }
+                : undefined
+            }
+            onOpenDetail={(issue) => openIssue(issue)}
+            groupBy={filters.groupBy}
+            order={filters.order}
+            showEmptyGroups={filters.showEmptyGroups}
+            display={filters.display}
+          />
+        )}
+      {!loading &&
+        !error &&
+        !inCreateMode &&
+        selectedIssue === null &&
+        view === "table" && (
+          <IssueTable
+            issues={issues}
+            statuses={statuses}
+            members={members}
+            labels={labels}
+            canEdit={canWrite}
+            onUpdate={(issue, input) => void handleUpdate(issue, input)}
+          />
+        )}
+      {!loading &&
+        !error &&
+        !inCreateMode &&
+        selectedIssue === null &&
+        view === "kanban" && (
+          <KanbanBoard
+            issues={issues}
+            statuses={statuses}
+            members={members}
+            labels={labels}
+            userId={userId}
+            projectId={project.id}
+            canEdit={canWrite}
+            visibleStatusIds={filters.statusIds}
+            onMove={(issue, statusId) => void handleMove(issue, statusId)}
+            onAssign={(issue, assigneeId) =>
+              void handleUpdate(issue, { assigneeId })
+            }
+            onOpenDetail={(issue) => openIssue(issue)}
+          />
+        )}
     </div>
   )
 }

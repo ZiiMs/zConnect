@@ -1,5 +1,5 @@
 import { ProjectIssues } from "@/components/project-issues"
-import type { Project } from "@/lib/api"
+import type { Issue, Project } from "@/lib/api"
 
 /**
  * Project home: the Issue views with a screen-reader title. The visual
@@ -13,11 +13,19 @@ export function ProjectPage({
   canManage,
   canWriteIssues,
   userId,
+  activeIssueIdentifier,
+  deepIssue,
+  onOpenIssue,
+  onCloseIssue,
 }: {
   project: Project
   canManage: boolean
   canWriteIssues: boolean
   userId: string
+  activeIssueIdentifier?: string | null
+  deepIssue?: Issue | null
+  onOpenIssue?: (issue: Issue, opts?: { replace?: boolean }) => void
+  onCloseIssue?: () => void
 }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
@@ -27,6 +35,10 @@ export function ProjectPage({
         userId={userId}
         canWrite={canWriteIssues}
         canAdmin={canManage}
+        activeIssueIdentifier={activeIssueIdentifier}
+        deepIssue={deepIssue}
+        onOpenIssue={onOpenIssue}
+        onCloseIssue={onCloseIssue}
       />
     </div>
   )

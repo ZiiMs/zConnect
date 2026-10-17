@@ -162,3 +162,201 @@
     @apply font-sans;
   }
 }
+
+/*
+ * TipTap editor content. Tailwind's preflight strips heading sizes and list
+ * markers and there is no typography plugin, so without these the editing
+ * surface looks like plain text (no visible headings, no bullets). Mirror
+ * the read view (IssueMarkdown) so blocks render WYSIWYG as applied.
+ */
+.tiptap p {
+  margin-block: 0.25rem;
+}
+.tiptap > p:first-child {
+  margin-top: 0;
+}
+.tiptap > p:last-child {
+  margin-bottom: 0;
+}
+.tiptap h1 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1.4;
+  margin-block: 0.5rem 0.25rem;
+}
+.tiptap h2 {
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 1.4;
+  margin-block: 0.5rem 0.25rem;
+}
+.tiptap h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.5;
+  margin-block: 0.5rem 0.25rem;
+}
+.tiptap ul:not([data-type="taskList"]) {
+  list-style: disc;
+  padding-left: 1.25rem;
+  margin-block: 0.25rem;
+}
+.tiptap ol {
+  list-style: decimal;
+  padding-left: 1.25rem;
+  margin-block: 0.25rem;
+}
+.tiptap li {
+  margin-block: 0.125rem;
+}
+.tiptap li > p {
+  margin: 0;
+}
+.tiptap ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0;
+  margin-block: 0.25rem;
+}
+.tiptap ul[data-type="taskList"] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.375rem;
+}
+.tiptap ul[data-type="taskList"] input[type="checkbox"] {
+  margin-top: 0.2rem;
+  accent-color: var(--primary);
+}
+.tiptap blockquote {
+  border-left: 2px solid var(--border);
+  padding-left: 0.75rem;
+  color: var(--muted-foreground);
+  margin-block: 0.25rem;
+}
+.tiptap blockquote p {
+  margin-block: 0.125rem;
+}
+.tiptap code {
+  background: var(--muted);
+  border-radius: 0.25rem;
+  padding: 0.0625rem 0.25rem;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.tiptap pre {
+  background: color-mix(in srgb, var(--muted) 50%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  padding: 0.5rem;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  margin-block: 0.25rem;
+}
+.tiptap pre code {
+  background: transparent;
+  padding: 0;
+}
+.tiptap a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+/* Lowlight syntax tokens in fenced code blocks. */
+.tiptap .hljs-comment,
+.tiptap .hljs-quote,
+.tiptap .hljs-doctag {
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+.tiptap .hljs-keyword,
+.tiptap .hljs-selector-tag,
+.tiptap .hljs-meta .hljs-keyword {
+  color: var(--primary);
+}
+.tiptap .hljs-string,
+.tiptap .hljs-regexp,
+.tiptap .hljs-template-string {
+  color: var(--chart-1);
+}
+.tiptap .hljs-number,
+.tiptap .hljs-literal,
+.tiptap .hljs-symbol {
+  color: var(--priority-high);
+}
+.tiptap .hljs-title,
+.tiptap .hljs-title-function_,
+.tiptap .hljs-section,
+.tiptap .hljs-name {
+  color: var(--priority-medium);
+}
+.tiptap .hljs-built_in,
+.tiptap .hljs-type,
+.tiptap .hljs-class .hljs-title {
+  color: var(--chart-2);
+}
+.tiptap .hljs-attr,
+.tiptap .hljs-attribute,
+.tiptap .hljs-variable,
+.tiptap .hljs-property,
+.tiptap .hljs-template-variable {
+  color: var(--foreground);
+}
+.tiptap .hljs-emphasis {
+  font-style: italic;
+}
+.tiptap .hljs-strong {
+  font-weight: 700;
+}
+.tiptap .hljs-addition {
+  color: var(--chart-1);
+}
+.tiptap .hljs-deletion {
+  color: var(--destructive);
+}
+
+/* Fenced code blocks: no wrap by default (horizontal scroll), matching the
+   read view. Line numbers are gutter widgets (see the LineNumbers
+   extension); both are toggled per editor through the hover combo block.
+   The toggle classes live on the doc container (parent of `.tiptap`), so
+   both the legacy `.tiptap.code-wrap` and the container form match. */
+.tiptap pre {
+  overflow-x: auto;
+}
+.tiptap .code-line-number {
+  display: inline-block;
+  min-width: 2ch;
+  margin-right: 1.5ch;
+  text-align: right;
+  color: var(--muted-foreground);
+  opacity: 0.6;
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+.tiptap.code-wrap pre,
+.tiptap.code-wrap pre code,
+.code-wrap .tiptap pre,
+.code-wrap .tiptap pre code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.hide-line-numbers .code-line-number,
+.hide-line-numbers .tiptap .code-line-number,
+.tiptap.hide-line-numbers .code-line-number {
+  display: none;
+}
+
+/*
+ * Doc body surface (IssueBody always-editable): no chrome swap between
+ * read and edit. The ProseMirror root carries its own min-height so empty
+ * padding still takes clicks, and focus never draws a border/ring — the
+ * container's click handler moves focus to the end.
+ */
+.tiptap:focus {
+  outline: none;
+}
+.tiptap:empty::before {
+  content: "";
+}

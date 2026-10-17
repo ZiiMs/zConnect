@@ -1,3 +1,4 @@
+import { Plus } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 import { ExternalLinkBadge } from "@/components/external-link-badge"
 import { ExternalLinkForm } from "@/components/external-link-form"
@@ -22,6 +23,7 @@ export function ExternalLinkSection({
   const [links, setLinks] = useState<ExternalLink[]>([])
   const [events, setEvents] = useState<TimelineEvent[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [adding, setAdding] = useState(false)
 
   const refresh = useCallback(async () => {
     try {
@@ -40,6 +42,14 @@ export function ExternalLinkSection({
     void refresh()
   }, [refresh])
 
+  // Reset the add-row when navigating between issues (render-phase
+  // adjustment: the canonical way to reset state on a prop change).
+  const [addingIssue, setAddingIssue] = useState(issueIdentifier)
+  if (addingIssue !== issueIdentifier) {
+    setAddingIssue(issueIdentifier)
+    setAdding(false)
+  }
+
   async function handleAdd(url: string) {
     const created = await externalLinksApi.createExternalLink(
       issueIdentifier,
@@ -56,7 +66,20 @@ export function ExternalLinkSection({
 
   return (
     <div className="flex flex-col gap-3">
-      <h4 className="font-medium text-sm">External links</h4>
+      <div className="flex items-center gap-1">
+        <h4 className="font-medium text-sm">External links</h4>
+        {canWrite && (
+          <button
+            type="button"
+            onClick={() => setAdding((open) => !open)}
+            aria-label="Add link"
+            aria-expanded={adding}
+            className="ml-auto rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+          >
+            <Plus aria-hidden="true" size={14} />
+          </button>
+        )}
+      </div>
       {error && <p className="text-destructive text-sm">{error}</p>}
       {links.length === 0 ? (
         <p className="text-muted-foreground text-sm">No linked PRs yet.</p>
@@ -82,7 +105,9 @@ export function ExternalLinkSection({
           ))}
         </ul>
       )}
-      {canWrite && <ExternalLinkForm onAdd={handleAdd} />}
+      {canWrite && adding && (
+        <ExternalLinkForm onAdd={handleAdd} onClose={() => setAdding(false)} />
+      )}
     </div>
   )
 }

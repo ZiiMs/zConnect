@@ -1,6 +1,37 @@
 import { useEffect, useRef } from "react"
 import { type Issue, issueSchema } from "@/lib/api"
 
+/**
+ * Supabase Realtime ships raw Postgres rows (snake_case), while the app
+ * speaks camelCase `Issue`. Map before `issueSchema.safeParse` so live
+ * events parse instead of dropping. Accepts already-camel payloads too
+ * (tests, future callers) by preferring camel keys when both exist.
+ */
+export function fromRealtimeRow(raw: unknown): unknown {
+  if (typeof raw !== "object" || raw === null) return raw
+  const row = raw as Record<string, unknown>
+  const pick = (camel: string, snake: string): unknown =>
+    row[camel] !== undefined ? row[camel] : row[snake]
+  return {
+    id: row.id,
+    projectId: pick("projectId", "project_id"),
+    number: row.number,
+    keyPrefix: pick("keyPrefix", "key_prefix"),
+    identifier: row.identifier,
+    title: row.title,
+    description: row.description ?? null,
+    statusId: pick("statusId", "status_id"),
+    priority: row.priority,
+    assigneeId: pick("assigneeId", "assignee_id") ?? null,
+    dueDate: pick("dueDate", "due_date") ?? null,
+    archived: row.archived ?? false,
+    labels: row.labels ?? [],
+    parentId: pick("parentId", "parent_id") ?? null,
+    updatedAt: pick("updatedAt", "updated_at") ?? null,
+    warnings: row.warnings,
+  }
+}
+
 export interface IssueRealtimeEvent {
   type: "INSERT" | "UPDATE"
   issue: Issue
@@ -34,7 +65,7 @@ export function useIssueSubscription(
         if (cancelled) return
         const emit =
           (type: IssueRealtimeEvent["type"]) => (payload: { new: unknown }) => {
-            const parsed = issueSchema.safeParse(payload.new)
+            const parsed = issueSchema.safeParse(fromRealtimeRow(payload.new))
             if (parsed.success) handler.current({ type, issue: parsed.data })
           }
         const channel = supabase
