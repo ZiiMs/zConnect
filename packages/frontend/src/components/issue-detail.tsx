@@ -21,15 +21,16 @@ const inputClass =
   "rounded-md border border-transparent bg-transparent px-1 py-0.5 text-xs outline-none hover:border-input focus:border-input"
 
 /**
- * Two-column issue detail (Detail4 verdict): the content column carries
- * the identifier + title header, a status/priority strip, the
- * description, the subtask breakdown, and the row actions; the rail
- * carries the editable Properties plus the external-links section. It
- * stacks to one column on narrow widths. All writes run through the
- * container callbacks (`onStatusChange` / `onUpdate` /
- * `onArchivedChanged` / `onDeleted`) so mutations stay on the same
- * `api.updateIssue` paths the list/table views use; this component keeps
- * no write state of its own.
+ * Two-column issue detail (Detail4 verdict), centered at a readable
+ * measure: the content column carries the identifier + title header, a
+ * status/priority strip, the description, and the subtask breakdown;
+ * the rail shows the value-only editable Properties (no field labels)
+ * plus the external-links section. The back button and lifecycle actions
+ * (archive / delete) share a single header row. It stacks to one column
+ * on narrow widths. All writes run through the container callbacks
+ * (`onStatusChange` / `onUpdate` / `onArchivedChanged` / `onDeleted`) so
+ * mutations stay on the same `api.updateIssue` paths the list/table
+ * views use; this component keeps no write state of its own.
  */
 export function IssueDetail({
   issue,
@@ -73,8 +74,11 @@ export function IssueDetail({
     : "Unassigned"
 
   return (
-    <div data-testid={`issue-detail-${issue.identifier}`}>
-      <div className="flex items-center gap-2">
+    <div
+      data-testid={`issue-detail-${issue.identifier}`}
+      className="mx-auto w-full max-w-4xl"
+    >
+      <div className="flex items-center justify-between gap-2">
         <button
           type="button"
           onClick={onBack}
@@ -83,6 +87,14 @@ export function IssueDetail({
         >
           ← Back
         </button>
+        {canEdit && (
+          <IssueActions
+            issue={issue}
+            canAdmin={canAdmin}
+            onChanged={onArchivedChanged}
+            onDeleted={onDeleted}
+          />
+        )}
       </div>
       <div className="mt-4 grid gap-6 md:grid-cols-[1.5fr_1fr]">
         <div className="min-w-0">
@@ -103,218 +115,197 @@ export function IssueDetail({
             <h3 className="mb-2 font-medium text-sm">Subtasks</h3>
             <SubtaskList subtasks={subtasks} statuses={statuses} />
           </section>
-          {canEdit && (
-            <div className="mt-4">
-              <IssueActions
-                issue={issue}
-                canAdmin={canAdmin}
-                onChanged={onArchivedChanged}
-                onDeleted={onDeleted}
-              />
-            </div>
-          )}
         </div>
         <aside
           aria-label="Properties"
           className="h-fit rounded-md border bg-card p-3"
         >
-          <h3 className="font-semibold text-muted-foreground text-xs">
-            Properties
-          </h3>
-          <dl className="mt-1 divide-y">
-            <div className="flex items-center justify-between gap-3 py-0.5 text-xs">
-              <dt className="shrink-0 text-muted-foreground">Status</dt>
-              <dd className="flex min-w-0 items-center gap-1.5">
-                {canEdit && status ? (
-                  <PropertyMenu
-                    label={`Status for ${issue.identifier}`}
-                    triggerClassName="flex min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-accent"
-                    preview={
-                      <>
-                        <StatusIcon status={status} size={12} />
-                        {statusName}
-                      </>
-                    }
-                  >
-                    {(close) => (
-                      <>
-                        {statuses.map((option) => (
-                          <PropertyMenuOption
-                            key={option.id}
-                            selected={option.id === issue.statusId}
-                            onSelect={() => {
-                              onStatusChange(issue, option.id)
-                              close()
-                            }}
-                          >
-                            <StatusIcon status={option} size={13} />
-                            {option.name}
-                          </PropertyMenuOption>
-                        ))}
-                      </>
-                    )}
-                  </PropertyMenu>
-                ) : (
-                  <span className="flex items-center gap-1.5">
-                    {status && <StatusIcon status={status} size={12} />}
+          <div className="flex flex-col items-start gap-1.5 text-xs">
+            {canEdit && status ? (
+              <PropertyMenu
+                label={`Status for ${issue.identifier}`}
+                triggerClassName="flex min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-accent"
+                preview={
+                  <>
+                    <StatusIcon status={status} size={12} />
                     {statusName}
-                  </span>
+                  </>
+                }
+              >
+                {(close) => (
+                  <>
+                    {statuses.map((option) => (
+                      <PropertyMenuOption
+                        key={option.id}
+                        selected={option.id === issue.statusId}
+                        onSelect={() => {
+                          onStatusChange(issue, option.id)
+                          close()
+                        }}
+                      >
+                        <StatusIcon status={option} size={13} />
+                        {option.name}
+                      </PropertyMenuOption>
+                    ))}
+                  </>
                 )}
-              </dd>
-            </div>
-            <div className="flex items-center justify-between gap-3 py-0.5 text-xs">
-              <dt className="shrink-0 text-muted-foreground">Assignee</dt>
-              <dd className="flex min-w-0 items-center gap-1.5">
-                {canEdit ? (
-                  <PropertyMenu
-                    label={`Assignee for ${issue.identifier}`}
-                    triggerClassName="flex min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-accent"
-                    preview={
-                      <>
-                        <AssigneeAvatar
-                          member={assignee}
-                          userId={issue.assigneeId}
-                          size={20}
-                          tooltip={false}
-                        />
-                        <span className="truncate">
-                          {issue.assigneeId ? assigneeName : "Unassigned"}
-                        </span>
-                      </>
-                    }
-                  >
-                    {(close) => (
-                      <>
-                        <PropertyMenuOption
-                          selected={issue.assigneeId === null}
-                          onSelect={() => {
-                            onUpdate(issue, { assigneeId: null })
-                            close()
-                          }}
-                        >
-                          <span className="truncate text-muted-foreground">
-                            Unassigned
-                          </span>
-                        </PropertyMenuOption>
-                        {members.map((member) => (
-                          <PropertyMenuOption
-                            key={member.userId}
-                            selected={member.userId === issue.assigneeId}
-                            onSelect={() => {
-                              onUpdate(issue, { assigneeId: member.userId })
-                              close()
-                            }}
-                          >
-                            <UserAvatar
-                              name={memberName(member, member.userId)}
-                              image={member.image}
-                              size={20}
-                            />
-                            <span className="truncate">
-                              {memberName(member, member.userId)}
-                            </span>
-                          </PropertyMenuOption>
-                        ))}
-                      </>
-                    )}
-                  </PropertyMenu>
-                ) : issue.assigneeId ? (
-                  <span className="flex min-w-0 items-center gap-1.5">
+              </PropertyMenu>
+            ) : (
+              <span className="flex min-w-0 items-center gap-1.5 px-1 py-0.5">
+                {status && <StatusIcon status={status} size={12} />}
+                {statusName}
+              </span>
+            )}
+            {canEdit ? (
+              <PropertyMenu
+                label={`Assignee for ${issue.identifier}`}
+                triggerClassName="flex min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-accent"
+                preview={
+                  <>
                     <AssigneeAvatar
                       member={assignee}
                       userId={issue.assigneeId}
                       size={20}
+                      tooltip={false}
                     />
-                    <span className="truncate">{assigneeName}</span>
-                  </span>
-                ) : (
-                  <span className="text-muted-foreground">Unassigned</span>
-                )}
-              </dd>
-            </div>
-            <div className="flex items-center justify-between gap-3 py-0.5 text-xs">
-              <dt className="shrink-0 text-muted-foreground">Priority</dt>
-              <dd className="flex min-w-0 items-center gap-1.5">
-                {canEdit ? (
-                  <PropertyMenu
-                    label={`Priority for ${issue.identifier}`}
-                    triggerClassName="rounded-md border border-input px-2 py-0.5 text-xs hover:bg-accent"
-                    preview={issue.priority}
-                  >
-                    {(close) => (
-                      <>
-                        {PRIORITIES.map((priority) => (
-                          <PropertyMenuOption
-                            key={priority}
-                            selected={priority === issue.priority}
-                            onSelect={() => {
-                              onUpdate(issue, { priority })
-                              close()
-                            }}
-                          >
-                            {priority}
-                          </PropertyMenuOption>
-                        ))}
-                      </>
-                    )}
-                  </PropertyMenu>
-                ) : (
-                  <span>{issue.priority}</span>
-                )}
-              </dd>
-            </div>
-            <div className="flex items-center justify-between gap-3 py-1 text-xs">
-              <dt className="shrink-0 text-muted-foreground">Due date</dt>
-              <dd className="flex min-w-0 items-center gap-1.5">
-                {canEdit ? (
-                  <input
-                    type="date"
-                    aria-label={`Due date for ${issue.identifier}`}
-                    className={inputClass}
-                    defaultValue={dueDay}
-                    onBlur={(e) => {
-                      const next = e.target.value === "" ? null : e.target.value
-                      if (next !== dueDay) {
-                        onUpdate(issue, { dueDate: next })
+                    <span
+                      className={
+                        issue.assigneeId ? "truncate" : "text-muted-foreground"
                       }
-                    }}
-                  />
-                ) : (
-                  <span>{dueDay === "" ? "No due date" : dueDay}</span>
-                )}
-              </dd>
-            </div>
-            <div className="flex items-center justify-between gap-3 py-1 text-xs">
-              <dt className="shrink-0 text-muted-foreground">Labels</dt>
-              <dd className="flex min-w-0 items-center gap-1.5">
-                {issue.labels.length === 0 ? (
-                  <span className="text-muted-foreground">No labels</span>
-                ) : (
-                  <span className="flex flex-wrap justify-end gap-1">
-                    {issue.labels.map((name) => {
-                      const color = colorFor(name)
-                      return (
-                        <span
-                          key={name}
-                          className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs"
-                        >
-                          {color && (
-                            <span
-                              data-testid={`label-dot-${name}`}
-                              aria-hidden="true"
-                              className="inline-block size-2.5 rounded-full"
-                              style={{ backgroundColor: color }}
-                            />
-                          )}
-                          {name}
+                    >
+                      {issue.assigneeId ? assigneeName : "Assign"}
+                    </span>
+                  </>
+                }
+              >
+                {(close) => (
+                  <>
+                    <PropertyMenuOption
+                      selected={issue.assigneeId === null}
+                      onSelect={() => {
+                        onUpdate(issue, { assigneeId: null })
+                        close()
+                      }}
+                    >
+                      Unassigned
+                    </PropertyMenuOption>
+                    {members.map((member) => (
+                      <PropertyMenuOption
+                        key={member.userId}
+                        selected={member.userId === issue.assigneeId}
+                        onSelect={() => {
+                          onUpdate(issue, { assigneeId: member.userId })
+                          close()
+                        }}
+                      >
+                        <UserAvatar
+                          name={memberName(member, member.userId)}
+                          image={member.image}
+                          size={20}
+                        />
+                        <span className="truncate">
+                          {memberName(member, member.userId)}
                         </span>
-                      )
-                    })}
-                  </span>
+                      </PropertyMenuOption>
+                    ))}
+                  </>
                 )}
-              </dd>
-            </div>
-          </dl>
+              </PropertyMenu>
+            ) : issue.assigneeId ? (
+              <span className="flex min-w-0 items-center gap-1.5 px-1 py-0.5">
+                <AssigneeAvatar
+                  member={assignee}
+                  userId={issue.assigneeId}
+                  size={20}
+                />
+                <span className="truncate">{assigneeName}</span>
+              </span>
+            ) : (
+              <span className="flex items-center gap-1.5 px-1 py-0.5 text-muted-foreground">
+                <AssigneeAvatar member={assignee} userId={null} size={20} />
+                Unassigned
+              </span>
+            )}
+            {canEdit ? (
+              <PropertyMenu
+                label={`Priority for ${issue.identifier}`}
+                triggerClassName={`rounded-md border border-input px-2 py-0.5 text-xs hover:bg-accent ${
+                  issue.priority === "None" ? "text-muted-foreground" : ""
+                }`}
+                preview={
+                  issue.priority === "None" ? "Set priority" : issue.priority
+                }
+              >
+                {(close) => (
+                  <>
+                    {PRIORITIES.map((priority) => (
+                      <PropertyMenuOption
+                        key={priority}
+                        selected={priority === issue.priority}
+                        onSelect={() => {
+                          onUpdate(issue, { priority })
+                          close()
+                        }}
+                      >
+                        {priority}
+                      </PropertyMenuOption>
+                    ))}
+                  </>
+                )}
+              </PropertyMenu>
+            ) : (
+              <span className="px-1 py-0.5">{issue.priority}</span>
+            )}
+            {canEdit ? (
+              <input
+                type="date"
+                aria-label={`Due date for ${issue.identifier}`}
+                className={inputClass}
+                defaultValue={dueDay}
+                onBlur={(e) => {
+                  const next = e.target.value === "" ? null : e.target.value
+                  if (next !== dueDay) {
+                    onUpdate(issue, { dueDate: next })
+                  }
+                }}
+              />
+            ) : (
+              <span
+                className={`px-1 py-0.5 ${
+                  dueDay === "" ? "text-muted-foreground" : ""
+                }`}
+              >
+                {dueDay === "" ? "No due date" : dueDay}
+              </span>
+            )}
+            {issue.labels.length === 0 ? (
+              <span className="px-1 py-0.5 text-muted-foreground">
+                No labels
+              </span>
+            ) : (
+              <span className="flex flex-wrap gap-1 px-1 py-0.5">
+                {issue.labels.map((name) => {
+                  const color = colorFor(name)
+                  return (
+                    <span
+                      key={name}
+                      className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs"
+                    >
+                      {color && (
+                        <span
+                          data-testid={`label-dot-${name}`}
+                          aria-hidden="true"
+                          className="inline-block size-2.5 rounded-full"
+                          style={{ backgroundColor: color }}
+                        />
+                      )}
+                      {name}
+                    </span>
+                  )
+                })}
+              </span>
+            )}
+          </div>
           <div className="mt-3 border-t pt-3">
             <ExternalLinkSection
               issueIdentifier={issue.identifier}
