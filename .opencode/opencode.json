@@ -10,11 +10,6 @@
         "type": "remote",
         "url": "https://mcp.better-auth.com/mcp",
         "disabled": false
-      },
-      "git-cafe": {
-        "type": "remote",
-        "url": "https://git.cafe/mcp",
-        "disabled": false
       }
     }
   }
