@@ -138,9 +138,27 @@ describe("issue detail", () => {
     ).toBeInTheDocument()
     expect(within(detail).getAllByText("Backlog").length).toBeGreaterThan(0)
     expect(within(detail).getByLabelText("Properties")).toBeInTheDocument()
+    // Lifecycle actions moved out of the content column into the header row.
+    expect(
+      within(detail).getByRole("button", { name: /^archive$/i })
+    ).toBeInTheDocument()
     expect(
       await within(detail).findByText(/no linked prs/i)
     ).toBeInTheDocument()
+  })
+
+  test("empty assignee and priority read as call-to-action placeholders", () => {
+    renderDetail({ ...baseIssue, assigneeId: null, priority: "None" })
+
+    expect(screen.getByText("Assign")).toBeInTheDocument()
+    expect(screen.getByText("Set priority")).toBeInTheDocument()
+  })
+
+  test("an assigned issue shows the assignee instead of the placeholder", () => {
+    renderDetail({ ...baseIssue, assigneeId: "user-1" })
+
+    expect(screen.queryByText("Assign")).not.toBeInTheDocument()
+    expect(screen.getByText("user-1")).toBeInTheDocument()
   })
 
   test("renders subtasks and label chips from container data", () => {
