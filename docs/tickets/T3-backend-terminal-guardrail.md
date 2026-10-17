@@ -1,6 +1,6 @@
 # T3 — Backend: terminal-three completion guardrail
 
-GitCafe: #14 (`ready-for-agent`). Implements ADR-0001 (done-semantics slice).
+GitHub: #3 (`ready-for-agent`). Implements ADR-0001 (done-semantics slice).
 
 ## Background
 

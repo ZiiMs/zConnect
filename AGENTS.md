@@ -8,15 +8,15 @@ formatting are Biome, configured at the repo root.
 
 ### Issue tracker
 
-Issues live in GitCafe (`ziim/zConnect`), driven through the `cafe` CLI, which must
-already be authenticated (`cafe auth status`). This supersedes any personal instruction to use Plane — for
-this repository, GitCafe wins. See `docs/agents/issue-tracker.md`.
+Issues live in GitHub (`ZiiMs/zConnect`), driven through the `gh` CLI, which must already be
+authenticated (`gh auth status`). This supersedes any personal instruction to use Plane — for
+this repository, GitHub wins. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
 The five canonical roles, each label string equal to its name: `needs-triage`, `needs-info`,
-`ready-for-agent`, `ready-for-human`, `wontfix`. The `cafe` CLI takes labels by name —
-see `docs/agents/triage-labels.md`.
+`ready-for-agent`, `ready-for-human`, `wontfix`. `gh` takes labels by name (`--add-label`
+/ `--remove-label`) — see `docs/agents/triage-labels.md`.
 
 ### Domain docs
 

@@ -1,6 +1,6 @@
 # T1 — Backend: six-category enum + migration
 
-GitCafe: #12 (`ready-for-agent`). Implements ADR-0001 (domain slice 1).
+GitHub: #1 (`ready-for-agent`). Implements ADR-0001 (domain slice 1).
 
 ## Background
 
@@ -32,5 +32,4 @@ None. Blocks T2, T3, T4.
 
 ## Suggested label
 
-`ready-for-agent` (spec'd by ADR-0001; needs a GitCafe label-ID mapping entry
-at import time — see `docs/agents/triage-labels.md`).
+`ready-for-agent` (spec'd by ADR-0001 — see `docs/agents/triage-labels.md`).

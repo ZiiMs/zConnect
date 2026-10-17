@@ -1,6 +1,6 @@
 # T2 — Backend: `createProject` seeds workflow + sample issues
 
-GitCafe: #13 (`ready-for-agent`). Implements ADR-0001 (seeding slice).
+GitHub: #2 (`ready-for-agent`). Implements ADR-0001 (seeding slice).
 
 ## Background
 
