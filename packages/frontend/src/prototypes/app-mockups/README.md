@@ -129,7 +129,6 @@ src/prototypes/app-mockups/
   use-proto-params.ts              URL as the state store (+ legacy mapping)
   prototype-root.tsx               nav + content composition
   prototype-switcher.tsx           pill bar + Tune panel (dev-only)
-  real-theme.tsx                   sub-shape A: themes the real app via ?theme / ?style/?color/?mode
   themes.css                       8 styles + 11 colors × light/dark (hand-made)
   themes.registry.css              GENERATED — 42 tweakcn themes × light/dark
   registry-themes.ts               GENERATED — registry list (key, label, radius, fonts)
@@ -197,16 +196,16 @@ renders. Deliberate divergences:
 - Base font is Geist Mono (`@fontsource-variable/geist-mono`), via `@theme inline`,
   since a variable override cannot reach the inlined stack.
 
-`THEME_IDENTITIES` and the registry shortlists are untouched, so both are still
-available for comparison.
+`THEME_IDENTITIES` and the registry shortlists were left untouched by the fold-in, but
+nothing in the app surfaces them any more now that the Round 2 overlay is gone.
 
-## Round 2 (2026-10-16) — the theme, on the real app
+## Round 2 (2026-10-16) — the theme, on the real app — OVERLAY REMOVED (2026-10-17)
 
 **Question:** which identity should the app wear, now that the first pick has shipped?
 
 The gallery answers a *structural* question on hand-built mockups. For an identity-only
 question where the layouts stay, the mockups are the wrong surface: nothing in
-`variants/*` is a real component. So this round is **sub-shape A** — the variants live on
+`variants/*` is a real component. So this round was **sub-shape A** — the variants lived on
 the real screens.
 
 ```
@@ -214,20 +213,24 @@ bun run --cwd packages/frontend dev
 http://localhost:5173/?theme=catppuccin&mode=dark
 ```
 
-`real-theme.tsx` pushes `?theme=` (or `?style=` `?color=` `?mode=`) onto
-`document.documentElement` as `data-proto-*`. `themes.css` and
-`themes.registry.css` target `html[data-proto-*]` (specificity 0,1,1) which beats
-the app's own `:root` and `.dark` blocks, so the whole app re-skins with **no
-component changes**. Dev-only: `main.tsx` imports it behind `import.meta.env.DEV`,
-so the module, its CSS and its fonts are dropped from the production build.
+The overlay was `real-theme.tsx`, a dev-only `theme` bar pinned to the bottom of the real
+app: ← / → walked all 42 registry themes and then the `THEME_IDENTITIES` shortlist,
+**Tune** opened every axis (registry 42, style 8, color 11, mode 2, shortlist 7), **copy
+index.css** printed the `:root` / `.dark` blocks, and **off** cleared the params. It pushed
+`?theme=` (or `?style=` `?color=` `?mode=`) onto `document.documentElement` as
+`data-proto-*`; `themes.css` and `themes.registry.css` target `html[data-proto-*]`
+(specificity 0,1,1), which beats the app's own `:root` and `.dark` blocks, so the whole app
+re-skinned with **no component changes**. `main.tsx` imported it behind
+`import.meta.env.DEV`, so the module, its CSS and its font never reached the production
+build.
 
-- Arrows walk all 42 registry themes, then the `THEME_IDENTITIES` shortlist.
-- **Tune** opens every axis: registry (42), style (8), color (11), mode (2), shortlist (7).
-- **copy index.css** prints the `:root` / `.dark` token blocks to paste over `src/index.css`.
-- **off** clears the params and returns the app to its shipped theme.
-- It does nothing until a param is present, so ordinary dev sessions are untouched.
-- While active it wins the `.dark` class from `ThemeProvider`; a MutationObserver keeps
-  `?mode=` authoritative.
+**Removed on 2026-10-17**, with the round closed: the module and the `main.tsx` hook are
+gone, so the real app carries no prototyping bar and no longer reads
+`?theme=` / `?style=` / `?color=` / `?mode=`. The shipped identity is unchanged — Darkmatter
+folded into `src/index.css` (see the section above). What the round needed and outlives it
+stays, because the gallery page uses it: `themes.css`, `themes.registry.css`,
+`registry-themes.ts` and `theme-fonts.ts`. `THEME_IDENTITIES` stays in `prototype-config.ts`
+too — the recorded shortlist now has no UI pointing at it.
 
 ## Rail: borderless, on the app frame (2026-10-16)
 
@@ -314,8 +317,9 @@ the label cap, and the accentless surface.
 - Whether two lines of title is enough — the clamp itself was accepted and shipped with the
   card.
 
-- Whether the mono base font survives the review (`sans-baseline` and `graphite` in the
-  shortlist are the direct alternatives).
+- Whether the mono base font survives (`sans-baseline` and `graphite` in the
+  `THEME_IDENTITIES` shortlist are the direct alternatives — no longer previewable in the
+  app now that the overlay is gone).
 - Whether nav and content are picked independently (assumed yes here) or curated as pairs.
 - Whether the board deserves to be the home screen or a view you switch to.
 - Whether the detail should be a pane or a page (now both exist as Detail1 vs Detail2–4).
