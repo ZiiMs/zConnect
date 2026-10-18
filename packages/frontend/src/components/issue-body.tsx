@@ -11,6 +11,7 @@ import { EditorContent, useEditor } from "@tiptap/react"
 import StarterKit from "@tiptap/starter-kit"
 import { common, createLowlight } from "lowlight"
 import { Check, Copy, Settings } from "lucide-react"
+import type { CSSProperties } from "react"
 import { useEffect, useRef, useState } from "react"
 import { IssueMarkdown } from "@/components/issue-markdown"
 import type { BodySaveState } from "@/hooks/use-autosave-issue"
@@ -291,6 +292,95 @@ function filterSlashItems(query: string): SlashItem[] {
   )
 }
 
+/**
+ * Viewport-aware slash menu: opens below the caret when there is room,
+ * flips above it when the space below is tight but there is more room
+ * above. Horizontal position is pre-clamped in `refreshSlash`; the menu
+ * also caps its height with a scroll so it never pushes off-screen.
+ */
+function SlashMenu({
+  slashPos,
+  filtered,
+  slashIndex,
+  setSlashIndex,
+  runSlash,
+}: {
+  slashPos: {
+    belowTop: number
+    aboveTop: number
+    left: number
+    viewportTop: number
+    viewportBottom: number
+  } | null
+  filtered: SlashItem[]
+  slashIndex: number
+  setSlashIndex: (i: number) => void
+  runSlash: (item: SlashItem) => void
+}) {
+  let style: CSSProperties
+  if (!slashPos) {
+    style = { top: "100%", left: 0 }
+  } else {
+    const estimatedHeight = Math.min(320, filtered.length * 60 + 24)
+    const spaceBelow =
+      typeof window === "undefined"
+        ? Number.POSITIVE_INFINITY
+        : window.innerHeight - slashPos.viewportBottom
+    const spaceAbove = slashPos.viewportTop
+    const openUp = spaceBelow < estimatedHeight + 8 && spaceAbove > spaceBelow
+    style = openUp
+      ? {
+          top: slashPos.aboveTop,
+          left: slashPos.left,
+          transform: "translateY(-100%)",
+        }
+      : { top: slashPos.belowTop, left: slashPos.left }
+  }
+  return (
+    <div
+      role="listbox"
+      aria-label="Slash commands"
+      className="absolute z-10 max-h-[320px] w-64 overflow-auto rounded-md border bg-popover p-1 shadow-md"
+      style={style}
+    >
+      {SLASH_GROUPS.map((group) => {
+        const items = filtered.filter((item) => item.group === group)
+        if (items.length === 0) return null
+        const firstIndex = filtered.indexOf(items[0] as SlashItem)
+        return (
+          <div key={group}>
+            {firstIndex > 0 && (
+              <hr className="mx-1 my-1 border-t border-border" />
+            )}
+            {items.map((item) => {
+              const i = filtered.indexOf(item)
+              return (
+                <button
+                  key={item.title}
+                  type="button"
+                  role="option"
+                  aria-selected={i === slashIndex}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => runSlash(item)}
+                  onMouseEnter={() => setSlashIndex(i)}
+                  className={`flex w-full flex-col rounded px-2 py-1 text-left text-sm hover:bg-accent ${
+                    i === slashIndex ? "bg-accent" : ""
+                  }`}
+                >
+                  <span className="font-medium">{item.title}</span>
+                  <span className="text-muted-foreground text-xs">
+                    {item.hint}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 export function IssueBody({
   identifier,
   markdown,
@@ -301,6 +391,9 @@ export function IssueBody({
   onFlush,
   onCancel,
   onRetry,
+  compact = false,
+  editorLabel,
+  placeholder,
 }: {
   identifier: string
   markdown: string
@@ -311,6 +404,9 @@ export function IssueBody({
   onFlush: () => void
   onCancel: () => void
   onRetry: () => void
+  compact?: boolean
+  editorLabel?: string
+  placeholder?: string
 }) {
   const [slash, setSlash] = useState<{
     query: string
@@ -318,8 +414,14 @@ export function IssueBody({
   } | null>(null)
   const [slashIndex, setSlashIndex] = useState(0)
   const [slashPos, setSlashPos] = useState<{
-    top: number
+    /** Top edge for the below-anchor placement (container-relative). */
+    belowTop: number
+    /** Top edge for the above-anchor placement (container-relative, before translate). */
+    aboveTop: number
     left: number
+    /** Viewport Y of the anchor, for flip decisions. */
+    viewportTop: number
+    viewportBottom: number
   } | null>(null)
   // Bumped on content changes so the hover toolbar position stays fresh and
   // the empty-placeholder overlay re-evaluates (`editor.isEmpty`).
@@ -379,9 +481,11 @@ export function IssueBody({
           // a page when empty. Clicking padding is handled by the container
           // (focus end) so the whole block is type-ready. Native spellcheck
           // squiggles off: this is a doc/code surface, not a form field.
-          class:
-            "min-h-48 cursor-text px-2 py-2 text-sm break-words outline-none",
-          "aria-label": `Description for ${identifier}`,
+          // Compact (subtask composer) uses a shorter min-height.
+          class: compact
+            ? "min-h-20 cursor-text px-2 py-2 text-sm break-words outline-none"
+            : "min-h-48 cursor-text px-2 py-2 text-sm break-words outline-none",
+          "aria-label": editorLabel ?? `Description for ${identifier}`,
           spellcheck: "false",
           autocorrect: "off",
           autocapitalize: "off",
@@ -507,34 +611,66 @@ export function IssueBody({
   /**
    * Cursor fallback so the combo block stays keyboard-reachable: when the
    * caret sits inside (or hugs the edge of) a fence, that block drives the
-   * toolbar even without a hover.
+   * toolbar even without a hover. Returns the block's DOM rect so the
+   * toolbar docks top-right inside the fence — same as hover — instead of
+   * drifting to the caret's x position.
    */
   function cursorCodeBlock(): {
     pos: number
     language: string
     text: string
+    top: number
+    right: number
   } | null {
-    if (!editor) return null
+    if (!editor || !containerRef.current) return null
+    const box = containerRef.current.getBoundingClientRect()
+    const rectOf = (blockPos: number) => {
+      try {
+        const el = editor.view.nodeDOM(blockPos) as HTMLElement | null
+        const pre =
+          el?.tagName === "PRE"
+            ? el
+            : ((el?.closest?.("pre") as HTMLElement | null) ??
+              el?.querySelector?.("pre"))
+        if (!pre) return null
+        const r = pre.getBoundingClientRect()
+        return {
+          top: r.top - box.top + 4,
+          right: box.right - r.right + 4,
+        }
+      } catch {
+        return null
+      }
+    }
     try {
       const { $from } = editor.state.selection
       for (let d = $from.depth; d > 0; d -= 1) {
         const node = $from.node(d)
         if (node.type.name === "codeBlock") {
+          const rect = rectOf($from.before(d))
+          if (!rect) return null
           return {
             pos: $from.pos,
             language:
               (node.attrs.language as string | undefined) ?? "plaintext",
             text: node.textContent,
+            top: rect.top,
+            right: rect.right,
           }
         }
       }
       const near = $from.nodeAfter ?? $from.nodeBefore
       if (near?.type.name === "codeBlock") {
         const pos = $from.nodeAfter ? $from.pos + 1 : $from.pos - 1
+        const rect = rectOf($from.nodeAfter ? $from.pos + 1 : $from.pos - 1)
+        // Adjacent (not inside): still dock top-right when resolvable,
+        // otherwise pin to the container's top-right.
         return {
           pos,
           language: (near.attrs.language as string | undefined) ?? "plaintext",
           text: near.textContent,
+          top: rect?.top ?? 4,
+          right: rect?.right ?? 4,
         }
       }
     } catch {
@@ -543,28 +679,8 @@ export function IssueBody({
     return null
   }
 
-  function cursorToolbarPos(): { top: number; right: number } | null {
-    if (!editor || !containerRef.current) return null
-    try {
-      const coords = editor.view.coordsAtPos(editor.state.selection.$from.pos)
-      const box = containerRef.current.getBoundingClientRect()
-      return {
-        top: coords.bottom - box.top + 4,
-        right: Math.max(4, box.right - coords.left + 4),
-      }
-    } catch {
-      return { top: 4, right: 4 }
-    }
-  }
-
   const hovered = hoveredCodeBlock()
-  const cursorFallback = hovered === null ? cursorCodeBlock() : null
-  const cursorPos = cursorFallback !== null ? cursorToolbarPos() : null
-  const toolbar =
-    hovered ??
-    (cursorFallback !== null && cursorPos !== null
-      ? { ...cursorFallback, top: cursorPos.top, right: cursorPos.right }
-      : null)
+  const toolbar = hovered ?? cursorCodeBlock()
 
   function setCodeLanguage(language: string) {
     if (!editor || toolbar === null) return
@@ -647,9 +763,21 @@ export function IssueBody({
       try {
         const coords = nextEditor.view.coordsAtPos(hit.range.to)
         const box = containerRef.current.getBoundingClientRect()
+        // Clamp horizontally so the w-64 menu stays inside the container
+        // and, when the container hugs the viewport edge, inside the window.
+        const maxLeftInView = window.innerWidth - box.left - 272
+        const maxLeft = Math.min(box.width - 272, maxLeftInView)
+        const rawLeft = coords.left - box.left
+        const left =
+          maxLeft > 0
+            ? Math.max(0, Math.min(rawLeft, maxLeft))
+            : Math.max(0, rawLeft)
         setSlashPos({
-          top: coords.bottom - box.top + 4,
-          left: Math.max(0, coords.left - box.left),
+          belowTop: coords.bottom - box.top + 4,
+          aboveTop: coords.top - box.top - 4,
+          left,
+          viewportTop: coords.top,
+          viewportBottom: coords.bottom,
         })
       } catch {
         setSlashPos(null)
@@ -738,14 +866,32 @@ export function IssueBody({
     return <IssueMarkdown markdown={markdown} />
   }
 
-  const isEmpty = editor ? editor.isEmpty : markdown.trim() === ""
+  // Empty-state placeholder shows only for a single empty paragraph. Once
+  // the doc holds any other block (code fence, list, heading, …) — even with
+  // no text yet — the placeholder hides so it can't collide with the block
+  // or its toolbar.
+  const isEmpty = (() => {
+    if (!editor) return markdown.trim() === ""
+    try {
+      const doc = editor.state.doc
+      return (
+        doc.childCount === 1 &&
+        doc.firstChild?.type.name === "paragraph" &&
+        (doc.firstChild?.textContent ?? "") === ""
+      )
+    } catch {
+      return editor.isEmpty
+    }
+  })()
 
   return (
     <div>
-      <div className="mb-1 flex items-center gap-2">
-        <span className="text-muted-foreground text-xs">Description</span>
-        <StatusDot state={saveState} onRetry={onRetry} />
-      </div>
+      {!compact && (
+        <div className="mb-1 flex items-center gap-2">
+          <span className="text-muted-foreground text-xs">Description</span>
+          <StatusDot state={saveState} onRetry={onRetry} />
+        </div>
+      )}
       {saveError && (
         <p className="mb-1 text-destructive text-xs">
           Couldn&apos;t save —{" "}
@@ -838,60 +984,19 @@ export function IssueBody({
             aria-hidden="true"
             className="pointer-events-none absolute top-2 left-2 text-sm text-muted-foreground"
           >
-            Write a description…
+            {placeholder ?? "Click anywhere to type. Type / for commands."}
           </div>
         )}
         {editor && slash && filtered.length > 0 && (
-          <div
-            role="listbox"
-            aria-label="Slash commands"
-            className="absolute z-10 w-64 rounded-md border bg-popover p-1 shadow-md"
-            style={
-              slashPos
-                ? { top: slashPos.top, left: slashPos.left }
-                : { top: "100%", left: 0 }
-            }
-          >
-            {SLASH_GROUPS.map((group) => {
-              const items = filtered.filter((item) => item.group === group)
-              if (items.length === 0) return null
-              const firstIndex = filtered.indexOf(items[0] as SlashItem)
-              return (
-                <div key={group}>
-                  {firstIndex > 0 && (
-                    <hr className="mx-1 my-1 border-t border-border" />
-                  )}
-                  {items.map((item) => {
-                    const i = filtered.indexOf(item)
-                    return (
-                      <button
-                        key={item.title}
-                        type="button"
-                        role="option"
-                        aria-selected={i === slashIndex}
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => runSlash(item)}
-                        onMouseEnter={() => setSlashIndex(i)}
-                        className={`flex w-full flex-col rounded px-2 py-1 text-left text-sm hover:bg-accent ${
-                          i === slashIndex ? "bg-accent" : ""
-                        }`}
-                      >
-                        <span className="font-medium">{item.title}</span>
-                        <span className="text-muted-foreground text-xs">
-                          {item.hint}
-                        </span>
-                      </button>
-                    )
-                  })}
-                </div>
-              )
-            })}
-          </div>
+          <SlashMenu
+            slashPos={slashPos}
+            filtered={filtered}
+            slashIndex={slashIndex}
+            setSlashIndex={setSlashIndex}
+            runSlash={runSlash}
+          />
         )}
       </div>
-      <p className="mt-1 text-muted-foreground text-xs">
-        Click anywhere to type. Type / for commands.
-      </p>
     </div>
   )
 }

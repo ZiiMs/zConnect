@@ -1,5 +1,6 @@
 import { MoreHorizontal, Tag } from "lucide-react"
 import { useState } from "react"
+import { IssueBody } from "@/components/issue-body"
 import { LabelPicker } from "@/components/label-picker"
 import { PropertyMenu, PropertyMenuOption } from "@/components/property-menu"
 import { AssigneeAvatar, UserAvatar } from "@/components/user-avatar"
@@ -26,9 +27,11 @@ const iconButtonClass =
 
 /**
  * Inline sub-issue composer: the Linear-style quick-add row in the subtask
- * footer. Title + one-line description on top, every property as a ghost
- * chip along the bottom (status lives on the leading circle), Cancel / Create
- * at the end. No DB row until commit; whitespace titles show an inline hint.
+ * footer. Title + rich description (TipTap with / slash commands) on top,
+ * every property as a ghost chip along the bottom (status lives on the
+ * leading circle), Cancel / Create at the end. No DB row until commit;
+ * whitespace titles show an inline hint. The panel sits on the sidebar
+ * surface so a new draft reads as obviously separate from saved cards.
  */
 export function SubtaskComposer({
   parent,
@@ -104,7 +107,7 @@ export function SubtaskComposer({
   return (
     <div
       data-testid="subtask-composer"
-      className="rounded-md border bg-card p-3"
+      className="rounded-md border border-sidebar-border bg-sidebar p-3"
     >
       <div className="flex items-center gap-2">
         <PropertyMenu
@@ -161,22 +164,21 @@ export function SubtaskComposer({
           className="min-w-0 flex-1 bg-transparent text-sm font-medium outline-none placeholder:text-muted-foreground"
         />
       </div>
-      <input
-        aria-label="Subtask description"
-        placeholder="Add description..."
-        value={body}
-        onChange={(e) => setBody(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault()
-            void commit()
-          } else if (e.key === "Escape") {
-            e.preventDefault()
-            handleCancel()
-          }
-        }}
-        className="mt-1 w-full bg-transparent px-6 text-sm outline-none placeholder:text-muted-foreground"
-      />
+      <div className="mt-1 px-6">
+        <IssueBody
+          identifier="new-subtask"
+          markdown={body}
+          saveState="saved"
+          saveError={null}
+          canEdit={true}
+          onChange={setBody}
+          onFlush={() => {}}
+          onCancel={() => {}}
+          onRetry={() => {}}
+          compact
+          editorLabel="Subtask description"
+        />
+      </div>
       {titleHint && (
         <p className="mt-1 text-destructive text-xs">Title is required</p>
       )}
