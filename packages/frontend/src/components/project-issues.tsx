@@ -796,6 +796,7 @@ export function ProjectIssues({
             onStatusChange={(issue, statusId) =>
               void handleStatusChange(issue, statusId)
             }
+            onUpdate={(issue, input) => void handleUpdate(issue, input)}
             onAddIssue={
               canWrite
                 ? (statusId) => {

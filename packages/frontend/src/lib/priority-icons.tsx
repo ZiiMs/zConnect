@@ -1,48 +1,25 @@
-import {
-  ArrowDown,
-  ArrowUp,
-  CircleMinus,
-  Equal,
-  type LucideIcon,
-  TriangleAlert,
-} from "lucide-react"
 import type { Priority } from "@/lib/api"
 
 /**
- * Priority marks: one glyph per Priority, tinted by that priority's own token
- * and softened toward the muted palette so the mark reads beside an
- * identifier without competing with it.
- *
- * `in oklab`, not `in oklch`: the mix partner is near-achromatic, and a polar
- * space interpolates its (arbitrary) hue too — an `oklch` mix dragged High's
- * amber far enough toward red to collide with Urgent. oklab is rectangular,
- * so only chroma scales and every hue survives. Low and None already sit on
- * `--muted-foreground`, so the mix collapses to that value for them.
+ * Priority marks: reception-style signal bars, icon-only. The filled bar
+ * count carries the urgency — None shows no bars (all four greyed out),
+ * Low one, Medium two, High three, Urgent all four — and the fill color
+ * warms with the level, from the muted tone up to destructive red. Bars
+ * read at a glance beside an identifier without competing with it; the
+ * accessible name (not the glyph) carries the exact priority.
  */
-const PRIORITY_MARKS: Record<
+const PRIORITY_LEVELS: Record<
   Priority,
-  { icon: LucideIcon; label: string; tone: string }
+  { level: number; label: string; tone: string }
 > = {
-  Urgent: {
-    icon: TriangleAlert,
-    label: "Urgent",
-    tone: "var(--destructive)",
-  },
-  High: { icon: ArrowUp, label: "High", tone: "var(--priority-high)" },
-  Medium: { icon: Equal, label: "Medium", tone: "var(--priority-medium)" },
-  Low: { icon: ArrowDown, label: "Low", tone: "var(--muted-foreground)" },
-  // Circled, not bare Minus: the ring keeps the mark visible at the muted
-  // tone, where a single stroke reads as a layout hairline or vanishes.
-  None: {
-    icon: CircleMinus,
-    label: "No priority",
-    tone: "var(--muted-foreground)",
-  },
+  Urgent: { level: 4, label: "Urgent", tone: "var(--destructive)" },
+  High: { level: 3, label: "High", tone: "var(--priority-high)" },
+  Medium: { level: 2, label: "Medium", tone: "var(--priority-medium)" },
+  Low: { level: 1, label: "Low", tone: "var(--muted-foreground)" },
+  None: { level: 0, label: "No priority", tone: "var(--muted-foreground)" },
 }
 
-function priorityTone(priority: Priority): string {
-  return `color-mix(in oklab, ${PRIORITY_MARKS[priority].tone} 60%, var(--muted-foreground))`
-}
+const BAR_POSITIONS = [0, 1, 2, 3]
 
 /**
  * Priority mark, icon-only. `label` supplies the issue-scoped accessible name
@@ -58,17 +35,33 @@ export function PriorityMark({
   size?: number
   label?: string
 }) {
-  const mark = PRIORITY_MARKS[priority]
-  const Glyph = mark.icon
+  const mark = PRIORITY_LEVELS[priority]
   return (
     <span
       role="img"
       aria-label={label ?? mark.label}
       title={mark.label}
       className="inline-flex shrink-0 items-center"
-      style={{ color: priorityTone(priority) }}
     >
-      <Glyph aria-hidden="true" size={size} />
+      <svg aria-hidden="true" width={size} height={size} viewBox="0 0 16 16">
+        {BAR_POSITIONS.map((position) => {
+          const height = 4 + position * 3
+          const filled = position < mark.level
+          return (
+            <rect
+              key={position}
+              x={1 + position * 4}
+              y={15 - height}
+              width={3}
+              height={height}
+              rx={0.8}
+              data-filled={filled}
+              fill={filled ? mark.tone : "var(--muted-foreground)"}
+              opacity={filled ? 1 : 0.35}
+            />
+          )
+        })}
+      </svg>
     </span>
   )
 }

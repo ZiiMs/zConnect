@@ -207,11 +207,8 @@ describe("project issues list view", () => {
     setup()
     await screen.findByText("WEB-1")
 
-    const row = screen.getByTestId("issue-WEB-1")
-    await user.selectOptions(
-      within(row).getByLabelText(/status for WEB-1/i),
-      "st-2"
-    )
+    await user.click(screen.getByRole("button", { name: /status for WEB-1/i }))
+    await user.click(screen.getByRole("menuitemradio", { name: "Shipped" }))
 
     await waitFor(() =>
       expect(updateIssue).toHaveBeenCalledWith("WEB-1", { statusId: "st-2" })
@@ -224,11 +221,8 @@ describe("project issues list view", () => {
     setup()
     await screen.findByText("WEB-1")
 
-    const row = screen.getByTestId("issue-WEB-1")
-    await user.selectOptions(
-      within(row).getByLabelText(/status for WEB-1/i),
-      "st-2"
-    )
+    await user.click(screen.getByRole("button", { name: /status for WEB-1/i }))
+    await user.click(screen.getByRole("menuitemradio", { name: "Shipped" }))
 
     expect(await screen.findByText(/invalid status/i)).toBeInTheDocument()
   })
@@ -270,11 +264,8 @@ describe("project issues list view", () => {
     setup()
     await screen.findByText("WEB-1")
 
-    const row = screen.getByTestId("issue-WEB-1")
-    await user.selectOptions(
-      within(row).getByLabelText(/status for WEB-1/i),
-      "st-2"
-    )
+    await user.click(screen.getByRole("button", { name: /status for WEB-1/i }))
+    await user.click(screen.getByRole("menuitemradio", { name: "Shipped" }))
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/open subtask/i)
   })
