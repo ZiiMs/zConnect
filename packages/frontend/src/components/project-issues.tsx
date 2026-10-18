@@ -618,7 +618,7 @@ export function ProjectIssues({
       className="flex min-h-0 flex-1 flex-col gap-2"
       aria-busy={refreshing || undefined}
     >
-      <div className="flex h-8 items-center gap-1.5">
+      <div className="flex h-7 items-center gap-1.5">
         <Breadcrumb items={breadcrumbItems} />
         <button
           type="button"
@@ -663,6 +663,7 @@ export function ProjectIssues({
           )}
         </div>
       </div>
+      <div aria-hidden="true" className="-mx-4 border-border border-b" />
       {loading && (
         <p className="text-muted-foreground text-sm">Loading issues…</p>
       )}
