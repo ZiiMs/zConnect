@@ -21,10 +21,30 @@ describe("PriorityMark", () => {
     })
   }
 
-  test("None uses a boxed glyph that stays visible at the muted tone", () => {
+  test("None shows no bars, only greyed-out ghosts", () => {
     const { container } = render(<PriorityMark priority="None" />)
-    // A bare Minus is a single faint stroke; the circled glyph survives.
-    expect(container.querySelector("svg.lucide-circle-minus")).not.toBeNull()
+    // Four ghost bars keep the mark's footprint; none are filled.
+    const bars = container.querySelectorAll('svg rect[data-filled="true"]')
+    expect(bars).toHaveLength(0)
+    expect(container.querySelectorAll("svg rect")).toHaveLength(4)
+  })
+
+  test("higher priorities fill more bars", () => {
+    const levels: { priority: Priority; filled: number }[] = [
+      { priority: "Low", filled: 1 },
+      { priority: "Medium", filled: 2 },
+      { priority: "High", filled: 3 },
+      { priority: "Urgent", filled: 4 },
+    ]
+    for (const { priority, filled } of levels) {
+      const { container, unmount } = render(
+        <PriorityMark priority={priority} />
+      )
+      expect(
+        container.querySelectorAll('svg rect[data-filled="true"]')
+      ).toHaveLength(filled)
+      unmount()
+    }
   })
 
   test("label scopes the accessible name to the issue", () => {

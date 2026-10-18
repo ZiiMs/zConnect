@@ -124,11 +124,8 @@ describe("issue list", () => {
       />
     )
 
-    const row = screen.getByTestId("issue-WEB-1")
-    await user.selectOptions(
-      within(row).getByLabelText(/status for WEB-1/i),
-      "st-2"
-    )
+    await user.click(screen.getByRole("button", { name: /status for WEB-1/i }))
+    await user.click(screen.getByRole("menuitemradio", { name: "Shipped" }))
 
     expect(onStatusChange).toHaveBeenCalledWith(issues[0], "st-2")
   })
@@ -144,8 +141,14 @@ describe("issue list", () => {
     )
     expect(screen.queryByLabelText(/status for WEB-1/i)).not.toBeInTheDocument()
     expect(
-      within(screen.getByTestId("issue-WEB-1")).getByText("Backlog")
+      within(screen.getByTestId("issue-WEB-1")).getByTestId(
+        "status-icon-Backlog"
+      )
     ).toBeInTheDocument()
+    // No far-right status text: the mark carries the status via title/tooltip.
+    expect(
+      within(screen.getByTestId("issue-WEB-1")).queryByText("Backlog")
+    ).not.toBeInTheDocument()
   })
 
   test("renders label names on the row", () => {
@@ -477,7 +480,7 @@ describe("issue list", () => {
     expect(within(row).getByText("Ship homepage")).toBeInTheDocument()
   })
 
-  test("display priority shows the priority text", () => {
+  test("priority shows as an icon left of the slug without text", () => {
     render(
       <IssueList
         issues={issues}
@@ -495,9 +498,20 @@ describe("issue list", () => {
       />
     )
 
+    const row = screen.getByTestId("issue-WEB-2")
+    // Icon-only mark carries the priority via its accessible name.
     expect(
-      within(screen.getByTestId("issue-WEB-2")).getByText("Low")
+      within(row).getByRole("img", { name: /priority for WEB-2: low/i })
     ).toBeInTheDocument()
+    expect(within(row).queryByText("Low")).not.toBeInTheDocument()
+    // Priority sits before the slug in DOM order.
+    const rowText = within(row).getByText("WEB-2")
+    const mark = within(row).getByRole("img", {
+      name: /priority for WEB-2/i,
+    })
+    expect(
+      mark.compareDocumentPosition(rowText) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
   })
 
   test("filtered-out issues take their empty groups with them", () => {

@@ -156,6 +156,7 @@ export interface SeedIssueFields {
   archived: false
   labels: string[]
   parentId: null
+  createdAt: string
   updatedAt: string
 }
 
@@ -183,6 +184,7 @@ export function seedIssueFields(
     archived: false,
     labels: [],
     parentId: null,
+    createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   }
 }
@@ -246,6 +248,8 @@ export interface Issue {
    * with subtasks cannot become a subtask.
    */
   parentId: string | null
+  /** Creation timestamp (ISO); every issue carries it alongside `updatedAt`. */
+  createdAt: string
   /** Last-write marker for realtime conflict resolution (T4). */
   updatedAt: string
 }
@@ -601,6 +605,7 @@ export function createMemoryWorkspaceStore(
       archived: false,
       labels: normalizeLabelNames(input.labels ?? []),
       parentId: input.parentId ?? null,
+      createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }
   }

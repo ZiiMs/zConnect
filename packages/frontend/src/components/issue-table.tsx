@@ -4,6 +4,7 @@ import {
   useTable,
 } from "@tanstack/react-table"
 import { useMemo, useState } from "react"
+import { PropertyMenu, PropertyMenuOption } from "@/components/property-menu"
 import { AssigneeAvatar } from "@/components/user-avatar"
 import {
   findMember,
@@ -15,7 +16,8 @@ import {
   type Status,
   type UpdateIssueInput,
 } from "@/lib/api"
-import { formatDueDate } from "@/lib/due"
+import { formatDueDate, formatTimestamp } from "@/lib/due"
+import { PriorityMark } from "@/lib/priority-icons"
 import { StatusIcon } from "@/lib/status-icons"
 
 const PRIORITIES: Priority[] = ["Urgent", "High", "Medium", "Low", "None"]
@@ -33,12 +35,52 @@ const columnHelper = createColumnHelper<typeof features, Issue>()
 
 /** Optional columns behind the show/hide control; Work items always shows. */
 const TOGGLEABLE_COLUMNS = [
-  { id: "statusId", label: "State" },
   { id: "priority", label: "Priority" },
+  { id: "statusId", label: "State" },
   { id: "assigneeId", label: "Assignee" },
   { id: "dueDate", label: "Due date" },
   { id: "labels", label: "Labels" },
+  { id: "createdAt", label: "Created" },
+  { id: "updatedAt", label: "Updated" },
 ] as const
+
+/**
+ * Arrange rows into a one-level tree in issue-number order: children
+ * (`parentId`) follow their parent. Parents missing from the set (filtered
+ * out) leave the child as a top-level row so it never disappears.
+ */
+function forestOrder(issues: Issue[]): {
+  rows: Issue[]
+  depths: Map<string, number>
+} {
+  const byId = new Map(issues.map((issue) => [issue.id, issue]))
+  const childrenByParent = new Map<string, Issue[]>()
+  const roots: Issue[] = []
+  for (const issue of issues) {
+    const parentId = issue.parentId ?? null
+    if (parentId && byId.has(parentId)) {
+      const siblings = childrenByParent.get(parentId) ?? []
+      siblings.push(issue)
+      childrenByParent.set(parentId, siblings)
+    } else {
+      roots.push(issue)
+    }
+  }
+  const sorted = (list: Issue[]): Issue[] =>
+    [...list].sort((a, b) => a.number - b.number)
+  const rows: Issue[] = []
+  const depths = new Map<string, number>()
+  function walk(list: Issue[], depth: number) {
+    for (const node of sorted(list)) {
+      rows.push(node)
+      depths.set(node.id, depth)
+      const kids = childrenByParent.get(node.id)
+      if (kids) walk(kids, depth + 1)
+    }
+  }
+  walk(roots, 0)
+  return { rows, depths }
+}
 
 /**
  * Table view: the same filtered Issue query as List and Kanban, with inline
@@ -51,6 +93,11 @@ const TOGGLEABLE_COLUMNS = [
  * column-builder). Label chips take their swatch color from the T5
  * workspace registry when `labels` is provided (story 14
  * "workspace-shared Labels with color").
+ *
+ * Priority leads as an icon-only column left of the Work items slug; the
+ * mark opens a menu for editors. Subtasks nest under their parent with a
+ * slight indent and a tree marker. Created/Updated close the row at far
+ * right.
  */
 export function IssueTable({
   issues,
@@ -70,19 +117,77 @@ export function IssueTable({
 }) {
   const [hidden, setHidden] = useState<Record<string, boolean>>({})
 
+  const { rows: orderedIssues, depths } = useMemo(
+    () => forestOrder(issues),
+    [issues]
+  )
+
   const allColumns = useMemo(() => {
     const statusOf = (statusId: string) =>
       statuses.find((s) => s.id === statusId)
     const colorFor = (name: string) =>
       labels.find((label) => label.name === name)?.color
     return columnHelper.columns([
+      columnHelper.accessor("priority", {
+        id: "priority",
+        header: "Priority",
+        cell: (info) => {
+          const issue = info.row.original
+          const mark = (
+            <PriorityMark
+              priority={issue.priority}
+              label={`Priority for ${issue.identifier}: ${issue.priority}`}
+            />
+          )
+          if (!canEdit) return mark
+          return (
+            <PropertyMenu
+              label={`Priority for ${issue.identifier}`}
+              triggerClassName="grid size-6 place-items-center rounded-md hover:bg-accent"
+              preview={mark}
+            >
+              {(close) => (
+                <>
+                  {PRIORITIES.map((priority) => (
+                    <PropertyMenuOption
+                      key={priority}
+                      selected={priority === issue.priority}
+                      onSelect={() => {
+                        if (priority !== issue.priority) {
+                          onUpdate(issue, { priority })
+                        }
+                        close()
+                      }}
+                    >
+                      <PriorityMark priority={priority} />
+                      {priority}
+                    </PropertyMenuOption>
+                  ))}
+                </>
+              )}
+            </PropertyMenu>
+          )
+        },
+      }),
       columnHelper.accessor("title", {
         id: "title",
         header: "Work items",
         cell: (info) => {
           const issue = info.row.original
+          const depth = depths.get(issue.id) ?? 0
           return (
-            <span className="flex min-w-0 items-center gap-2">
+            <span
+              className="flex min-w-0 items-center gap-2"
+              style={depth > 0 ? { paddingLeft: depth * 20 } : undefined}
+            >
+              {depth > 0 && (
+                <span
+                  aria-hidden="true"
+                  className="shrink-0 text-muted-foreground"
+                >
+                  ↳
+                </span>
+              )}
               <span className="shrink-0 font-mono text-muted-foreground text-xs">
                 {issue.identifier}
               </span>
@@ -144,49 +249,20 @@ export function IssueTable({
           )
         },
       }),
-      columnHelper.accessor("priority", {
-        id: "priority",
-        header: "Priority",
-        cell: (info) => {
-          const issue = info.row.original
-          if (!canEdit) {
-            return (
-              <span className="text-muted-foreground text-sm">
-                {issue.priority}
-              </span>
-            )
-          }
-          return (
-            <select
-              aria-label={`Priority for ${issue.identifier}`}
-              className={selectClass}
-              value={issue.priority}
-              onChange={(e) =>
-                onUpdate(issue, { priority: e.target.value as Priority })
-              }
-            >
-              {PRIORITIES.map((priority) => (
-                <option key={priority} value={priority}>
-                  {priority}
-                </option>
-              ))}
-            </select>
-          )
-        },
-      }),
       columnHelper.accessor("assigneeId", {
         id: "assigneeId",
         header: "Assignee",
         cell: (info) => {
           const issue = info.row.original
           const assignee = findMember(members, issue.assigneeId)
-          const avatar = issue.assigneeId ? (
+          const avatar = (
             <AssigneeAvatar
               member={assignee}
               userId={issue.assigneeId}
               size={20}
+              tooltip={false}
             />
-          ) : null
+          )
           if (!canEdit) {
             return (
               <span className="flex items-center gap-1.5 text-sm">
@@ -285,8 +361,38 @@ export function IssueTable({
           )
         },
       }),
+      columnHelper.accessor("createdAt", {
+        id: "createdAt",
+        header: "Created",
+        cell: (info) => {
+          const value = info.row.original.createdAt ?? null
+          return (
+            <span
+              className="whitespace-nowrap text-muted-foreground text-xs"
+              title={`Created ${value ?? "unknown"}`}
+            >
+              {formatTimestamp(value)}
+            </span>
+          )
+        },
+      }),
+      columnHelper.accessor("updatedAt", {
+        id: "updatedAt",
+        header: "Updated",
+        cell: (info) => {
+          const value = info.row.original.updatedAt ?? null
+          return (
+            <span
+              className="whitespace-nowrap text-muted-foreground text-xs"
+              title={`Updated ${value ?? "unknown"}`}
+            >
+              {formatTimestamp(value)}
+            </span>
+          )
+        },
+      }),
     ])
-  }, [statuses, members, labels, canEdit, onUpdate])
+  }, [statuses, members, labels, canEdit, onUpdate, depths])
 
   const visibleColumns = useMemo(
     () =>
@@ -296,7 +402,11 @@ export function IssueTable({
     [allColumns, hidden]
   )
 
-  const table = useTable({ features, columns: visibleColumns, data: issues })
+  const table = useTable({
+    features,
+    columns: visibleColumns,
+    data: orderedIssues,
+  })
 
   if (issues.length === 0) {
     return (
@@ -351,6 +461,7 @@ export function IssueTable({
             <tr
               key={row.id}
               data-testid={`issue-row-${row.original.identifier}`}
+              data-depth={depths.get(row.original.id) ?? 0}
               className="border-b hover:bg-accent/60"
             >
               {row.getAllCells().map((cell) => (
