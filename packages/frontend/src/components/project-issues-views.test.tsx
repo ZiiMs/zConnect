@@ -216,16 +216,33 @@ describe("project issues views", () => {
     await user.click(screen.getByRole("button", { name: /^filters/i }))
     await user.click(screen.getByRole("tab", { name: "Table" }))
     const row = await screen.findByTestId("issue-row-WEB-1")
-    await user.selectOptions(
-      within(row).getByLabelText(/priority for WEB-1/i),
-      "Urgent"
+    await user.click(
+      within(row).getByRole("button", { name: /priority for WEB-1/i })
     )
+    await user.click(screen.getByRole("menuitemradio", { name: "Urgent" }))
 
     await waitFor(() =>
       expect(updateIssue).toHaveBeenCalledWith("WEB-1", {
         priority: "Urgent",
       })
     )
+  })
+
+  test("a table title opens the detail instead of editing inline", async () => {
+    const user = userEvent.setup()
+    setup()
+    await screen.findByText("WEB-1")
+
+    await user.click(screen.getByRole("button", { name: /^filters/i }))
+    await user.click(screen.getByRole("tab", { name: "Table" }))
+    const row = await screen.findByTestId("issue-row-WEB-1")
+    await user.click(
+      within(row).getByRole("button", { name: /open detail for WEB-1/i })
+    )
+
+    expect(
+      await screen.findByRole("button", { name: /back to issues/i })
+    ).toBeInTheDocument()
   })
 
   test("a kanban move updates optimistically before the server answers", async () => {

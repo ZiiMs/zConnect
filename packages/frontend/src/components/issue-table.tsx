@@ -4,7 +4,8 @@ import {
   useTable,
 } from "@tanstack/react-table"
 import { useMemo, useState } from "react"
-import { AssigneeAvatar } from "@/components/user-avatar"
+import { PropertyMenu, PropertyMenuOption } from "@/components/property-menu"
+import { AssigneeAvatar, UserAvatar } from "@/components/user-avatar"
 import {
   findMember,
   type Issue,
@@ -16,13 +17,14 @@ import {
   type UpdateIssueInput,
 } from "@/lib/api"
 import { formatDueDate } from "@/lib/due"
+import { PriorityMark } from "@/lib/priority-icons"
 import { StatusIcon } from "@/lib/status-icons"
 
 const PRIORITIES: Priority[] = ["Urgent", "High", "Medium", "Low", "None"]
 
-/** Borderless editors that read as plain text until hovered/focused. */
-const selectClass =
-  "rounded-md border border-transparent bg-transparent px-1 py-0.5 text-sm hover:border-input focus:border-input"
+/** Borderless menu triggers that read as plain text until hovered/focused. */
+const menuTriggerClass =
+  "flex min-w-0 items-center gap-1.5 rounded-md border border-transparent px-1 py-0.5 text-sm hover:border-input focus-visible:border-input focus-visible:outline-none"
 
 const inputClass =
   "w-full rounded-md border border-transparent bg-transparent px-1 py-0.5 text-sm outline-none hover:border-input focus:border-input"
@@ -41,10 +43,15 @@ const TOGGLEABLE_COLUMNS = [
 ] as const
 
 /**
- * Table view: the same filtered Issue query as List and Kanban, with inline
- * cell editors for title, status, priority, assignee, and due date (spec
- * ziim/zConnect#1 story 16 "Table with editable cells/columns"). Text and
- * date cells commit on blur so partial keystrokes never send half a value.
+ * Table view: the same filtered Issue query as List and Kanban, with
+ * theme-aware popover editors for status, priority, and assignee plus inline
+ * title and due-date inputs (spec ziim/zConnect#1 story 16 "Table with
+ * editable cells/columns"). State/priority/assignee share the Kanban
+ * PropertyMenu popover (bg-popover) instead of native selects, whose option
+ * list ignores dark mode. Text and date cells commit on blur so partial
+ * keystrokes never send half a value. Titles open the detail view when
+ * `onOpenDetail` is wired; the pencil toggles the inline title input so a
+ * click never hijacks navigation.
  * Edits go through `onUpdate` so the container runs the Issue API mutation;
  * the table keeps no write state of its own. The Columns control is a
  * minimal show/hide per optional column (deliberately not a full
@@ -59,6 +66,7 @@ export function IssueTable({
   labels = [],
   canEdit,
   onUpdate,
+  onOpenDetail,
 }: {
   issues: Issue[]
   statuses: Status[]
@@ -67,8 +75,12 @@ export function IssueTable({
   labels?: Label[]
   canEdit: boolean
   onUpdate: (issue: Issue, input: UpdateIssueInput) => void
+  /** Title click: opens the detail view (archive/subtasks live there). */
+  onOpenDetail?: (issue: Issue) => void
 }) {
   const [hidden, setHidden] = useState<Record<string, boolean>>({})
+  /** Row id whose title is in inline-edit mode (pencil toggles it). */
+  const [editingTitleId, setEditingTitleId] = useState<string | null>(null)
 
   const allColumns = useMemo(() => {
     const statusOf = (statusId: string) =>
@@ -81,32 +93,88 @@ export function IssueTable({
         header: "Work items",
         cell: (info) => {
           const issue = info.row.original
-          return (
-            <span className="flex min-w-0 items-center gap-2">
-              <span className="shrink-0 font-mono text-muted-foreground text-xs">
-                {issue.identifier}
+          const isEditingTitle = editingTitleId === issue.id
+          if (!canEdit) {
+            if (onOpenDetail) {
+              return (
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className="shrink-0 font-mono text-muted-foreground text-xs">
+                    {issue.identifier}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={`Open detail for ${issue.identifier}`}
+                    onClick={() => onOpenDetail(issue)}
+                    className="min-w-0 flex-1 truncate text-left font-medium text-sm hover:underline"
+                  >
+                    {issue.title}
+                  </button>
+                </span>
+              )
+            }
+            return (
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="shrink-0 font-mono text-muted-foreground text-xs">
+                  {issue.identifier}
+                </span>
+                <span className="truncate font-medium text-sm">
+                  {info.getValue()}
+                </span>
               </span>
-              {canEdit ? (
+            )
+          }
+          if (isEditingTitle || !onOpenDetail) {
+            return (
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="shrink-0 font-mono text-muted-foreground text-xs">
+                  {issue.identifier}
+                </span>
                 <input
+                  // biome-ignore lint/a11y/noAutofocus: entering title edit should focus the field.
+                  autoFocus={isEditingTitle}
                   aria-label={`Title for ${issue.identifier}`}
                   className={inputClass}
                   defaultValue={issue.title}
+                  key={`${issue.id}:${isEditingTitle ? "editing" : "view"}`}
                   onBlur={(e) => {
                     if (e.target.value !== issue.title) {
                       onUpdate(issue, { title: e.target.value })
                     }
+                    if (isEditingTitle) setEditingTitleId(null)
                   }}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
                       e.currentTarget.blur()
                     }
+                    if (e.key === "Escape") {
+                      setEditingTitleId(null)
+                    }
                   }}
                 />
-              ) : (
-                <span className="truncate font-medium text-sm">
-                  {info.getValue()}
-                </span>
-              )}
+              </span>
+            )
+          }
+          return (
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="shrink-0 font-mono text-muted-foreground text-xs">
+                {issue.identifier}
+              </span>
+              <button
+                type="button"
+                aria-label={`Open detail for ${issue.identifier}`}
+                onClick={() => onOpenDetail(issue)}
+                className="min-w-0 flex-1 truncate text-left font-medium text-sm hover:underline"
+              >
+                {issue.title}
+              </button>
+              <button
+                type="button"
+                aria-label={`Edit title for ${issue.identifier}`}
+                onClick={() => setEditingTitleId(issue.id)}
+                className="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground text-xs hover:bg-accent hover:text-accent-foreground"
+              >
+                <span aria-hidden="true">✎</span>
+              </button>
             </span>
           )
         },
@@ -126,21 +194,36 @@ export function IssueTable({
             )
           }
           return (
-            <span className="flex items-center gap-1.5">
-              {status && <StatusIcon status={status} />}
-              <select
-                aria-label={`Status for ${issue.identifier}`}
-                className={selectClass}
-                value={issue.statusId}
-                onChange={(e) => onUpdate(issue, { statusId: e.target.value })}
-              >
-                {statuses.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.name}
-                  </option>
-                ))}
-              </select>
-            </span>
+            <PropertyMenu
+              label={`Status for ${issue.identifier}`}
+              triggerClassName={menuTriggerClass}
+              preview={
+                <>
+                  {status && <StatusIcon status={status} />}
+                  <span className="truncate">{status?.name ?? "Unknown"}</span>
+                </>
+              }
+            >
+              {(close) => (
+                <>
+                  {statuses.map((option) => (
+                    <PropertyMenuOption
+                      key={option.id}
+                      selected={option.id === issue.statusId}
+                      onSelect={() => {
+                        if (option.id !== issue.statusId) {
+                          onUpdate(issue, { statusId: option.id })
+                        }
+                        close()
+                      }}
+                    >
+                      <StatusIcon status={option} size={13} />
+                      {option.name}
+                    </PropertyMenuOption>
+                  ))}
+                </>
+              )}
+            </PropertyMenu>
           )
         },
       }),
@@ -151,26 +234,49 @@ export function IssueTable({
           const issue = info.row.original
           if (!canEdit) {
             return (
-              <span className="text-muted-foreground text-sm">
+              <span className="flex items-center gap-1.5 text-muted-foreground text-sm">
+                <span aria-hidden="true" className="inline-flex">
+                  <PriorityMark priority={issue.priority} size={13} />
+                </span>
                 {issue.priority}
               </span>
             )
           }
           return (
-            <select
-              aria-label={`Priority for ${issue.identifier}`}
-              className={selectClass}
-              value={issue.priority}
-              onChange={(e) =>
-                onUpdate(issue, { priority: e.target.value as Priority })
+            <PropertyMenu
+              label={`Priority for ${issue.identifier}`}
+              triggerClassName={menuTriggerClass}
+              preview={
+                <>
+                  <span aria-hidden="true" className="inline-flex">
+                    <PriorityMark priority={issue.priority} size={13} />
+                  </span>
+                  <span className="truncate">{issue.priority}</span>
+                </>
               }
             >
-              {PRIORITIES.map((priority) => (
-                <option key={priority} value={priority}>
-                  {priority}
-                </option>
-              ))}
-            </select>
+              {(close) => (
+                <>
+                  {PRIORITIES.map((priority) => (
+                    <PropertyMenuOption
+                      key={priority}
+                      selected={priority === issue.priority}
+                      onSelect={() => {
+                        if (priority !== issue.priority) {
+                          onUpdate(issue, { priority })
+                        }
+                        close()
+                      }}
+                    >
+                      <span aria-hidden="true" className="inline-flex">
+                        <PriorityMark priority={priority} size={13} />
+                      </span>
+                      {priority}
+                    </PropertyMenuOption>
+                  ))}
+                </>
+              )}
+            </PropertyMenu>
           )
         },
       }),
@@ -180,19 +286,18 @@ export function IssueTable({
         cell: (info) => {
           const issue = info.row.original
           const assignee = findMember(members, issue.assigneeId)
-          const avatar = issue.assigneeId ? (
-            <AssigneeAvatar
-              member={assignee}
-              userId={issue.assigneeId}
-              size={20}
-            />
-          ) : null
           if (!canEdit) {
             return (
               <span className="flex items-center gap-1.5 text-sm">
-                {avatar}
                 {issue.assigneeId ? (
-                  memberName(assignee, issue.assigneeId)
+                  <>
+                    <AssigneeAvatar
+                      member={assignee}
+                      userId={issue.assigneeId}
+                      size={20}
+                    />
+                    {memberName(assignee, issue.assigneeId)}
+                  </>
                 ) : (
                   <span className="text-muted-foreground">Unassigned</span>
                 )}
@@ -200,26 +305,66 @@ export function IssueTable({
             )
           }
           return (
-            <span className="flex items-center gap-1.5">
-              {avatar}
-              <select
-                aria-label={`Assignee for ${issue.identifier}`}
-                className={selectClass}
-                value={issue.assigneeId ?? ""}
-                onChange={(e) =>
-                  onUpdate(issue, {
-                    assigneeId: e.target.value === "" ? null : e.target.value,
-                  })
-                }
-              >
-                <option value="">Unassigned</option>
-                {members.map((member) => (
-                  <option key={member.userId} value={member.userId}>
-                    {memberName(member, member.userId)}
-                  </option>
-                ))}
-              </select>
-            </span>
+            <PropertyMenu
+              label={`Assignee for ${issue.identifier}`}
+              triggerClassName={menuTriggerClass}
+              preview={
+                <>
+                  <AssigneeAvatar
+                    member={assignee}
+                    userId={issue.assigneeId}
+                    size={20}
+                    tooltip={false}
+                  />
+                  <span className="truncate">
+                    {issue.assigneeId ? (
+                      memberName(assignee, issue.assigneeId)
+                    ) : (
+                      <span className="text-muted-foreground">Unassigned</span>
+                    )}
+                  </span>
+                </>
+              }
+            >
+              {(close) => (
+                <>
+                  <PropertyMenuOption
+                    selected={issue.assigneeId === null}
+                    onSelect={() => {
+                      if (issue.assigneeId !== null) {
+                        onUpdate(issue, { assigneeId: null })
+                      }
+                      close()
+                    }}
+                  >
+                    <span className="truncate text-muted-foreground">
+                      Unassigned
+                    </span>
+                  </PropertyMenuOption>
+                  {members.map((member) => (
+                    <PropertyMenuOption
+                      key={member.userId}
+                      selected={member.userId === issue.assigneeId}
+                      onSelect={() => {
+                        if (member.userId !== issue.assigneeId) {
+                          onUpdate(issue, { assigneeId: member.userId })
+                        }
+                        close()
+                      }}
+                    >
+                      <UserAvatar
+                        name={memberName(member, member.userId)}
+                        image={member.image}
+                        size={20}
+                      />
+                      <span className="truncate">
+                        {memberName(member, member.userId)}
+                      </span>
+                    </PropertyMenuOption>
+                  ))}
+                </>
+              )}
+            </PropertyMenu>
           )
         },
       }),
@@ -286,7 +431,15 @@ export function IssueTable({
         },
       }),
     ])
-  }, [statuses, members, labels, canEdit, onUpdate])
+  }, [
+    statuses,
+    members,
+    labels,
+    canEdit,
+    onUpdate,
+    onOpenDetail,
+    editingTitleId,
+  ])
 
   const visibleColumns = useMemo(
     () =>

@@ -823,6 +823,7 @@ export function ProjectIssues({
             labels={labels}
             canEdit={canWrite}
             onUpdate={(issue, input) => void handleUpdate(issue, input)}
+            onOpenDetail={(issue) => openIssue(issue)}
           />
         )}
       {!loading &&

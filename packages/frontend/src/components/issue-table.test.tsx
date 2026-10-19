@@ -141,10 +141,10 @@ describe("issue table", () => {
     setup(true, onUpdate)
 
     const row = screen.getByTestId("issue-row-WEB-1")
-    await user.selectOptions(
-      within(row).getByLabelText(/status for WEB-1/i),
-      "st-2"
+    await user.click(
+      within(row).getByRole("button", { name: /status for WEB-1/i })
     )
+    await user.click(screen.getByRole("menuitemradio", { name: "Shipped" }))
 
     expect(onUpdate).toHaveBeenCalledWith(issues[0], { statusId: "st-2" })
   })
@@ -155,10 +155,10 @@ describe("issue table", () => {
     setup(true, onUpdate)
 
     const row = screen.getByTestId("issue-row-WEB-1")
-    await user.selectOptions(
-      within(row).getByLabelText(/priority for WEB-1/i),
-      "Urgent"
+    await user.click(
+      within(row).getByRole("button", { name: /priority for WEB-1/i })
     )
+    await user.click(screen.getByRole("menuitemradio", { name: "Urgent" }))
 
     expect(onUpdate).toHaveBeenCalledWith(issues[0], { priority: "Urgent" })
   })
@@ -169,10 +169,10 @@ describe("issue table", () => {
     setup(true, onUpdate)
 
     const row = screen.getByTestId("issue-row-WEB-2")
-    await user.selectOptions(
-      within(row).getByLabelText(/assignee for WEB-2/i),
-      "user-owner"
+    await user.click(
+      within(row).getByRole("button", { name: /assignee for WEB-2/i })
     )
+    await user.click(screen.getByRole("menuitemradio", { name: "user-owner" }))
 
     expect(onUpdate).toHaveBeenCalledWith(issues[1], {
       assigneeId: "user-owner",
@@ -185,10 +185,10 @@ describe("issue table", () => {
     setup(true, onUpdate)
 
     const row = screen.getByTestId("issue-row-WEB-2")
-    await user.selectOptions(
-      within(row).getByLabelText(/assignee for WEB-2/i),
-      ""
+    await user.click(
+      within(row).getByRole("button", { name: /assignee for WEB-2/i })
     )
+    await user.click(screen.getByRole("menuitemradio", { name: "Unassigned" }))
 
     expect(onUpdate).toHaveBeenCalledWith(issues[1], { assigneeId: null })
   })
@@ -296,5 +296,57 @@ describe("issue table", () => {
     const swatch = within(row).getByTestId("label-dot-feature")
     expect(swatch).toBeInTheDocument()
     expect(swatch).toHaveStyle({ backgroundColor: "#22c55e" })
+  })
+
+  test("title opens the detail view when wired instead of editing", async () => {
+    const user = userEvent.setup()
+    const onOpenDetail = vi.fn()
+    render(
+      <IssueTable
+        issues={issues}
+        statuses={statuses}
+        members={members}
+        canEdit={true}
+        onUpdate={() => {}}
+        onOpenDetail={onOpenDetail}
+      />
+    )
+
+    const row = screen.getByTestId("issue-row-WEB-1")
+    await user.click(
+      within(row).getByRole("button", { name: /open detail for WEB-1/i })
+    )
+    expect(onOpenDetail).toHaveBeenCalledWith(issues[0])
+    expect(
+      within(row).queryByRole("textbox", { name: /title for WEB-1/i })
+    ).not.toBeInTheDocument()
+  })
+
+  test("pencil toggles the inline title editor when detail is wired", async () => {
+    const user = userEvent.setup()
+    const onUpdate = vi.fn()
+    render(
+      <IssueTable
+        issues={issues}
+        statuses={statuses}
+        members={members}
+        canEdit={true}
+        onUpdate={onUpdate}
+        onOpenDetail={() => {}}
+      />
+    )
+
+    const row = screen.getByTestId("issue-row-WEB-1")
+    await user.click(
+      within(row).getByRole("button", { name: /edit title for WEB-1/i })
+    )
+    const input = within(row).getByLabelText(/title for WEB-1/i)
+    await user.clear(input)
+    await user.type(input, "Fix login faster")
+    await user.tab()
+
+    expect(onUpdate).toHaveBeenCalledWith(issues[0], {
+      title: "Fix login faster",
+    })
   })
 })
