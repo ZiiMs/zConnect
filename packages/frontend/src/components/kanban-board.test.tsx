@@ -432,7 +432,7 @@ describe("kanban board", () => {
     })
   })
 
-  test("cards carry an icon-only Priority mark after the identifier", () => {
+  test("cards carry signal-bar Priority mark before the identifier", () => {
     setup()
 
     const card = screen.getByTestId("kanban-card-WEB-1")
@@ -442,12 +442,14 @@ describe("kanban board", () => {
     })
     expect(mark).toHaveAttribute("title", "High")
     expect(within(card).queryByText("High")).not.toBeInTheDocument()
-    // Softened tone (2026-10-16 review): the priority's own token, mixed
-    // toward the muted palette in oklab so the hue survives and only chroma
-    // drops.
-    expect(mark.getAttribute("style")).toContain(
-      "color-mix(in oklab, var(--priority-high) 60%, var(--muted-foreground))"
-    )
+    // High fills three of four bars.
+    expect(mark.querySelectorAll("rect")).toHaveLength(4)
+    expect(mark.querySelectorAll('rect[data-filled="true"]')).toHaveLength(3)
+    // The mark sits before the slug in DOM order.
+    const slug = within(card).getByText("WEB-1")
+    expect(
+      mark.compareDocumentPosition(slug) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
   })
 
   test("cards cap labels at two and roll the rest into +n", () => {

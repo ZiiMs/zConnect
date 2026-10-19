@@ -156,9 +156,10 @@ describe("issue table", () => {
 
     const row = screen.getByTestId("issue-row-WEB-1")
     await user.click(
-      within(row).getByRole("button", { name: /priority for WEB-1/i })
+      within(row).getByRole("button", { name: "Priority for WEB-1" })
     )
-    await user.click(screen.getByRole("menuitemradio", { name: "Urgent" }))
+    // The option name reads "UrgentUrgent" (icon label + text); match loosely.
+    await user.click(screen.getByRole("menuitemradio", { name: /Urgent/ }))
 
     expect(onUpdate).toHaveBeenCalledWith(issues[0], { priority: "Urgent" })
   })
@@ -197,9 +198,13 @@ describe("issue table", () => {
     setup(false)
 
     expect(screen.queryByLabelText(/status for WEB-1/i)).not.toBeInTheDocument()
+    // Icon-only priority mark stays visible but has no menu button.
     expect(
-      screen.queryByLabelText(/priority for WEB-1/i)
+      screen.queryByRole("button", { name: "Priority for WEB-1" })
     ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole("img", { name: /priority for WEB-1/i })
+    ).toBeInTheDocument()
     expect(
       screen.queryByLabelText(/assignee for WEB-1/i)
     ).not.toBeInTheDocument()

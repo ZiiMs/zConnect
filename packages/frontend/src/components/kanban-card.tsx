@@ -26,7 +26,7 @@ const MAX_LABELS = 2
  * `labels` is provided (spec ziim/zConnect#1 story 14 "workspace-shared
  * Labels with color").
  *
- * Layout: identifier, an icon-only Priority mark, then the assignee; a
+ * Layout: icon-only Priority mark, identifier, then the assignee; a
  * two-line clamped title; label chips capped at two plus `+n`; and a footer
  * with the status control left and the due date right. The card carries no
  * status colour of its own. Read-only viewers get static marks and text.
@@ -88,13 +88,13 @@ export function KanbanCard({
         className="flex flex-col gap-1.5"
       >
         <span className="flex items-center gap-1.5">
-          <span className="font-mono text-muted-foreground text-xs">
-            {issue.identifier}
-          </span>
           <PriorityMark
             priority={issue.priority}
             label={`Priority for ${issue.identifier}: ${issue.priority}`}
           />
+          <span className="font-mono text-muted-foreground text-xs">
+            {issue.identifier}
+          </span>
           {canAssign ? (
             <PropertyMenu
               label={`Assignee for ${issue.identifier}`}

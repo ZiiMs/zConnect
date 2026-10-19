@@ -46,3 +46,20 @@ export function formatDueDate(day: string): string {
     timeZone: "UTC",
   })
 }
+
+/**
+ * Created/updated timestamps (`Oct 14, 2026`) for the far-right List/Table
+ * columns. Full ISO strings render in UTC so the date never shifts with the
+ * viewer's timezone; missing or unparsable values read as an em dash.
+ */
+export function formatTimestamp(value: string | null | undefined): string {
+  if (!value) return "—"
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return "—"
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  })
+}

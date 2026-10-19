@@ -97,6 +97,11 @@ export const issueSchema = z.object({
   /** T5 completion guardrail: present on PATCH responses that complete. */
   warnings: z.array(z.string()).optional(),
   /**
+   * Creation timestamp (ISO); every issue carries it alongside `updatedAt`.
+   * Optional for older payloads and fixtures; the API always sends both.
+   */
+  createdAt: z.string().nullable().optional(),
+  /**
    * Last-write marker for realtime conflict resolution (T4). The Issue
    * API predates it, so it stays optional: payloads without it still parse,
    * and `applyRemoteIssue` falls back to last-received-wins.

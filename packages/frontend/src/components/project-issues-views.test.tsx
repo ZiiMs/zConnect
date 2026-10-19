@@ -217,9 +217,10 @@ describe("project issues views", () => {
     await user.click(screen.getByRole("tab", { name: "Table" }))
     const row = await screen.findByTestId("issue-row-WEB-1")
     await user.click(
-      within(row).getByRole("button", { name: /priority for WEB-1/i })
+      within(row).getByRole("button", { name: "Priority for WEB-1" })
     )
-    await user.click(screen.getByRole("menuitemradio", { name: "Urgent" }))
+    // The option name reads "UrgentUrgent" (icon label + text); match loosely.
+    await user.click(screen.getByRole("menuitemradio", { name: /Urgent/ }))
 
     await waitFor(() =>
       expect(updateIssue).toHaveBeenCalledWith("WEB-1", {

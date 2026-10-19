@@ -3,7 +3,7 @@ import {
   tableFeatures,
   useTable,
 } from "@tanstack/react-table"
-import { useMemo, useState } from "react"
+import { type ReactNode, useMemo, useState } from "react"
 import { PropertyMenu, PropertyMenuOption } from "@/components/property-menu"
 import { AssigneeAvatar, UserAvatar } from "@/components/user-avatar"
 import {
@@ -16,7 +16,7 @@ import {
   type Status,
   type UpdateIssueInput,
 } from "@/lib/api"
-import { formatDueDate } from "@/lib/due"
+import { formatDueDate, formatTimestamp } from "@/lib/due"
 import { PriorityMark } from "@/lib/priority-icons"
 import { StatusIcon } from "@/lib/status-icons"
 
@@ -35,12 +35,52 @@ const columnHelper = createColumnHelper<typeof features, Issue>()
 
 /** Optional columns behind the show/hide control; Work items always shows. */
 const TOGGLEABLE_COLUMNS = [
-  { id: "statusId", label: "State" },
   { id: "priority", label: "Priority" },
+  { id: "statusId", label: "State" },
   { id: "assigneeId", label: "Assignee" },
   { id: "dueDate", label: "Due date" },
   { id: "labels", label: "Labels" },
+  { id: "createdAt", label: "Created" },
+  { id: "updatedAt", label: "Updated" },
 ] as const
+
+/**
+ * Arrange rows into a one-level tree in issue-number order: children
+ * (`parentId`) follow their parent. Parents missing from the set (filtered
+ * out) leave the child as a top-level row so it never disappears.
+ */
+function forestOrder(issues: Issue[]): {
+  rows: Issue[]
+  depths: Map<string, number>
+} {
+  const byId = new Map(issues.map((issue) => [issue.id, issue]))
+  const childrenByParent = new Map<string, Issue[]>()
+  const roots: Issue[] = []
+  for (const issue of issues) {
+    const parentId = issue.parentId ?? null
+    if (parentId && byId.has(parentId)) {
+      const siblings = childrenByParent.get(parentId) ?? []
+      siblings.push(issue)
+      childrenByParent.set(parentId, siblings)
+    } else {
+      roots.push(issue)
+    }
+  }
+  const sorted = (list: Issue[]): Issue[] =>
+    [...list].sort((a, b) => a.number - b.number)
+  const rows: Issue[] = []
+  const depths = new Map<string, number>()
+  function walk(list: Issue[], depth: number) {
+    for (const node of sorted(list)) {
+      rows.push(node)
+      depths.set(node.id, depth)
+      const kids = childrenByParent.get(node.id)
+      if (kids) walk(kids, depth + 1)
+    }
+  }
+  walk(roots, 0)
+  return { rows, depths }
+}
 
 /**
  * Table view: the same filtered Issue query as List and Kanban, with
@@ -58,6 +98,11 @@ const TOGGLEABLE_COLUMNS = [
  * column-builder). Label chips take their swatch color from the T5
  * workspace registry when `labels` is provided (story 14
  * "workspace-shared Labels with color").
+ *
+ * Priority leads as an icon-only column left of the Work items slug; the
+ * mark opens a menu for editors. Subtasks nest under their parent with a
+ * slight indent and a tree marker. Created/Updated close the row at far
+ * right.
  */
 export function IssueTable({
   issues,
@@ -82,83 +127,68 @@ export function IssueTable({
   /** Row id whose title is in inline-edit mode (pencil toggles it). */
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null)
 
+  const { rows: orderedIssues, depths } = useMemo(
+    () => forestOrder(issues),
+    [issues]
+  )
+
   const allColumns = useMemo(() => {
     const statusOf = (statusId: string) =>
       statuses.find((s) => s.id === statusId)
     const colorFor = (name: string) =>
       labels.find((label) => label.name === name)?.color
     return columnHelper.columns([
+      columnHelper.accessor("priority", {
+        id: "priority",
+        header: "Priority",
+        cell: (info) => {
+          const issue = info.row.original
+          const mark = (
+            <PriorityMark
+              priority={issue.priority}
+              label={`Priority for ${issue.identifier}: ${issue.priority}`}
+            />
+          )
+          if (!canEdit) return mark
+          return (
+            <PropertyMenu
+              label={`Priority for ${issue.identifier}`}
+              triggerClassName="grid size-6 place-items-center rounded-md hover:bg-accent"
+              preview={mark}
+            >
+              {(close) => (
+                <>
+                  {PRIORITIES.map((priority) => (
+                    <PropertyMenuOption
+                      key={priority}
+                      selected={priority === issue.priority}
+                      onSelect={() => {
+                        if (priority !== issue.priority) {
+                          onUpdate(issue, { priority })
+                        }
+                        close()
+                      }}
+                    >
+                      <PriorityMark priority={priority} />
+                      {priority}
+                    </PropertyMenuOption>
+                  ))}
+                </>
+              )}
+            </PropertyMenu>
+          )
+        },
+      }),
       columnHelper.accessor("title", {
         id: "title",
         header: "Work items",
         cell: (info) => {
           const issue = info.row.original
           const isEditingTitle = editingTitleId === issue.id
+          const depth = depths.get(issue.id) ?? 0
+          let titleControl: ReactNode
           if (!canEdit) {
-            if (onOpenDetail) {
-              return (
-                <span className="flex min-w-0 items-center gap-2">
-                  <span className="shrink-0 font-mono text-muted-foreground text-xs">
-                    {issue.identifier}
-                  </span>
-                  <button
-                    type="button"
-                    aria-label={`Open detail for ${issue.identifier}`}
-                    onClick={() => onOpenDetail(issue)}
-                    className="min-w-0 flex-1 truncate text-left font-medium text-sm hover:underline"
-                  >
-                    {issue.title}
-                  </button>
-                </span>
-              )
-            }
-            return (
-              <span className="flex min-w-0 items-center gap-2">
-                <span className="shrink-0 font-mono text-muted-foreground text-xs">
-                  {issue.identifier}
-                </span>
-                <span className="truncate font-medium text-sm">
-                  {info.getValue()}
-                </span>
-              </span>
-            )
-          }
-          if (isEditingTitle || !onOpenDetail) {
-            return (
-              <span className="flex min-w-0 items-center gap-2">
-                <span className="shrink-0 font-mono text-muted-foreground text-xs">
-                  {issue.identifier}
-                </span>
-                <input
-                  // biome-ignore lint/a11y/noAutofocus: entering title edit should focus the field.
-                  autoFocus={isEditingTitle}
-                  aria-label={`Title for ${issue.identifier}`}
-                  className={inputClass}
-                  defaultValue={issue.title}
-                  key={`${issue.id}:${isEditingTitle ? "editing" : "view"}`}
-                  onBlur={(e) => {
-                    if (e.target.value !== issue.title) {
-                      onUpdate(issue, { title: e.target.value })
-                    }
-                    if (isEditingTitle) setEditingTitleId(null)
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.currentTarget.blur()
-                    }
-                    if (e.key === "Escape") {
-                      setEditingTitleId(null)
-                    }
-                  }}
-                />
-              </span>
-            )
-          }
-          return (
-            <span className="flex min-w-0 items-center gap-2">
-              <span className="shrink-0 font-mono text-muted-foreground text-xs">
-                {issue.identifier}
-              </span>
+            titleControl = onOpenDetail ? (
               <button
                 type="button"
                 aria-label={`Open detail for ${issue.identifier}`}
@@ -167,14 +197,75 @@ export function IssueTable({
               >
                 {issue.title}
               </button>
-              <button
-                type="button"
-                aria-label={`Edit title for ${issue.identifier}`}
-                onClick={() => setEditingTitleId(issue.id)}
-                className="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground text-xs hover:bg-accent hover:text-accent-foreground"
-              >
-                <span aria-hidden="true">✎</span>
-              </button>
+            ) : (
+              <span className="truncate font-medium text-sm">
+                {info.getValue()}
+              </span>
+            )
+          } else if (isEditingTitle || !onOpenDetail) {
+            titleControl = (
+              <input
+                // biome-ignore lint/a11y/noAutofocus: entering title edit should focus the field.
+                autoFocus={isEditingTitle}
+                aria-label={`Title for ${issue.identifier}`}
+                className={inputClass}
+                defaultValue={issue.title}
+                key={`${issue.id}:${isEditingTitle ? "editing" : "view"}`}
+                onBlur={(e) => {
+                  if (e.target.value !== issue.title) {
+                    onUpdate(issue, { title: e.target.value })
+                  }
+                  if (isEditingTitle) setEditingTitleId(null)
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.currentTarget.blur()
+                  }
+                  if (e.key === "Escape") {
+                    setEditingTitleId(null)
+                  }
+                }}
+              />
+            )
+          } else {
+            titleControl = (
+              <>
+                <button
+                  type="button"
+                  aria-label={`Open detail for ${issue.identifier}`}
+                  onClick={() => onOpenDetail(issue)}
+                  className="min-w-0 flex-1 truncate text-left font-medium text-sm hover:underline"
+                >
+                  {issue.title}
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Edit title for ${issue.identifier}`}
+                  onClick={() => setEditingTitleId(issue.id)}
+                  className="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground text-xs hover:bg-accent hover:text-accent-foreground"
+                >
+                  <span aria-hidden="true">✎</span>
+                </button>
+              </>
+            )
+          }
+          return (
+            <span
+              className="flex min-w-0 items-center gap-2"
+              style={depth > 0 ? { paddingLeft: depth * 20 } : undefined}
+            >
+              {depth > 0 && (
+                <span
+                  aria-hidden="true"
+                  className="shrink-0 text-muted-foreground"
+                >
+                  ↳
+                </span>
+              )}
+              <span className="shrink-0 font-mono text-muted-foreground text-xs">
+                {issue.identifier}
+              </span>
+              {titleControl}
             </span>
           )
         },
@@ -219,59 +310,6 @@ export function IssueTable({
                     >
                       <StatusIcon status={option} size={13} />
                       {option.name}
-                    </PropertyMenuOption>
-                  ))}
-                </>
-              )}
-            </PropertyMenu>
-          )
-        },
-      }),
-      columnHelper.accessor("priority", {
-        id: "priority",
-        header: "Priority",
-        cell: (info) => {
-          const issue = info.row.original
-          if (!canEdit) {
-            return (
-              <span className="flex items-center gap-1.5 text-muted-foreground text-sm">
-                <span aria-hidden="true" className="inline-flex">
-                  <PriorityMark priority={issue.priority} size={13} />
-                </span>
-                {issue.priority}
-              </span>
-            )
-          }
-          return (
-            <PropertyMenu
-              label={`Priority for ${issue.identifier}`}
-              triggerClassName={menuTriggerClass}
-              preview={
-                <>
-                  <span aria-hidden="true" className="inline-flex">
-                    <PriorityMark priority={issue.priority} size={13} />
-                  </span>
-                  <span className="truncate">{issue.priority}</span>
-                </>
-              }
-            >
-              {(close) => (
-                <>
-                  {PRIORITIES.map((priority) => (
-                    <PropertyMenuOption
-                      key={priority}
-                      selected={priority === issue.priority}
-                      onSelect={() => {
-                        if (priority !== issue.priority) {
-                          onUpdate(issue, { priority })
-                        }
-                        close()
-                      }}
-                    >
-                      <span aria-hidden="true" className="inline-flex">
-                        <PriorityMark priority={priority} size={13} />
-                      </span>
-                      {priority}
                     </PropertyMenuOption>
                   ))}
                 </>
@@ -430,6 +468,36 @@ export function IssueTable({
           )
         },
       }),
+      columnHelper.accessor("createdAt", {
+        id: "createdAt",
+        header: "Created",
+        cell: (info) => {
+          const value = info.row.original.createdAt ?? null
+          return (
+            <span
+              className="whitespace-nowrap text-muted-foreground text-xs"
+              title={`Created ${value ?? "unknown"}`}
+            >
+              {formatTimestamp(value)}
+            </span>
+          )
+        },
+      }),
+      columnHelper.accessor("updatedAt", {
+        id: "updatedAt",
+        header: "Updated",
+        cell: (info) => {
+          const value = info.row.original.updatedAt ?? null
+          return (
+            <span
+              className="whitespace-nowrap text-muted-foreground text-xs"
+              title={`Updated ${value ?? "unknown"}`}
+            >
+              {formatTimestamp(value)}
+            </span>
+          )
+        },
+      }),
     ])
   }, [
     statuses,
@@ -439,6 +507,7 @@ export function IssueTable({
     onUpdate,
     onOpenDetail,
     editingTitleId,
+    depths,
   ])
 
   const visibleColumns = useMemo(
@@ -449,7 +518,11 @@ export function IssueTable({
     [allColumns, hidden]
   )
 
-  const table = useTable({ features, columns: visibleColumns, data: issues })
+  const table = useTable({
+    features,
+    columns: visibleColumns,
+    data: orderedIssues,
+  })
 
   if (issues.length === 0) {
     return (
@@ -504,6 +577,7 @@ export function IssueTable({
             <tr
               key={row.id}
               data-testid={`issue-row-${row.original.identifier}`}
+              data-depth={depths.get(row.original.id) ?? 0}
               className="border-b hover:bg-accent/60"
             >
               {row.getAllCells().map((cell) => (
