@@ -46,4 +46,37 @@ describe("issue markdown read view", () => {
     // no javascript: URL survives as live content.
     expect(anchor?.getAttribute("href") ?? "").not.toContain("javascript:")
   })
+
+  test("a mentionable id renders a chip with the display name", () => {
+    render(
+      <IssueMarkdown
+        markdown={"Hi [@Grace](mention:user-2), take a look."}
+        mentionable={[{ userId: "user-2", name: "Grace" }]}
+      />
+    )
+    const chip = screen.getByTestId("mention-chip")
+    expect(chip).toHaveTextContent("@Grace")
+    expect(chip.closest("a")).toBeNull()
+    expect(screen.getByTestId("issue-markdown").querySelector("a")).toBeNull()
+  })
+
+  test("an id outside the roster renders as plain text, never a link", () => {
+    render(
+      <IssueMarkdown
+        markdown={"Hi [@Outsider](mention:user-9), take a look."}
+        mentionable={[{ userId: "user-2", name: "Grace" }]}
+      />
+    )
+    const view = screen.getByTestId("issue-markdown")
+    expect(view.textContent).toContain("@Outsider")
+    expect(view.querySelector("a")).toBeNull()
+    expect(screen.queryByTestId("mention-chip")).not.toBeInTheDocument()
+  })
+
+  test("mentions render as plain text when no roster is passed", () => {
+    render(<IssueMarkdown markdown={"[@Grace](mention:user-2)"} />)
+    const view = screen.getByTestId("issue-markdown")
+    expect(view.textContent).toContain("@Grace")
+    expect(view.querySelector("a")).toBeNull()
+  })
 })

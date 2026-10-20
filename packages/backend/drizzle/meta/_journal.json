@@ -78,6 +78,20 @@
       "when": 1792102921623,
       "tag": "0010_project_icon",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1792474334062,
+      "tag": "0011_dry_dagger",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1792519546354,
+      "tag": "0012_realtime_rls",
+      "breakpoints": true
     }
   ]
 }

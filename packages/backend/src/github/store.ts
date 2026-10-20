@@ -1,7 +1,7 @@
 /**
  * GitHub persistence boundary (T6 – External Links). The webhook handler
  * and routes depend only on this interface: contract tests inject the memory
- * store, production injects the Drizzle store over Supabase Postgres.
+ * store, production injects the Drizzle store over Neon Postgres.
  * Vocabulary per GLOSSARY.md: External Link (never Integration/Sync).
  */
 import type { ExternalLinkKind } from "./parse.js"
@@ -22,13 +22,6 @@ export interface ExternalLink {
   url: string
   title: string | null
   state: ExternalLinkState | null
-}
-
-export interface TimelineEvent {
-  id: string
-  issueId: string
-  kind: string
-  body: string
 }
 
 export interface CreateExternalLinkInput {
@@ -57,12 +50,6 @@ export interface GitHubStore {
     patch: { title?: string | null; state?: ExternalLinkState | null }
   ): Promise<ExternalLink>
   listExternalLinks(issueId: string): Promise<ExternalLink[]>
-  appendTimelineEvent(
-    issueId: string,
-    kind: string,
-    body: string
-  ): Promise<TimelineEvent>
-  listTimelineEvents(issueId: string): Promise<TimelineEvent[]>
   hasProcessedDelivery(deliveryId: string): Promise<boolean>
   markDeliveryProcessed(deliveryId: string): Promise<void>
 }
@@ -70,7 +57,6 @@ export interface GitHubStore {
 export function createMemoryGitHubStore(): GitHubStore {
   const installs = new Map<string, GitHubInstall>()
   const links = new Map<string, ExternalLink>()
-  const events: TimelineEvent[] = []
   const deliveries = new Set<string>()
 
   return {
@@ -133,21 +119,6 @@ export function createMemoryGitHubStore(): GitHubStore {
         .map((l) => ({ ...l }))
     },
 
-    async appendTimelineEvent(issueId, kind, body) {
-      const event: TimelineEvent = {
-        id: crypto.randomUUID(),
-        issueId,
-        kind,
-        body,
-      }
-      events.push(event)
-      return { ...event }
-    },
-
-    async listTimelineEvents(issueId) {
-      return events.filter((e) => e.issueId === issueId).map((e) => ({ ...e }))
-    },
-
     async hasProcessedDelivery(deliveryId) {
       return deliveries.has(deliveryId)
     },
@@ -157,3 +128,4 @@ export function createMemoryGitHubStore(): GitHubStore {
     },
   }
 }
+

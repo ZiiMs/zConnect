@@ -1,6 +1,6 @@
 # AGENTS.md
 
-zConnect — a Bun-workspaces monorepo: `packages/backend` (Hono + Bun, Drizzle + Supabase Postgres,
+zConnect - a Bun-workspaces monorepo: `packages/backend` (Hono + Bun, Drizzle + Neon Postgres,
 Better Auth, BullMQ) and `packages/frontend` (React + Vite, Tailwind v4, shadcn). Linting and
 formatting are Biome, configured at the repo root.
 

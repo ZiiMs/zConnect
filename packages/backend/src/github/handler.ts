@@ -2,12 +2,13 @@
  * Webhook job handler (T6 – External Links). Processes one typed
  * `github-webhook` queue job: resolves KEY-N references from the PR branch
  * and body against the installed workspace, upserts External Links with the
- * cached PR title/state, and appends a timeline event. Merge is badge-only:
- * the handler never moves Issue Status.
+ * cached PR title/state, and appends a `github.*` Activity Event. Merge is
+ * badge-only: the handler never moves Issue Status.
  */
+import { githubActivityDraft } from "../workspaces/activity.js"
 import type { WorkspaceStore } from "../workspaces/store.js"
 import { extractIssueRefs } from "./parse.js"
-import type { ExternalLinkState, GitHubStore, TimelineEvent } from "./store.js"
+import type { ExternalLinkState, GitHubStore } from "./store.js"
 
 export type PullRequestAction = "opened" | "synchronize" | "closed"
 
@@ -55,7 +56,7 @@ function timelineKind(
   created: boolean,
   state: ExternalLinkState,
   previous: ExternalLinkState | null
-): TimelineEvent["kind"] | null {
+): string | null {
   if (created) return "link.opened"
   if (state !== previous) {
     if (state === "merged") return "link.merged"
@@ -115,11 +116,13 @@ export async function handlePullRequestEvent(
     }
     const kind = timelineKind(event, created, state, existing?.state ?? null)
     if (kind) {
-      await github.appendTimelineEvent(
-        issue.id,
-        kind,
-        `PR #${event.number} ${event.action}${event.merged ? " (merged)" : ""}`
-      )
+      await workspaces.appendActivity(issue.id, {
+        actor: { type: "github", id: null },
+        ...githubActivityDraft(
+          kind,
+          `PR #${event.number} ${event.action}${event.merged ? " (merged)" : ""}`
+        ),
+      })
     }
     linked.push(ref)
   }
@@ -169,11 +172,13 @@ export async function handlePushEvent(
           title: title === "" ? commit.sha : title,
           state: null,
         })
-        await github.appendTimelineEvent(
-          issue.id,
-          "link.opened",
-          `Commit ${commit.sha.slice(0, 7)} pushed`
-        )
+        await workspaces.appendActivity(issue.id, {
+          actor: { type: "github", id: null },
+          ...githubActivityDraft(
+            "link.opened",
+            `Commit ${commit.sha.slice(0, 7)} pushed`
+          ),
+        })
       }
       if (!linked.includes(ref)) linked.push(ref)
     }

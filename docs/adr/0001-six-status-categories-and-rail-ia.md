@@ -1,6 +1,7 @@
 # ADR-0001: Six status categories, rail IA, and project seeding
 
-Status: Accepted (grill rounds 1–2, 2026-10-15).
+Status: Accepted (grill rounds 1–2, 2026-10-15). The "Home ships disabled with Dashboard
+(soon)" rail clause is superseded by ADR-0003 (Home becomes the live My Issues entry).
 
 ## Context
 

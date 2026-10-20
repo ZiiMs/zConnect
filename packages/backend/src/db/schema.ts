@@ -1,7 +1,9 @@
+import { sql } from "drizzle-orm"
 import {
   boolean,
   foreignKey,
   integer,
+  jsonb,
   pgTable,
   primaryKey,
   text,
@@ -152,6 +154,8 @@ export const issue = pgTable(
      * Table-level FK (not inline) so the self reference typechecks.
      */
     parentId: uuid("parent_id"),
+    /** Author of the issue; null for agent/system creates and seeds. */
+    createdBy: text("created_by"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -179,6 +183,10 @@ export const invitation = pgTable(
     email: text("email").notNull(),
     role: varchar("role", { length: 16 }).notNull().$type<WorkspaceRole>(),
     invitedBy: text("invited_by").notNull(),
+    /** Created + 7 days; the route rejects expired invitations. */
+    expiresAt: timestamp("expires_at", { withTimezone: true })
+      .default(sql`now() + interval '7 days'`)
+      .notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -270,13 +278,99 @@ export const externalLink = pgTable(
   ]
 )
 
-export const timelineEvent = pgTable("timeline_event", {
+/**
+ * Collaboration core (R1/R2): Comments, Activity Events, Watchers,
+ * Notifications, and per-user notification settings. Comments are never
+ * Activity Events; the two meet only in the merged timeline.
+ */
+export const comment = pgTable(
+  "comment",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    issueId: uuid("issue_id")
+      .notNull()
+      .references(() => issue.id, { onDelete: "cascade" }),
+    authorId: text("author_id").notNull(),
+    /** "" once soft-deleted (tombstone row). */
+    body: text("body").notNull(),
+    /** One level only: parent must be top-level on the same issue. */
+    parentId: uuid("parent_id"),
+    editedAt: timestamp("edited_at", { withTimezone: true }),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    foreignKey({
+      name: "comment_parent_id_comment_id_fk",
+      columns: [table.parentId],
+      foreignColumns: [table.id],
+    }).onDelete("cascade"),
+  ]
+)
+
+export const activityEvent = pgTable("activity_event", {
   id: uuid("id").primaryKey().defaultRandom(),
   issueId: uuid("issue_id")
     .notNull()
     .references(() => issue.id, { onDelete: "cascade" }),
-  kind: text("kind").notNull(),
-  body: text("body").notNull(),
+  actorType: varchar("actor_type", { length: 16 }).notNull(),
+  actorId: text("actor_id"),
+  type: text("type").notNull(),
+  summary: text("summary").notNull(),
+  payload: jsonb("payload")
+    .$type<Record<string, unknown>>()
+    .default(sql`'{}'::jsonb`)
+    .notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+})
+
+export const issueWatcher = pgTable(
+  "issue_watcher",
+  {
+    issueId: uuid("issue_id")
+      .notNull()
+      .references(() => issue.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("issue_watcher_issue_user_unique").on(
+      table.issueId,
+      table.userId
+    ),
+  ]
+)
+
+export const notification = pgTable("notification", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: text("user_id").notNull(),
+  issueId: uuid("issue_id")
+    .notNull()
+    .references(() => issue.id, { onDelete: "cascade" }),
+  type: text("type").notNull(),
+  actorType: varchar("actor_type", { length: 16 }).notNull(),
+  actorId: text("actor_id"),
+  payload: jsonb("payload")
+    .$type<Record<string, unknown>>()
+    .default(sql`'{}'::jsonb`)
+    .notNull(),
+  readAt: timestamp("read_at", { withTimezone: true }),
+  /** Set when an email covering this row was sent; drives digest dedupe. */
+  emailedAt: timestamp("emailed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+})
+
+export const userNotificationSettings = pgTable("user_notification_settings", {
+  userId: text("user_id").primaryKey(),
+  emailMode: varchar("email_mode", { length: 16 }).default("digest").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),

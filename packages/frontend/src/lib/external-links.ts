@@ -16,15 +16,7 @@ export const externalLinkSchema = z.object({
   state: externalLinkStateSchema.nullable(),
 })
 
-export const timelineEventSchema = z.object({
-  id: z.string(),
-  issueId: z.string(),
-  kind: z.string(),
-  body: z.string(),
-})
-
 export type ExternalLink = z.infer<typeof externalLinkSchema>
-export type TimelineEvent = z.infer<typeof timelineEventSchema>
 
 export class ExternalLinksApiError extends Error {
   readonly status: number
@@ -71,13 +63,6 @@ export const externalLinksApi = {
       `/api/issues/${encodeURIComponent(issueRef)}/external-links`,
       externalLinkSchema,
       { method: "POST", body: { url } }
-    )
-  },
-
-  listTimelineEvents(issueRef: string): Promise<TimelineEvent[]> {
-    return request(
-      `/api/issues/${encodeURIComponent(issueRef)}/timeline`,
-      z.array(timelineEventSchema)
     )
   },
 }

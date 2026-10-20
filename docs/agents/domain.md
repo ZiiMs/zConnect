@@ -44,3 +44,4 @@ overlapping words — "user" (Better Auth vs. the database vs. Supabase), "sessi
 session vs. a browser session), "realtime" (Supabase Realtime vs. plain HTTP). When a glossary
 term is ambiguous across that boundary, say which layer you mean rather than assuming the reader
 resolves it the same way.
+

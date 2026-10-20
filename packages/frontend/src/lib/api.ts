@@ -1,6 +1,7 @@
 import { z } from "zod"
 
-const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? ""
+export const API_URL =
+  (import.meta.env.VITE_API_URL as string | undefined) ?? ""
 
 export const workspaceRoleSchema = z.enum(["Owner", "Admin", "Member"])
 
@@ -27,6 +28,35 @@ export const invitationSchema = z.object({
   workspaceId: z.string(),
   email: z.string(),
   role: workspaceRoleSchema,
+  /** Seven-day expiry; absent on older payloads. */
+  expiresAt: z.string().optional(),
+  /** True when the API actually sent the invite email. */
+  mailSent: z.boolean().optional(),
+  /** Copy-link fallback, always present on create responses. */
+  acceptUrl: z.string().optional(),
+})
+
+export const invitationDetailsSchema = z.object({
+  id: z.string(),
+  email: z.string(),
+  role: workspaceRoleSchema,
+  expiresAt: z.string(),
+  workspace: z.object({ id: z.string(), name: z.string() }),
+  inviter: z.object({
+    id: z.string(),
+    name: z.string().optional(),
+    email: z.string().optional(),
+  }),
+})
+
+/** Enriched invitation row for the account-level inbox (GET /api/invitations). */
+export const invitationInboxSchema = invitationSchema.extend({
+  workspace: z.object({ id: z.string(), name: z.string() }),
+  inviter: z.object({
+    id: z.string(),
+    name: z.string().optional(),
+    email: z.string().optional(),
+  }),
 })
 
 export const projectSchema = z.object({
@@ -94,6 +124,11 @@ export const issueSchema = z.object({
   labels: z.array(z.string()),
   /** T5 subtask parent row id; absent on older payloads and test fixtures. */
   parentId: z.string().nullable().optional(),
+  /**
+   * Author of the issue: the signed-in user for REST creates, null for
+   * agent/system creates and older rows.
+   */
+  createdBy: z.string().nullable().optional(),
   /** T5 completion guardrail: present on PATCH responses that complete. */
   warnings: z.array(z.string()).optional(),
   /**
@@ -114,6 +149,90 @@ export const labelSchema = z.object({
   workspaceId: z.string(),
   name: z.string(),
   color: z.string(),
+})
+
+export const commentSchema = z.object({
+  id: z.string(),
+  issueId: z.string(),
+  authorId: z.string(),
+  /** Empty once soft-deleted; the tombstone keeps the row. */
+  body: z.string(),
+  parentId: z.string().nullable(),
+  editedAt: z.string().nullable(),
+  deletedAt: z.string().nullable(),
+  createdAt: z.string(),
+})
+
+export const activityActorTypeSchema = z.enum([
+  "user",
+  "agent",
+  "system",
+  "github",
+])
+
+export const activityEventSchema = z.object({
+  id: z.string(),
+  issueId: z.string(),
+  actorType: activityActorTypeSchema,
+  actorId: z.string().nullable(),
+  type: z.string(),
+  summary: z.string(),
+  payload: z.record(z.string(), z.unknown()),
+  createdAt: z.string(),
+})
+
+/**
+ * One Activity feed item: a Comment or an Activity Event. The server stores
+ * them separately and merges them into this union at read time.
+ */
+export const timelineItemSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("comment") }).extend(commentSchema.shape),
+  z.object({ kind: z.literal("activity") }).extend(activityEventSchema.shape),
+])
+
+export const timelinePageSchema = z.object({
+  items: z.array(timelineItemSchema),
+  nextCursor: z.string().nullable(),
+})
+
+export const emailModeSchema = z.enum(["immediate", "digest", "off"])
+
+export const notificationSchema = z.object({
+  id: z.string(),
+  userId: z.string(),
+  issueId: z.string(),
+  type: z.string(),
+  actorType: activityActorTypeSchema,
+  actorId: z.string().nullable(),
+  payload: z.record(z.string(), z.unknown()),
+  readAt: z.string().nullable(),
+  emailedAt: z.string().nullable().optional(),
+  createdAt: z.string(),
+})
+
+export const notificationsPageSchema = z.object({
+  notifications: z.array(notificationSchema),
+  nextCursor: z.string().nullable(),
+  unreadCount: z.number(),
+})
+
+export const notificationSettingsSchema = z.object({
+  emailMode: emailModeSchema,
+})
+
+export const watchStateSchema = z.object({ watching: z.boolean() })
+
+/** My Issues row: the Issue plus the project/status labels its row shows. */
+export const myIssueSchema = issueSchema.extend({
+  workspaceId: z.string(),
+  workspaceName: z.string(),
+  projectName: z.string(),
+  projectKey: z.string(),
+  projectIcon: z.string(),
+  projectColor: z.string(),
+  statusName: z.string(),
+  statusCategory: statusCategorySchema,
+  statusColor: z.string(),
 })
 
 export type Priority = z.infer<typeof prioritySchema>
@@ -159,6 +278,18 @@ export type Project = z.infer<typeof projectSchema>
 export type StatusCategory = z.infer<typeof statusCategorySchema>
 export type Status = z.infer<typeof statusSchema>
 export type Label = z.infer<typeof labelSchema>
+export type Comment = z.infer<typeof commentSchema>
+export type ActivityActorType = z.infer<typeof activityActorTypeSchema>
+export type ActivityEvent = z.infer<typeof activityEventSchema>
+export type TimelineItem = z.infer<typeof timelineItemSchema>
+export type TimelinePage = z.infer<typeof timelinePageSchema>
+export type EmailMode = z.infer<typeof emailModeSchema>
+export type Notification = z.infer<typeof notificationSchema>
+export type NotificationsPage = z.infer<typeof notificationsPageSchema>
+export type NotificationSettings = z.infer<typeof notificationSettingsSchema>
+export type InvitationDetails = z.infer<typeof invitationDetailsSchema>
+export type InvitationInbox = z.infer<typeof invitationInboxSchema>
+export type MyIssue = z.infer<typeof myIssueSchema>
 
 /**
  * The subset of a Member that assignee surfaces read. Views accept this
@@ -295,6 +426,40 @@ export const api = {
     })
   },
 
+  getInvitation(invitationId: string): Promise<InvitationDetails> {
+    return request(
+      `/api/invitations/${encodeURIComponent(invitationId)}`,
+      invitationDetailsSchema
+    )
+  },
+
+  acceptInvitation(invitationId: string): Promise<Member> {
+    return request(
+      `/api/invitations/${encodeURIComponent(invitationId)}/accept`,
+      memberSchema,
+      { method: "POST" }
+    )
+  },
+
+  listMyInvitations(): Promise<InvitationInbox[]> {
+    return request("/api/invitations", z.array(invitationInboxSchema))
+  },
+
+  listWorkspaceInvites(workspaceId: string): Promise<Invitation[]> {
+    return request(
+      `/api/workspaces/${workspaceId}/invites`,
+      z.array(invitationSchema)
+    )
+  },
+
+  deleteInvitation(invitationId: string): Promise<void> {
+    return request(
+      `/api/invitations/${encodeURIComponent(invitationId)}`,
+      z.void(),
+      { method: "DELETE" }
+    )
+  },
+
   listProjects(workspaceId: string): Promise<Project[]> {
     return request(
       `/api/workspaces/${workspaceId}/projects`,
@@ -419,6 +584,133 @@ export const api = {
     return request(
       `/api/issues/${encodeURIComponent(ref)}/subtasks`,
       z.array(issueSchema)
+    )
+  },
+
+  listTimeline(
+    ref: string,
+    opts?: { limit?: number; before?: string }
+  ): Promise<TimelinePage> {
+    const params = new URLSearchParams()
+    if (opts?.limit !== undefined) params.append("limit", String(opts.limit))
+    if (opts?.before !== undefined) params.append("before", opts.before)
+    const query = params.toString()
+    return request(
+      `/api/issues/${encodeURIComponent(ref)}/timeline${query ? `?${query}` : ""}`,
+      timelinePageSchema
+    )
+  },
+
+  createComment(
+    ref: string,
+    input: { body: string; parentId?: string | null }
+  ): Promise<Comment> {
+    return request(
+      `/api/issues/${encodeURIComponent(ref)}/comments`,
+      commentSchema,
+      { method: "POST", body: input }
+    )
+  },
+
+  updateComment(commentId: string, body: string): Promise<Comment> {
+    return request(
+      `/api/comments/${encodeURIComponent(commentId)}`,
+      commentSchema,
+      { method: "PATCH", body: { body } }
+    )
+  },
+
+  deleteComment(commentId: string): Promise<Comment> {
+    return request(
+      `/api/comments/${encodeURIComponent(commentId)}`,
+      commentSchema,
+      { method: "DELETE" }
+    )
+  },
+
+  getWatch(ref: string): Promise<{ watching: boolean }> {
+    return request(
+      `/api/issues/${encodeURIComponent(ref)}/watch`,
+      watchStateSchema
+    )
+  },
+
+  watchIssue(ref: string): Promise<{ watching: boolean }> {
+    return request(
+      `/api/issues/${encodeURIComponent(ref)}/watch`,
+      watchStateSchema,
+      { method: "POST" }
+    )
+  },
+
+  unwatchIssue(ref: string): Promise<{ watching: boolean }> {
+    return request(
+      `/api/issues/${encodeURIComponent(ref)}/watch`,
+      watchStateSchema,
+      { method: "DELETE" }
+    )
+  },
+
+  listNotifications(opts?: {
+    filter?: "all" | "unread"
+    limit?: number
+    before?: string
+  }): Promise<NotificationsPage> {
+    const params = new URLSearchParams()
+    if (opts?.filter) params.append("filter", opts.filter)
+    if (opts?.limit !== undefined) params.append("limit", String(opts.limit))
+    if (opts?.before !== undefined) params.append("before", opts.before)
+    const query = params.toString()
+    return request(
+      `/api/notifications${query ? `?${query}` : ""}`,
+      notificationsPageSchema
+    )
+  },
+
+  markNotificationRead(notificationId: string): Promise<Notification> {
+    return request(
+      `/api/notifications/${encodeURIComponent(notificationId)}/read`,
+      notificationSchema,
+      { method: "POST" }
+    )
+  },
+
+  markAllNotificationsRead(): Promise<{ updated: number }> {
+    return request(
+      "/api/notifications/read-all",
+      z.object({ updated: z.number() }),
+      { method: "POST" }
+    )
+  },
+
+  unreadNotificationCount(): Promise<{ count: number }> {
+    return request(
+      "/api/notifications/unread-count",
+      z.object({ count: z.number() })
+    )
+  },
+
+  getNotificationSettings(): Promise<NotificationSettings> {
+    return request("/api/me/notification-settings", notificationSettingsSchema)
+  },
+
+  updateNotificationSettings(
+    emailMode: EmailMode
+  ): Promise<NotificationSettings> {
+    return request(
+      "/api/me/notification-settings",
+      notificationSettingsSchema,
+      {
+        method: "PATCH",
+        body: { emailMode },
+      }
+    )
+  },
+
+  listMyIssues(tab: "assigned" | "created" | "watched"): Promise<MyIssue[]> {
+    return request(
+      `/api/me/issues?tab=${encodeURIComponent(tab)}`,
+      z.array(myIssueSchema)
     )
   },
 

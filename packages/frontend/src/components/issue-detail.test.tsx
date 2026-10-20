@@ -18,6 +18,13 @@ vi.mock("@/lib/api", async (importOriginal) => {
       createIssue: vi.fn(),
       updateIssue: vi.fn(),
       deleteIssue: vi.fn(),
+      listTimeline: vi.fn(),
+      createComment: vi.fn(),
+      updateComment: vi.fn(),
+      deleteComment: vi.fn(),
+      getWatch: vi.fn(),
+      watchIssue: vi.fn(),
+      unwatchIssue: vi.fn(),
     },
   }
 })
@@ -27,6 +34,8 @@ const listIssues = vi.mocked(api.listIssues)
 const listMembers = vi.mocked(api.listMembers)
 const listLabels = vi.mocked(api.listLabels)
 const listSubtasks = vi.mocked(api.listSubtasks)
+const listTimeline = vi.mocked(api.listTimeline)
+const getWatch = vi.mocked(api.getWatch)
 const updateIssue = vi.mocked(api.updateIssue)
 
 const statuses: Status[] = [
@@ -106,6 +115,7 @@ function renderDetail(issue: Issue = baseIssue, canEdit = true) {
       subtasks={[childIssue]}
       canEdit={canEdit}
       canAdmin={false}
+      currentUserId="user-a"
       onBack={callbacks.onBack}
       onStatusChange={callbacks.onStatusChange}
       onUpdate={callbacks.onUpdate}
@@ -120,6 +130,8 @@ describe("issue detail", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     stubLinkFetches()
+    listTimeline.mockResolvedValue({ items: [], nextCursor: null })
+    getWatch.mockResolvedValue({ watching: false })
   })
 
   afterEach(() => {
@@ -250,6 +262,45 @@ describe("issue detail", () => {
       within(detail).queryByRole("button", { name: /archive/i })
     ).not.toBeInTheDocument()
     expect(within(detail).getByText("Unassigned")).toBeInTheDocument()
+    expect(
+      within(detail).queryByRole("button", { name: /^watch$/i })
+    ).not.toBeInTheDocument()
+  })
+
+  test("watch control loads state and toggles optimistically", async () => {
+    const user = userEvent.setup()
+    const watchIssue = vi.mocked(api.watchIssue)
+    const unwatchIssue = vi.mocked(api.unwatchIssue)
+    watchIssue.mockResolvedValue({ watching: true })
+    unwatchIssue.mockResolvedValue({ watching: false })
+    renderDetail()
+
+    const watch = await screen.findByRole("button", { name: "Watch" })
+    await user.click(watch)
+
+    expect(watchIssue).toHaveBeenCalledWith("WEB-1")
+    expect(
+      await screen.findByRole("button", { name: "Unwatch" })
+    ).toBeInTheDocument()
+
+    await user.click(screen.getByRole("button", { name: "Unwatch" }))
+    expect(unwatchIssue).toHaveBeenCalledWith("WEB-1")
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Watch" })).toBeInTheDocument()
+    )
+  })
+
+  test("a failed watch toggle reverts the button and shows an error", async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.watchIssue).mockRejectedValue(new Error("Forbidden"))
+    renderDetail()
+
+    await user.click(await screen.findByRole("button", { name: "Watch" }))
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Watch" })).toBeInTheDocument()
+    )
+    expect(screen.getByText("Forbidden")).toBeInTheDocument()
   })
 })
 
@@ -267,6 +318,8 @@ describe("project issues detail selection", () => {
     localStorage.clear()
     vi.clearAllMocks()
     stubLinkFetches()
+    listTimeline.mockResolvedValue({ items: [], nextCursor: null })
+    getWatch.mockResolvedValue({ watching: false })
     listStatuses.mockResolvedValue(statuses)
     listMembers.mockResolvedValue([])
     listLabels.mockResolvedValue(registry)

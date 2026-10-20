@@ -139,6 +139,10 @@ describe("invites and members contract", () => {
     expect(body.email).toBe(member.email)
     expect(body.role).toBe("Member")
     expect(body.workspaceId).toBe(workspaceId)
+    expect(typeof body.expiresAt).toBe("string")
+    // No mailer is injected in this suite: the copy-link fallback is returned.
+    expect(body.mailSent).toBe(false)
+    expect(body.acceptUrl).toBe(`http://localhost:5173/invite/${body.id}`)
   })
 
   test("owner invite with unknown role returns 400", async () => {

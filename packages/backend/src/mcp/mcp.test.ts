@@ -93,7 +93,7 @@ describe("mcp transport", () => {
     expect(res.status).toBe(401)
   })
 
-  test("tools/list enumerates exactly the five MVP tools", async () => {
+  test("tools/list enumerates the five MVP tools plus comment.list", async () => {
     const res = await mcp(token, rpc("tools/list"))
     expect(res.status).toBe(200)
     const body = await res.json()
@@ -101,6 +101,7 @@ describe("mcp transport", () => {
     const names = (body.result.tools as { name: string }[]).map((t) => t.name)
     expect(names.sort()).toEqual(
       [
+        "comment.list",
         "issue.create",
         "issue.get",
         "issue.list",
@@ -108,6 +109,7 @@ describe("mcp transport", () => {
         "project.list",
       ].sort()
     )
+    expect(names).not.toContain("comment.create")
   })
 
   test("unknown methods are not reachable (404); GET is rejected (405)", async () => {
@@ -722,5 +724,231 @@ describe("mcp issue.create and issue.update parity", () => {
     }
     expect(body.identifier).toBe("WEB-7")
     expect(body.projectId).toBe(otherId)
+  })
+})
+
+describe("mcp comment.list and agent attribution", () => {
+  let app: ReturnType<typeof setup>["app"]
+  let store: ReturnType<typeof setup>["store"]
+  let tokens: ReturnType<typeof setup>["tokens"]
+  let workspaceId: string
+  let token: string
+  let tokenId: string
+  let projectId: string
+  let statusId: string
+  let doneId: string
+  let issueId: string
+  let identifier: string
+
+  async function callMcp(tokenValue: string | null, body: unknown) {
+    return app.request("/api/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(tokenValue ? { authorization: `Bearer ${tokenValue}` } : {}),
+      },
+      body: JSON.stringify(body),
+    })
+  }
+
+  async function listComments(
+    params: unknown,
+    tokenValue: string | null = token
+  ) {
+    return callMcp(tokenValue, rpc("comment.list", params))
+  }
+
+  beforeEach(async () => {
+    const fresh = setup()
+    app = fresh.app
+    store = fresh.store
+    tokens = fresh.tokens
+    ;({ workspaceId, token } = await seedWorkspace(app))
+    const resolved = await tokens.resolveToken(token)
+    if (!resolved) throw new Error("Seeded token did not resolve")
+    tokenId = resolved.id
+    const project = await app.request(
+      `/api/workspaces/${workspaceId}/projects`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", ...auth(owner.id) },
+        body: JSON.stringify({ name: "Web", key: "WEB" }),
+      }
+    )
+    projectId = (await project.json()).id
+    // T2: every new project arrives seeded; this describe wants a clean one.
+    await clearSeededTracker(store, projectId)
+    for (const [name, category] of [
+      ["Backlog", "Unstarted"],
+      ["Shipped", "Completed"],
+    ] as const) {
+      const created = await app.request(`/api/projects/${projectId}/statuses`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...auth(owner.id) },
+        body: JSON.stringify({ name, category }),
+      })
+      const body = (await created.json()) as { id: string }
+      if (name === "Backlog") statusId = body.id
+      else doneId = body.id
+    }
+    const issue = await app.request(`/api/projects/${projectId}/issues`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...auth(owner.id) },
+      body: JSON.stringify({ title: "Fix login", statusId }),
+    })
+    ;({ id: issueId, identifier } = await issue.json())
+  })
+
+  test("comment.list is read-only on tools/list (no comment.create)", async () => {
+    const res = await callMcp(token, rpc("tools/list"))
+    const names = ((await res.json()).result.tools as { name: string }[]).map(
+      (t) => t.name
+    )
+    expect(names).toContain("comment.list")
+    expect(names).not.toContain("comment.create")
+    expect(names).not.toContain("comment.update")
+    expect(names).not.toContain("comment.delete")
+  })
+
+  test("first page returns seeded comments newest first with deleted false", async () => {
+    const comment = await store.createComment({
+      issueId,
+      authorId: "user-a",
+      body: "First!",
+    })
+    const res = await listComments({ ref: identifier })
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toMatchObject({ jsonrpc: "2.0", id: 1 })
+    expect(body.result.nextCursor).toBeNull()
+    expect(body.result.comments).toHaveLength(1)
+    expect(body.result.comments[0]).toMatchObject({
+      id: comment.id,
+      issueId,
+      authorId: "user-a",
+      body: "First!",
+      deleted: false,
+    })
+  })
+
+  test("pagination with before yields no duplicates and no gaps", async () => {
+    const seeded: { id: string }[] = []
+    for (let i = 1; i <= 3; i++) {
+      seeded.push(
+        await store.createComment({
+          issueId,
+          authorId: "user-a",
+          body: `comment ${i}`,
+        })
+      )
+      // The memory store stamps createdAt itself; space the rows out.
+      await Bun.sleep(2)
+    }
+
+    const seen: string[] = []
+    let cursor: string | null = null
+    let pages = 0
+    do {
+      const res = await listComments({
+        ref: identifier,
+        limit: 1,
+        ...(cursor ? { before: cursor } : {}),
+      })
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.result.comments).toHaveLength(1)
+      seen.push(body.result.comments[0].id)
+      cursor = body.result.nextCursor
+      pages++
+    } while (cursor)
+
+    expect(pages).toBe(3)
+    expect(seen).toEqual(seeded.map((comment) => comment.id).reverse())
+    expect(new Set(seen).size).toBe(seen.length)
+  })
+
+  test("tombstones come back as deleted true with an empty body", async () => {
+    const live = await store.createComment({
+      issueId,
+      authorId: "user-a",
+      body: "keep me",
+    })
+    const gone = await store.createComment({
+      issueId,
+      authorId: "user-a",
+      body: "remove me",
+    })
+    await store.softDeleteComment(gone.id)
+
+    const res = await listComments({ ref: identifier })
+    expect(res.status).toBe(200)
+    const rows = (await res.json()).result.comments as {
+      id: string
+      body: string
+      deleted: boolean
+      deletedAt: string | null
+    }[]
+    const byId = new Map(rows.map((row) => [row.id, row]))
+    expect(byId.get(live.id)).toMatchObject({ deleted: false, body: "keep me" })
+    expect(byId.get(gone.id)).toMatchObject({ deleted: true, body: "" })
+    expect(byId.get(gone.id)?.deletedAt).not.toBeNull()
+  })
+
+  test("a token from another workspace gets 403 even with a valid ref", async () => {
+    await store.createComment({
+      issueId,
+      authorId: "user-a",
+      body: "secret",
+    })
+    const other = await seedWorkspace(app)
+    const res = await listComments({ ref: identifier }, other.token)
+    expect(res.status).toBe(403)
+    expect(await res.json()).toEqual({ error: "Forbidden" })
+  })
+
+  test("unknown ref is 404; missing or invalid params are 400", async () => {
+    const unknown = await listComments({ ref: "WEB-999" })
+    expect(unknown.status).toBe(404)
+    expect(await unknown.json()).toEqual({ error: "Not found" })
+
+    expect((await listComments({})).status).toBe(400)
+    expect((await listComments({ ref: " " })).status).toBe(400)
+    expect((await listComments({ ref: identifier, limit: 0 })).status).toBe(400)
+    expect((await listComments({ ref: identifier, limit: 51 })).status).toBe(
+      400
+    )
+    expect((await listComments({ ref: identifier, limit: 1.5 })).status).toBe(
+      400
+    )
+  })
+
+  test("issue.create and issue.update attribute Activity Events to the token", async () => {
+    const created = await callMcp(
+      token,
+      rpc("issue.create", { projectId, title: "Agent issue", statusId })
+    )
+    expect(created.status).toBe(201)
+    const createdBody = await created.json()
+    expect(createdBody.result.createdBy).toBeNull()
+
+    const updated = await callMcp(
+      token,
+      rpc("issue.update", {
+        ref: createdBody.result.identifier,
+        statusId: doneId,
+      })
+    )
+    expect(updated.status).toBe(200)
+
+    const events = await store.listActivity(createdBody.result.id)
+    expect(events).toHaveLength(2)
+    expect(events.map((event) => event.type).sort()).toEqual([
+      "issue.created",
+      "issue.status_changed",
+    ])
+    for (const event of events) {
+      expect(event.actorType).toBe("agent")
+      expect(event.actorId).toBe(tokenId)
+    }
   })
 })

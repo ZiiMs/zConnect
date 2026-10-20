@@ -52,7 +52,7 @@ describe("pull request webhook handler", () => {
     await github.createInstall(workspaceId, ["acme/web"])
   })
 
-  test("opened PR auto-creates one External Link plus a timeline event", async () => {
+  test("opened PR auto-creates one External Link plus an Activity Event", async () => {
     const result = await handlePullRequestEvent(
       { workspaces, github },
       openedEvent()
@@ -67,8 +67,15 @@ describe("pull request webhook handler", () => {
       title: "Fix login",
       state: "open",
     })
-    const events = await github.listTimelineEvents(issueId)
-    expect(events.map((e) => e.kind)).toEqual(["link.opened"])
+    const events = await workspaces.listActivity(issueId)
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({
+      actorType: "github",
+      actorId: null,
+      type: "github.link.opened",
+      summary: "PR #7 opened",
+      payload: { kind: "link.opened" },
+    })
   })
 
   test("redelivery of the same event is idempotent", async () => {
@@ -79,7 +86,7 @@ describe("pull request webhook handler", () => {
     )
     expect(result.skipped).toBe(true)
     expect(await github.listExternalLinks(issueId)).toHaveLength(1)
-    expect(await github.listTimelineEvents(issueId)).toHaveLength(1)
+    expect(await workspaces.listActivity(issueId)).toHaveLength(1)
   })
 
   test("synchronize refreshes the cached badge without duplicating", async () => {
@@ -105,8 +112,12 @@ describe("pull request webhook handler", () => {
     )
     const links = await github.listExternalLinks(issueId)
     expect(links[0].state).toBe("merged")
-    const events = await github.listTimelineEvents(issueId)
-    expect(events.map((e) => e.kind)).toEqual(["link.opened", "link.merged"])
+    const events = await workspaces.listActivity(issueId)
+    expect(events.map((e) => e.type).sort()).toEqual([
+      "github.link.merged",
+      "github.link.opened",
+    ])
+    expect(events.every((e) => e.actorType === "github")).toBe(true)
     const issue = await workspaces.getIssue("WEB-1")
     expect(issue?.statusId).toBe(statusId)
   })
@@ -153,7 +164,7 @@ describe("pull request webhook handler", () => {
     })
   })
 
-  test("push commits with KEY-N create kind=commit links plus timeline events", async () => {
+  test("push commits with KEY-N create kind=commit links plus Activity Events", async () => {
     const result = await handlePushEvent(
       { workspaces, github },
       {
@@ -176,8 +187,15 @@ describe("pull request webhook handler", () => {
       kind: "commit",
       url: "https://github.com/acme/web/commit/abc123def456",
     })
-    const events = await github.listTimelineEvents(issueId)
-    expect(events.map((e) => e.kind)).toEqual(["link.opened"])
+    const events = await workspaces.listActivity(issueId)
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({
+      actorType: "github",
+      actorId: null,
+      type: "github.link.opened",
+      summary: "Commit abc123d pushed",
+      payload: { kind: "link.opened" },
+    })
   })
 
   test("push redelivery is idempotent and unknown repos link nothing", async () => {
@@ -196,7 +214,7 @@ describe("pull request webhook handler", () => {
     const redelivery = await handlePushEvent({ workspaces, github }, event)
     expect(redelivery.skipped).toBe(true)
     expect(await github.listExternalLinks(issueId)).toHaveLength(1)
-    expect(await github.listTimelineEvents(issueId)).toHaveLength(1)
+    expect(await workspaces.listActivity(issueId)).toHaveLength(1)
 
     const foreign = await handlePushEvent(
       { workspaces, github },

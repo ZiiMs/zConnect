@@ -1,5 +1,7 @@
 import { Hono } from "hono"
 import { z } from "zod"
+import { githubActivityDraft } from "../workspaces/activity.js"
+import { readableProject, writableProject } from "../workspaces/permissions.js"
 import type { GetSession } from "../workspaces/session.js"
 import type { WorkspaceStore } from "../workspaces/store.js"
 import type {
@@ -84,16 +86,18 @@ export function createGitHubApp({
     return membership
   }
 
-  async function issueProject(issueRef: string, userId: string) {
+  async function issueProject(
+    issueRef: string,
+    userId: string,
+    mode: "read" | "write" = "write"
+  ) {
     const issue = await workspaces.getIssue(issueRef)
     if (!issue) return null
-    const project = await workspaces.getProject(issue.projectId)
+    const project =
+      mode === "read"
+        ? await readableProject(workspaces, issue.projectId, userId)
+        : await writableProject(workspaces, issue.projectId, userId)
     if (!project) return null
-    const membership = await workspaces.getMembership(
-      project.workspaceId,
-      userId
-    )
-    if (!membership) return null
     return { issue, project }
   }
 
@@ -148,18 +152,24 @@ export function createGitHubApp({
       kind: classified.kind,
       url: classified.url,
     })
-    await github.appendTimelineEvent(
-      found.issue.id,
-      "link.manual",
-      `External Link added (${classified.kind} ${classified.owner}/${classified.repo})`
-    )
+    await workspaces.appendActivity(found.issue.id, {
+      actor: { type: "github", id: null },
+      ...githubActivityDraft(
+        "link.manual",
+        `External Link added (${classified.kind} ${classified.owner}/${classified.repo})`
+      ),
+    })
     return c.json(link, 201)
   })
 
   app.get("/api/issues/:key/external-links", async (c) => {
     const session = await getSession(c.req.raw)
     if (!session) return c.json({ error: "Unauthorized" }, 401)
-    const found = await issueProject(c.req.param("key"), session.user.id)
+    const found = await issueProject(
+      c.req.param("key"),
+      session.user.id,
+      "read"
+    )
     if (!found) {
       const exists = await workspaces.getIssue(c.req.param("key"))
       return c.json(
@@ -168,20 +178,6 @@ export function createGitHubApp({
       )
     }
     return c.json(await github.listExternalLinks(found.issue.id))
-  })
-
-  app.get("/api/issues/:key/timeline", async (c) => {
-    const session = await getSession(c.req.raw)
-    if (!session) return c.json({ error: "Unauthorized" }, 401)
-    const found = await issueProject(c.req.param("key"), session.user.id)
-    if (!found) {
-      const exists = await workspaces.getIssue(c.req.param("key"))
-      return c.json(
-        { error: exists ? "Forbidden" : "Not found" },
-        exists ? 403 : 404
-      )
-    }
-    return c.json(await github.listTimelineEvents(found.issue.id))
   })
 
   app.post("/api/webhooks/github", async (c) => {

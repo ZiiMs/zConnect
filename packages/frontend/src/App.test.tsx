@@ -1,12 +1,27 @@
 import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, test, vi } from "vitest"
-import { api, type Project, type Workspace } from "@/lib/api"
+import {
+  api,
+  type InvitationDetails,
+  type Member,
+  type Project,
+  type Workspace,
+} from "@/lib/api"
 import { App } from "./App.js"
+
+const authState = vi.hoisted(() => ({
+  user: { id: "user-1", email: "dev@example.com" } as {
+    id: string
+    email: string
+    name?: string
+    image?: string | null
+  } | null,
+}))
 
 vi.mock("@/lib/auth-client", () => ({
   useSession: () => ({
-    data: { user: { id: "user-1", email: "dev@example.com" } },
+    data: authState.user ? { user: authState.user } : null,
     isPending: false,
   }),
   signOut: vi.fn(),
@@ -29,6 +44,15 @@ vi.mock("@/lib/api", async (importOriginal) => {
       listMembers: vi.fn(),
       listLabels: vi.fn(),
       listSubtasks: vi.fn(),
+      listNotifications: vi.fn(),
+      markNotificationRead: vi.fn(),
+      markAllNotificationsRead: vi.fn(),
+      unreadNotificationCount: vi.fn(),
+      getNotificationSettings: vi.fn(),
+      updateNotificationSettings: vi.fn(),
+      listMyIssues: vi.fn(),
+      getInvitation: vi.fn(),
+      acceptInvitation: vi.fn(),
     },
   }
 })
@@ -37,6 +61,8 @@ const listWorkspaces = vi.mocked(api.listWorkspaces)
 const createWorkspace = vi.mocked(api.createWorkspace)
 const createProject = vi.mocked(api.createProject)
 const listProjects = vi.mocked(api.listProjects)
+const getInvitation = vi.mocked(api.getInvitation)
+const acceptInvitation = vi.mocked(api.acceptInvitation)
 
 const workspaces: Workspace[] = [
   { id: "ws-1", name: "Acme", role: "Owner" },
@@ -82,6 +108,8 @@ function renderShell() {
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
+  window.history.replaceState(null, "", "/")
+  authState.user = { id: "user-1", email: "dev@example.com" }
   listWorkspaces.mockResolvedValue(workspaces)
   listProjects.mockImplementation(async (workspaceId: string) =>
     workspaceId === "ws-1"
@@ -95,6 +123,13 @@ beforeEach(() => {
   vi.mocked(api.listMembers).mockResolvedValue([])
   vi.mocked(api.listLabels).mockResolvedValue([])
   vi.mocked(api.listSubtasks).mockResolvedValue([])
+  vi.mocked(api.unreadNotificationCount).mockResolvedValue({ count: 0 })
+  vi.mocked(api.listNotifications).mockResolvedValue({
+    notifications: [],
+    nextCursor: null,
+    unreadCount: 0,
+  })
+  vi.mocked(api.listMyIssues).mockResolvedValue([])
 })
 
 describe("rail IA", () => {
@@ -273,21 +308,107 @@ describe("rail IA", () => {
     ).toBeInTheDocument()
   })
 
-  test("Home is disabled with its hint and is never a live link", async () => {
+  test("rail replaces Home with live My Issues and Inbox entries", async () => {
+    const { rail } = renderShell()
+    await rail().findByRole("button", { name: /web/i })
+
+    expect(rail().queryByText("Dashboard (soon)")).not.toBeInTheDocument()
+    expect(
+      rail().queryByRole("button", { name: /home/i })
+    ).not.toBeInTheDocument()
+    expect(rail().getByRole("button", { name: /my issues/i })).toBeEnabled()
+    expect(rail().getByRole("button", { name: /inbox/i })).toBeEnabled()
+  })
+
+  test("My Issues opens its view and fetches the assigned tab", async () => {
     const user = userEvent.setup()
     const { rail } = renderShell()
     await rail().findByRole("button", { name: /web/i })
 
-    const home = rail().getByRole("button", { name: /home/i })
-    expect(home).toBeDisabled()
-    expect(home).toHaveAttribute("title", "Dashboard (soon)")
-    expect(rail().getByText("Dashboard (soon)")).toBeInTheDocument()
-    expect(
-      rail().queryByRole("link", { name: /home/i })
-    ).not.toBeInTheDocument()
+    await user.click(rail().getByRole("button", { name: /my issues/i }))
 
-    await user.click(home)
-    expect(screen.getByRole("heading", { name: /web/i })).toBeInTheDocument()
+    expect(
+      await screen.findByRole("heading", { name: "My Issues" })
+    ).toBeInTheDocument()
+    await waitFor(() =>
+      expect(api.listMyIssues).toHaveBeenCalledWith("assigned")
+    )
+    expect(
+      await screen.findByText("Nothing assigned to you.")
+    ).toBeInTheDocument()
+  })
+
+  test("Inbox opens its view and fetches notifications", async () => {
+    const user = userEvent.setup()
+    const { rail } = renderShell()
+    await rail().findByRole("button", { name: /web/i })
+
+    await user.click(rail().getByRole("button", { name: /inbox/i }))
+
+    expect(
+      await screen.findByRole("heading", { name: "Inbox" })
+    ).toBeInTheDocument()
+    await waitFor(() =>
+      expect(api.listNotifications).toHaveBeenCalledWith({ filter: "all" })
+    )
+    expect(await screen.findByText("No notifications yet.")).toBeInTheDocument()
+  })
+
+  test("the Inbox badge shows unread notifications and caps at 99+", async () => {
+    vi.mocked(api.unreadNotificationCount).mockResolvedValue({ count: 120 })
+    renderShell()
+
+    expect(await screen.findByTestId("inbox-unread-badge")).toHaveTextContent(
+      "99+"
+    )
+  })
+
+  test("the Inbox badge is hidden when nothing is unread", async () => {
+    const { rail } = renderShell()
+    await rail().findByRole("button", { name: /web/i })
+    await waitFor(() => expect(api.unreadNotificationCount).toHaveBeenCalled())
+
+    expect(screen.queryByTestId("inbox-unread-badge")).not.toBeInTheDocument()
+  })
+
+  test("selecting a project from My Issues returns to the project view", async () => {
+    const user = userEvent.setup()
+    const { rail } = renderShell()
+    const web = await rail().findByRole("button", { name: /web/i })
+
+    await user.click(rail().getByRole("button", { name: /my issues/i }))
+    expect(
+      await screen.findByRole("heading", { name: "My Issues" })
+    ).toBeInTheDocument()
+
+    await user.click(web)
+
+    expect(
+      await screen.findByRole("heading", { name: /web/i })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole("heading", { name: "My Issues" })
+    ).not.toBeInTheDocument()
+  })
+
+  test("Settings exposes the Notifications tab and its email modes", async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.getNotificationSettings).mockResolvedValue({
+      emailMode: "digest",
+    })
+    const { rail } = renderShell()
+    await rail().findByRole("button", { name: /web/i })
+
+    await user.click(rail().getByRole("button", { name: /settings/i }))
+    await user.click(
+      await screen.findByRole("tab", { name: /^notifications$/i })
+    )
+
+    expect(await screen.findByRole("radio", { name: /digest/i })).toBeChecked()
+    expect(
+      screen.getByRole("radio", { name: /immediate/i })
+    ).toBeInTheDocument()
+    expect(screen.getByRole("radio", { name: /off/i })).toBeInTheDocument()
   })
 
   test("Board and Table stay content view-tabs, not rail children", async () => {
@@ -319,5 +440,64 @@ describe("rail IA", () => {
     expect(
       rail().queryByRole("button", { name: /web/i })
     ).not.toBeInTheDocument()
+  })
+})
+
+const inviteDetails: InvitationDetails = {
+  id: "inv-1",
+  email: "dev@example.com",
+  role: "Member",
+  expiresAt: "2030-01-15T12:00:00.000Z",
+  workspace: { id: "ws-1", name: "Acme" },
+  inviter: { id: "user-2", name: "Ada", email: "ada@example.com" },
+}
+
+const inviteMembership: Member = {
+  workspaceId: "ws-1",
+  userId: "user-1",
+  role: "Member",
+  name: "Dev",
+}
+
+describe("invite route", () => {
+  test("signed-out invite links show the auth form, not the shell", async () => {
+    authState.user = null
+    window.history.replaceState(null, "", "/invite/inv-1")
+    render(<App />)
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "Sign in to accept your invitation",
+      })
+    ).toBeInTheDocument()
+    expect(screen.queryByTestId("rail")).not.toBeInTheDocument()
+    expect(getInvitation).not.toHaveBeenCalled()
+  })
+
+  test("signed-in invite links render the accept page outside the shell", async () => {
+    window.history.replaceState(null, "", "/invite/inv-1")
+    getInvitation.mockResolvedValue(inviteDetails)
+    render(<App />)
+
+    expect(await screen.findByText("Acme")).toBeInTheDocument()
+    expect(screen.getByText("Ada")).toBeInTheDocument()
+    expect(screen.getByText("Member")).toBeInTheDocument()
+    expect(screen.getByTestId("invite-page")).toBeInTheDocument()
+    expect(screen.queryByTestId("rail")).not.toBeInTheDocument()
+  })
+
+  test("joining refreshes workspaces and navigates to the workspace path", async () => {
+    const user = userEvent.setup()
+    window.history.replaceState(null, "", "/invite/inv-1")
+    getInvitation.mockResolvedValue(inviteDetails)
+    acceptInvitation.mockResolvedValue(inviteMembership)
+    render(<App />)
+    await screen.findByText("Acme")
+
+    await user.click(screen.getByRole("button", { name: /join workspace/i }))
+
+    await waitFor(() => expect(window.location.pathname).toBe("/acme"))
+    expect(acceptInvitation).toHaveBeenCalledWith("inv-1")
+    expect(listWorkspaces.mock.calls.length).toBeGreaterThan(1)
   })
 })

@@ -1,16 +1,26 @@
+import "./lib/env.js"
 import { Hono } from "hono"
 import { cors } from "hono/cors"
 import { getDb } from "./db/index.js"
 import { createDrizzleGitHubStore } from "./github/drizzle-store.js"
 import type { GitHubWebhookPayload } from "./github/job.js"
 import { createGitHubApp } from "./github/routes.js"
+import { createMailerFromEnv } from "./lib/mailer.js"
 import { allowedOrigins } from "./lib/origins.js"
 import { createDrizzleTokenStore } from "./mcp/drizzle-tokens.js"
 import { createMcpApp } from "./mcp/routes.js"
+import { createRealtimeApp } from "./realtime/routes.js"
+import { createRealtimeSealer } from "./realtime/service.js"
 import { createDrizzleWorkspaceStore } from "./workspaces/drizzle-store.js"
 import { createWorkspacesApp } from "./workspaces/routes.js"
 
 const app = new Hono()
+const getSession = async (req: Request) => {
+  const { auth } = await import("./lib/auth.js")
+  const session = await auth.api.getSession({ headers: req.headers })
+  if (!session) return null
+  return { user: { id: session.user.id, email: session.user.email } }
+}
 
 app.use(
   "/api/*",
@@ -27,16 +37,25 @@ app.all("/api/auth/*", async (c) => {
   return auth.handler(c.req.raw)
 })
 
+// Sealed live queries for the collaboration surfaces. Reads are still
+// backend-authorized: the browser gets a short-lived capability, never a
+// database credential.
+app.route(
+  "/",
+  createRealtimeApp({
+    store: createDrizzleWorkspaceStore(() => getDb()),
+    getSession,
+    sealer: createRealtimeSealer(),
+  })
+)
+
 app.route(
   "/",
   createWorkspacesApp({
     store: createDrizzleWorkspaceStore(() => getDb()),
-    getSession: async (req) => {
-      const { auth } = await import("./lib/auth.js")
-      const session = await auth.api.getSession({ headers: req.headers })
-      if (!session) return null
-      return { user: { id: session.user.id, email: session.user.email } }
-    },
+    getSession,
+    mailer: createMailerFromEnv(),
+    frontendUrl: process.env.FRONTEND_URL,
   })
 )
 
@@ -49,12 +68,7 @@ app.route(
   createGitHubApp({
     workspaces: createDrizzleWorkspaceStore(() => getDb()),
     github: createDrizzleGitHubStore(() => getDb()),
-    getSession: async (req) => {
-      const { auth } = await import("./lib/auth.js")
-      const session = await auth.api.getSession({ headers: req.headers })
-      if (!session) return null
-      return { user: { id: session.user.id, email: session.user.email } }
-    },
+    getSession,
     webhookSecret: process.env.GITHUB_WEBHOOK_SECRET,
     enqueue: async (job: GitHubWebhookPayload) => {
       const { queues, QUEUES } = await import("./lib/queue.js")
@@ -75,13 +89,14 @@ app.route(
   createMcpApp({
     store: createDrizzleWorkspaceStore(() => getDb()),
     tokens: createDrizzleTokenStore(() => getDb()),
-    getSession: async (req) => {
-      const { auth } = await import("./lib/auth.js")
-      const session = await auth.api.getSession({ headers: req.headers })
-      if (!session) return null
-      return { user: { id: session.user.id, email: session.user.email } }
-    },
+    getSession,
+    mailer: createMailerFromEnv(),
+    frontendUrl: process.env.FRONTEND_URL,
   })
 )
 
-export default app
+export { app }
+
+export default {
+  fetch: app.fetch,
+}

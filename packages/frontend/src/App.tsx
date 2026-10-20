@@ -1,25 +1,38 @@
 import { Popover as PopoverPrimitive } from "@base-ui/react/popover"
+import {
+  Inbox as InboxIcon,
+  ListTodo,
+  Settings as SettingsIcon,
+} from "lucide-react"
 import type { ReactNode } from "react"
 import { useEffect, useMemo, useState } from "react"
 import { AuthForm } from "@/components/auth-form"
 import { CreateProjectForm } from "@/components/create-project-form"
 import { CreateWorkspaceForm } from "@/components/create-workspace-form"
+import { Inbox } from "@/components/inbox"
+import { InvitePage } from "@/components/invite-page"
+import { MyIssues } from "@/components/my-issues"
 import { ProjectPage } from "@/components/project-page"
+import { LiveUnreadCountBridge } from "@/components/realtime/live-notifications"
 import { Button } from "@/components/ui/button"
 import { Modal } from "@/components/ui/dialog"
 import { initialsOf, UserAvatar } from "@/components/user-avatar"
 import { WorkspaceSettings } from "@/components/workspace-settings"
 import { navigate, usePathname } from "@/hooks/use-pathname"
 import { useProjects } from "@/hooks/use-projects"
+import { formatUnreadCount, useUnreadCount } from "@/hooks/use-unread-count"
 import { useWorkspaces } from "@/hooks/use-workspaces"
 import { api, type Issue, type Project, type Workspace } from "@/lib/api"
 import { signOut, useSession } from "@/lib/auth-client"
 import { ProjectIcon } from "@/lib/project-icons"
+import { realtimeEnabled } from "@/lib/realtime"
 import {
+  buildInvitePath,
   buildIssuePath,
   buildWorkspacePath,
   findWorkspaceBySlug,
   parseAppPath,
+  parseInvitePath,
   slugifyWorkspace,
 } from "@/lib/routes"
 
@@ -39,7 +52,43 @@ function SignedOut() {
   )
 }
 
-type ShellView = "project" | "settings" | "new-project"
+/** Invite link while signed out: authenticate first, then return to it. */
+function SignedOutInvite({ callbackURL }: { callbackURL: string }) {
+  return (
+    <div className="flex min-h-svh items-center justify-center p-6">
+      <div className="flex w-full max-w-md flex-col gap-4">
+        <div>
+          <h1 className="font-medium">Sign in to accept your invitation</h1>
+          <p className="text-muted-foreground text-sm">
+            Use the email address the invitation was sent to.
+          </p>
+        </div>
+        <AuthForm callbackURL={callbackURL} />
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Signed-in invite link: the accept page owns the fetch, while this shell
+ * owns the post-accept refresh + navigation so the workspace list is current
+ * before the joined workspace's path renders.
+ */
+function SignedInInvite({ invitationId }: { invitationId: string }) {
+  const { refresh } = useWorkspaces()
+  return (
+    <InvitePage
+      invitationId={invitationId}
+      onAccepted={(invitation) => {
+        void refresh().then(() => {
+          navigate(buildWorkspacePath(invitation.workspace.name))
+        })
+      }}
+    />
+  )
+}
+
+type ShellView = "project" | "settings" | "new-project" | "my-issues" | "inbox"
 
 /**
  * One labeled rail block: distinct surface, collapsible via its header
@@ -276,6 +325,7 @@ function WorkspaceShell({
 }) {
   const { workspaces, selectedId, selected, select, loading, error, refresh } =
     useWorkspaces()
+  const { count: unreadCount, setCount: setUnreadCount } = useUnreadCount()
   const canManageMembers =
     selected?.role === "Owner" || selected?.role === "Admin"
   const canWriteIssues = selected !== null && selected.role !== "Viewer"
@@ -411,6 +461,31 @@ function WorkspaceShell({
   }
 
   /**
+   * Inbox/My Issues target: select the owning workspace, then navigate with
+   * that workspace's slug so the URL is canonical immediately. The shell's
+   * deep-link effect resolves the issue's project from the identifier.
+   */
+  function handleOpenIssueTarget(target: {
+    workspaceId: string
+    identifier: string
+    title: string
+  }) {
+    const targetWorkspace =
+      workspaces.find((workspace) => workspace.id === target.workspaceId) ??
+      null
+    if (targetWorkspace) {
+      if (targetWorkspace.id !== selectedId) select(targetWorkspace.id)
+      navigate(
+        buildIssuePath(targetWorkspace.name, target.identifier, target.title)
+      )
+    } else {
+      if (!selected) return
+      navigate(buildIssuePath(selected.name, target.identifier, target.title))
+    }
+    setView("project")
+  }
+
+  /**
    * Workspace switch from the UI: select + navigate atomically so the
    * URL <-> state effects observe a consistent pair and never snap back.
    */
@@ -430,6 +505,7 @@ function WorkspaceShell({
 
   /** Header click: expand-and-select, or collapse the selected group. */
   function toggleProject(projectId: string) {
+    setView("project")
     if (projectId === selectedProjectId && collapsedProjectId !== projectId) {
       setCollapsedProjectId(projectId)
       return
@@ -445,6 +521,9 @@ function WorkspaceShell({
 
   return (
     <div className="flex h-svh w-full overflow-hidden bg-sidebar">
+      {realtimeEnabled && (
+        <LiveUnreadCountBridge onCount={setUnreadCount} />
+      )}
       {/* The rail sits directly on the app frame with no borders of its own —
           the rounded panel beside it is what reads as the app. */}
       <aside data-testid="rail" className="flex w-60 shrink-0 flex-col">
@@ -460,30 +539,86 @@ function WorkspaceShell({
           />
         </div>
         <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-2">
-          {selected && (
+          {!selected ? (
+            <nav aria-label="Account" className="flex flex-col gap-0.5">
+              <button
+                type="button"
+                aria-current={view === "inbox" ? "page" : undefined}
+                onClick={() => setView("inbox")}
+                className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${
+                  view === "inbox" ? "bg-accent font-medium" : ""
+                }`}
+              >
+                <InboxIcon
+                  aria-hidden="true"
+                  size={14}
+                  className="text-muted-foreground"
+                />
+                Inbox
+                {unreadCount > 0 && (
+                  <span
+                    data-testid="inbox-unread-badge"
+                    className="ml-auto rounded-full bg-primary px-1.5 font-medium text-[10px] text-primary-foreground"
+                  >
+                    {formatUnreadCount(unreadCount)}
+                  </span>
+                )}
+              </button>
+            </nav>
+          ) : (
             <>
               <nav aria-label="Workspace" className="flex flex-col gap-0.5">
                 <button
                   type="button"
-                  disabled
-                  aria-disabled="true"
-                  title="Dashboard (soon)"
-                  className="flex cursor-not-allowed items-center gap-2 rounded-md px-2 py-1.5 text-left text-muted-foreground text-sm opacity-60"
+                  aria-current={view === "my-issues" ? "page" : undefined}
+                  onClick={() => setView("my-issues")}
+                  className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${
+                    view === "my-issues" ? "bg-accent font-medium" : ""
+                  }`}
                 >
-                  <span aria-hidden="true">⌂</span>
-                  Home
-                  <span className="ml-auto truncate text-[10px]">
-                    Dashboard (soon)
-                  </span>
+                  <ListTodo
+                    aria-hidden="true"
+                    size={14}
+                    className="text-muted-foreground"
+                  />
+                  My Issues
+                </button>
+                <button
+                  type="button"
+                  aria-current={view === "inbox" ? "page" : undefined}
+                  onClick={() => setView("inbox")}
+                  className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${
+                    view === "inbox" ? "bg-accent font-medium" : ""
+                  }`}
+                >
+                  <InboxIcon
+                    aria-hidden="true"
+                    size={14}
+                    className="text-muted-foreground"
+                  />
+                  Inbox
+                  {unreadCount > 0 && (
+                    <span
+                      data-testid="inbox-unread-badge"
+                      className="ml-auto rounded-full bg-primary px-1.5 font-medium text-[10px] text-primary-foreground"
+                    >
+                      {formatUnreadCount(unreadCount)}
+                    </span>
+                  )}
                 </button>
                 <button
                   type="button"
                   aria-current={view === "settings" ? "page" : undefined}
                   onClick={() => setView("settings")}
-                  className={`flex items-center rounded-md px-2 py-1.5 text-left text-sm ${
+                  className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${
                     view === "settings" ? "bg-accent font-medium" : ""
                   }`}
                 >
+                  <SettingsIcon
+                    aria-hidden="true"
+                    size={14}
+                    className="text-muted-foreground"
+                  />
                   Settings
                 </button>
               </nav>
@@ -575,7 +710,13 @@ function WorkspaceShell({
       </aside>
       <main className="m-2 min-w-0 flex-1 overflow-hidden rounded-lg bg-background">
         <div className="flex h-full w-full flex-col overflow-y-auto p-4">
-          {!selected ? (
+          {view === "inbox" ? (
+            <Inbox
+              onOpenIssue={handleOpenIssueTarget}
+              onUnreadCountChange={setUnreadCount}
+              onInvitationAccepted={() => void refresh()}
+            />
+          ) : !selected ? (
             <div className="flex max-w-md flex-col gap-3">
               <h2 className="font-medium text-sm">Workspaces</h2>
               {!loading && !error && (
@@ -590,6 +731,16 @@ function WorkspaceShell({
                 </>
               )}
             </div>
+          ) : view === "my-issues" ? (
+            <MyIssues
+              onOpenIssue={(issue) =>
+                handleOpenIssueTarget({
+                  workspaceId: issue.workspaceId,
+                  identifier: issue.identifier,
+                  title: issue.title,
+                })
+              }
+            />
           ) : view === "settings" ? (
             <WorkspaceSettings
               workspace={selected}
@@ -676,12 +827,22 @@ function WorkspaceShell({
 
 export function App() {
   const { data: session, isPending } = useSession()
+  const pathname = usePathname()
+  const invitationId = parseInvitePath(pathname)
 
   if (isPending) {
     return (
       <div className="flex min-h-svh items-center justify-center p-6">
         <p className="text-muted-foreground text-sm">Loading session…</p>
       </div>
+    )
+  }
+
+  if (invitationId) {
+    return session?.user ? (
+      <SignedInInvite invitationId={invitationId} />
+    ) : (
+      <SignedOutInvite callbackURL={buildInvitePath(invitationId)} />
     )
   }
 
