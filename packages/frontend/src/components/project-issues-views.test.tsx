@@ -1,7 +1,6 @@
-import { render, screen, waitFor, within } from "@testing-library/react"
+import { act, render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, test, vi } from "vitest"
-import type { IssueRealtimeEvent } from "@/hooks/use-issue-subscription"
 import { api, type Issue, type Status } from "@/lib/api"
 import { ProjectIssues } from "./project-issues.js"
 
@@ -18,24 +17,32 @@ vi.mock("@/lib/api", async (importOriginal) => {
       createIssue: vi.fn(),
       updateIssue: vi.fn(),
       deleteIssue: vi.fn(),
+      listTimeline: vi.fn(),
+      createComment: vi.fn(),
+      updateComment: vi.fn(),
+      deleteComment: vi.fn(),
+      getWatch: vi.fn(),
+      watchIssue: vi.fn(),
+      unwatchIssue: vi.fn(),
     },
   }
 })
 
-const { subscription } = vi.hoisted(() => ({
-  subscription: {
-    handler: null as ((event: IssueRealtimeEvent) => void) | null,
-    projectId: null as string | null,
+const { poll } = vi.hoisted(() => ({
+  poll: {
+    /** Every mounted polling surface (issue list + open detail activity). */
+    handlers: new Set<() => void | Promise<void>>(),
+    enabled: false,
   },
 }))
 
-vi.mock("@/hooks/use-issue-subscription", () => ({
-  useIssueSubscription: (
-    projectId: string,
-    onEvent: (event: IssueRealtimeEvent) => void
+vi.mock("@/hooks/use-polling", () => ({
+  usePolling: (
+    callback: () => void | Promise<void>,
+    options?: { enabled?: boolean }
   ) => {
-    subscription.projectId = projectId
-    subscription.handler = onEvent
+    poll.handlers.add(callback)
+    poll.enabled = options?.enabled ?? true
   },
 }))
 
@@ -43,6 +50,7 @@ const listStatuses = vi.mocked(api.listStatuses)
 const listIssues = vi.mocked(api.listIssues)
 const listMembers = vi.mocked(api.listMembers)
 const listLabels = vi.mocked(api.listLabels)
+const listSubtasks = vi.mocked(api.listSubtasks)
 const updateIssue = vi.mocked(api.updateIssue)
 
 const project = {
@@ -104,12 +112,26 @@ function setup(issues: Issue[] = [baseIssue, secondIssue]) {
   listStatuses.mockResolvedValue(statuses)
   listMembers.mockResolvedValue([])
   listLabels.mockResolvedValue([])
+  listSubtasks.mockResolvedValue([])
   listIssues.mockResolvedValue(issues)
-  subscription.handler = null
-  subscription.projectId = null
+  vi.mocked(api.listTimeline).mockResolvedValue({
+    items: [],
+    nextCursor: null,
+  })
+  vi.mocked(api.getWatch).mockResolvedValue({ watching: false })
+  poll.handlers.clear()
+  poll.enabled = false
   return render(
     <ProjectIssues project={project} userId="user-a" canWrite={true} />
   )
+}
+
+/** Drive one poll with a server response, like the 30 s timer would. */
+async function runPoll(rows: Issue[]) {
+  listIssues.mockResolvedValueOnce(rows)
+  await act(async () => {
+    await Promise.all([...poll.handlers].map((handler) => handler()))
+  })
 }
 
 describe("project issues views", () => {
@@ -317,51 +339,27 @@ describe("project issues views", () => {
     expect(within(backlog).getByText("Fix login")).toBeInTheDocument()
   })
 
-  test("a realtime insert appears without a refresh", async () => {
+  test("a poll picks up an insert without a filter re-query", async () => {
     setup([baseIssue])
     await screen.findByText("WEB-1")
-    expect(subscription.projectId).toBe("pr-1")
-    const calls = listIssues.mock.calls.length
+    expect(poll.enabled).toBe(true)
 
-    subscription.handler?.({
-      type: "INSERT",
-      issue: { ...secondIssue, statusId: "st-1" },
-    })
+    await runPoll([baseIssue, { ...secondIssue, statusId: "st-1" }])
 
     expect(await screen.findByText("WEB-2")).toBeInTheDocument()
-    expect(listIssues.mock.calls.length).toBe(calls)
+    expect(screen.queryByText(/loading issues/i)).not.toBeInTheDocument()
   })
 
-  test("a realtime insert outside the active preset stays out", async () => {
-    const user = userEvent.setup()
-    setup([baseIssue])
-    await screen.findByText("WEB-1")
-
-    // WEB-2 sits in the terminal Completed status, which Active leaves out.
-    subscription.handler?.({ type: "INSERT", issue: secondIssue })
-
-    expect(screen.queryByText("Ship homepage")).not.toBeInTheDocument()
-
-    // The server still has it; widening the preset brings it back.
-    listIssues.mockResolvedValue([baseIssue, secondIssue])
-    await user.click(screen.getByRole("tab", { name: "All Issues" }))
-
-    expect(await screen.findByText("Ship homepage")).toBeInTheDocument()
-  })
-
-  test("a realtime update rewrites the row without a refresh", async () => {
+  test("a poll applies a remote update in place", async () => {
     setup([baseIssue])
     await screen.findByText("Fix login")
 
-    subscription.handler?.({
-      type: "UPDATE",
-      issue: { ...baseIssue, title: "Fix login faster" },
-    })
+    await runPoll([{ ...baseIssue, title: "Fix login faster" }])
 
     expect(await screen.findByText("Fix login faster")).toBeInTheDocument()
   })
 
-  test("a stale realtime update keeps the newer row and toasts the conflict", async () => {
+  test("a stale poll keeps the newer row and toasts the conflict", async () => {
     setup([
       {
         ...baseIssue,
@@ -371,17 +369,61 @@ describe("project issues views", () => {
     ])
     await screen.findByText("Newer")
 
-    subscription.handler?.({
-      type: "UPDATE",
-      issue: {
+    await runPoll([
+      {
         ...baseIssue,
         title: "Older",
         updatedAt: "2026-10-15T11:00:00.000Z",
       },
-    })
+    ])
 
     await waitFor(() => expect(screen.getByText("Newer")).toBeInTheDocument())
     expect(screen.queryByText("Older")).not.toBeInTheDocument()
     expect(await screen.findByText(/conflict resolved/i)).toBeInTheDocument()
+  })
+
+  test("a poll while editing holds the row behind the conflict banner", async () => {
+    const user = userEvent.setup()
+    setup([baseIssue])
+    await screen.findByText("WEB-1")
+
+    await user.click(
+      screen.getByRole("button", { name: /open detail for WEB-1/i })
+    )
+    await user.click(
+      await screen.findByRole("button", { name: /edit title for WEB-1/i })
+    )
+    await user.type(screen.getByLabelText(/title for WEB-1/i), " and faster")
+
+    await runPoll([{ ...baseIssue, title: "Changed elsewhere" }])
+
+    expect(
+      await screen.findByTestId("conflict-banner-WEB-1")
+    ).toBeInTheDocument()
+    expect(screen.queryByText("Changed elsewhere")).not.toBeInTheDocument()
+  })
+
+  test("a poll refreshes an open subtask footer", async () => {
+    const user = userEvent.setup()
+    const child: Issue = {
+      ...baseIssue,
+      id: "is-2",
+      number: 2,
+      identifier: "WEB-2",
+      title: "Split it",
+      parentId: "is-1",
+    }
+    setup([baseIssue])
+    vi.mocked(api.listSubtasks).mockResolvedValue([child])
+    await screen.findByText("WEB-1")
+
+    await user.click(
+      screen.getByRole("button", { name: /open detail for WEB-1/i })
+    )
+    expect(await screen.findByText("Split it")).toBeInTheDocument()
+
+    await runPoll([baseIssue, { ...child, title: "Split it now" }])
+
+    expect(await screen.findByText("Split it now")).toBeInTheDocument()
   })
 })

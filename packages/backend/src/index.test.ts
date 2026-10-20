@@ -5,7 +5,7 @@ import { describe, expect, test } from "bun:test"
 // below exercise.
 process.env.FRONTEND_URL = "http://localhost:5173"
 
-const { default: app } = await import("./index.js")
+const { app } = await import("./index.js")
 
 function preflight(origin: string) {
   return app.request("/api/auth/sign-in/social", {

@@ -1,14 +1,42 @@
-import ReactMarkdown from "react-markdown"
-import rehypeSanitize from "rehype-sanitize"
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown"
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize"
 import remarkBreaks from "remark-breaks"
 import remarkGfm from "remark-gfm"
+
+/**
+ * Default sanitize schema plus the `mention:` protocol only. Nothing else is
+ * relaxed: raw HTML still drops and `javascript:` URLs stay dead. Comments
+ * carry mentions as markdown links (`[@Name](mention:<userId>)`).
+ */
+const mentionSchema = {
+  ...defaultSchema,
+  protocols: {
+    ...defaultSchema.protocols,
+    href: [...(defaultSchema.protocols?.href ?? []), "mention"],
+  },
+}
+
+export interface Mentionable {
+  userId: string
+  name?: string
+}
 
 /**
  * Safe Markdown read view (§5 read path): GFM formatted, raw HTML dropped,
  * `javascript:` URLs dead. Plain-text bodies render unchanged with single
  * newlines preserved (remark-breaks). Never mounts an editor.
+ *
+ * With `mentionable`, a `mention:` link whose id is in the roster renders as
+ * a non-navigating chip; every other mention renders as plain text so an
+ * unauthorized id is never linked or leaked.
  */
-export function IssueMarkdown({ markdown }: { markdown: string }) {
+export function IssueMarkdown({
+  markdown,
+  mentionable,
+}: {
+  markdown: string
+  mentionable?: Mentionable[]
+}) {
   return (
     <div
       data-testid="issue-markdown"
@@ -16,18 +44,38 @@ export function IssueMarkdown({ markdown }: { markdown: string }) {
     >
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks]}
-        rehypePlugins={[rehypeSanitize]}
+        rehypePlugins={[[rehypeSanitize, mentionSchema]]}
+        urlTransform={(url) =>
+          url.startsWith("mention:") ? url : defaultUrlTransform(url)
+        }
         components={{
-          a: ({ href, children }) => (
-            <a
-              href={href}
-              target="_blank"
-              rel="noreferrer noopener"
-              className="text-primary underline underline-offset-2"
-            >
-              {children}
-            </a>
-          ),
+          a: ({ href, children }) => {
+            if (href?.startsWith("mention:")) {
+              const userId = href.slice("mention:".length)
+              const member = mentionable?.find(
+                (candidate) => candidate.userId === userId
+              )
+              if (!member) return <>{children}</>
+              return (
+                <span
+                  data-testid="mention-chip"
+                  className="rounded bg-primary/10 px-1 py-0.5 font-medium text-primary"
+                >
+                  {member.name ? `@${member.name}` : children}
+                </span>
+              )
+            }
+            return (
+              <a
+                href={href}
+                target="_blank"
+                rel="noreferrer noopener"
+                className="text-primary underline underline-offset-2"
+              >
+                {children}
+              </a>
+            )
+          },
           code: ({ children }) => (
             <code className="rounded bg-muted px-1 py-0.5 font-mono text-[13px]">
               {children}

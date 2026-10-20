@@ -2,16 +2,13 @@ import { Plus } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 import { ExternalLinkBadge } from "@/components/external-link-badge"
 import { ExternalLinkForm } from "@/components/external-link-form"
-import {
-  type ExternalLink,
-  externalLinksApi,
-  type TimelineEvent,
-} from "@/lib/external-links"
+import { type ExternalLink, externalLinksApi } from "@/lib/external-links"
 
 /**
- * External Links section for an issue: linked PR badges with cached state,
- * the timeline of link events, and the manual paste form. Merge is
- * badge-only — nothing here changes Issue Status.
+ * External Links section for an issue: linked PR badges with cached state
+ * and the manual paste form. Link events now live in the merged Activity
+ * timeline, so this section no longer fetches them. Merge is badge-only —
+ * nothing here changes Issue Status.
  */
 export function ExternalLinkSection({
   issueIdentifier,
@@ -21,18 +18,14 @@ export function ExternalLinkSection({
   canWrite: boolean
 }) {
   const [links, setLinks] = useState<ExternalLink[]>([])
-  const [events, setEvents] = useState<TimelineEvent[]>([])
   const [error, setError] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
 
   const refresh = useCallback(async () => {
     try {
-      const [loadedLinks, loadedEvents] = await Promise.all([
-        externalLinksApi.listExternalLinks(issueIdentifier),
-        externalLinksApi.listTimelineEvents(issueIdentifier),
-      ])
+      const loadedLinks =
+        await externalLinksApi.listExternalLinks(issueIdentifier)
       setLinks(loadedLinks)
-      setEvents(loadedEvents)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load")
     }
@@ -88,19 +81,6 @@ export function ExternalLinkSection({
           {links.map((link) => (
             <li key={link.id}>
               <ExternalLinkBadge link={link} />
-            </li>
-          ))}
-        </ul>
-      )}
-      {events.length > 0 && (
-        <ul className="flex flex-col gap-1">
-          {events.map((event) => (
-            <li
-              key={event.id}
-              className="text-muted-foreground text-xs"
-              data-testid={`timeline-${event.kind}`}
-            >
-              {event.body}
             </li>
           ))}
         </ul>

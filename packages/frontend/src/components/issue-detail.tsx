@@ -1,7 +1,8 @@
-import { ChevronDown, ChevronUp, Plus } from "lucide-react"
+import { ChevronDown, ChevronUp, Eye, EyeOff, Plus } from "lucide-react"
 import { useEffect, useState } from "react"
 import { ExternalLinkSection } from "@/components/external-link-section"
 import { IssueActions } from "@/components/issue-actions"
+import { IssueActivity } from "@/components/issue-activity"
 import { IssueBody } from "@/components/issue-body"
 import { IssueMarkdown } from "@/components/issue-markdown"
 import { IssueRail } from "@/components/issue-rail"
@@ -9,16 +10,17 @@ import { IssueTitleInput } from "@/components/issue-title-input"
 import { SubtaskComposer } from "@/components/subtask-composer"
 import { Modal } from "@/components/ui/dialog"
 import { useAutosaveIssue } from "@/hooks/use-autosave-issue"
-import type {
-  CreateIssueInput,
-  Issue,
-  Label,
-  Member,
-  Priority,
-  Status,
-  UpdateIssueInput,
+import {
+  api,
+  type CreateIssueInput,
+  type Issue,
+  isTerminalStatusCategory,
+  type Label,
+  type Member,
+  type Priority,
+  type Status,
+  type UpdateIssueInput,
 } from "@/lib/api"
-import { isTerminalStatusCategory } from "@/lib/api"
 import { StatusIcon } from "@/lib/status-icons"
 
 /**
@@ -37,6 +39,7 @@ export function IssueDetail({
   subtasks = [],
   canEdit,
   canAdmin,
+  currentUserId,
   compact = false,
   conflictRemote = null,
   onBack,
@@ -61,6 +64,8 @@ export function IssueDetail({
   subtasks?: Issue[]
   canEdit: boolean
   canAdmin: boolean
+  /** Overrides the signed-in session user (tests pass a fixture id). */
+  currentUserId?: string | null
   compact?: boolean
   conflictRemote?: Issue | null
   onBack: () => void
@@ -80,6 +85,10 @@ export function IssueDetail({
 }) {
   const [modalSubtaskId, setModalSubtaskId] = useState<string | null>(null)
   const [creatingSubtask, setCreatingSubtask] = useState(false)
+  // Comment authorship/owner checks need the signed-in user. The project
+  // container already holds it; legacy embeds that omit it simply hide the
+  // author-only Edit/Delete actions.
+  const viewerId = currentUserId ?? null
 
   const autosave = useAutosaveIssue({
     issue,
@@ -99,7 +108,7 @@ export function IssueDetail({
     },
     paused: conflictRemote !== null,
     onEditingChange,
-    onSaved: (updated) => {
+    onSaved: () => {
       // Keep the container row in sync for fields the hook saved (title/body).
       // Rail writes go through onUpdate directly, so this is a no-op there.
     },
@@ -108,6 +117,7 @@ export function IssueDetail({
   // Clear the sender/conflict gate when this detail unmounts (Back, switch,
   // modal close): otherwise a stale `editing=true` bit would hold the next
   // remote UPDATE as a false conflict.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: unmount-only cleanup; re-running on a new callback identity would clear the gate mid-edit.
   useEffect(() => {
     return () => {
       onEditingChange?.(false)
@@ -238,6 +248,14 @@ export function IssueDetail({
               <p className="text-sm leading-relaxed">No description yet.</p>
             )}
           </div>
+          <IssueActivity
+            issue={issue}
+            statuses={statuses}
+            members={members}
+            currentUserId={viewerId}
+            canWrite={canEdit}
+            canAdmin={canAdmin}
+          />
           {!isSubtask || subtasks.length > 0 || showCreate ? (
             <section className="mt-6">
               <div className="mb-1 flex items-center gap-1">
@@ -357,6 +375,11 @@ export function IssueDetail({
               canWrite={canEdit}
             />
           </div>
+          {canEdit && (
+            <div className="mt-3 border-t pt-3">
+              <IssueWatch issueIdentifier={issue.identifier} />
+            </div>
+          )}
         </aside>
       </div>
       <Modal
@@ -378,6 +401,7 @@ export function IssueDetail({
             subtasks={[]}
             canEdit={canEdit}
             canAdmin={canAdmin}
+            currentUserId={viewerId}
             compact
             conflictRemote={subtaskConflicts?.[modalSubtask.id] ?? null}
             onBack={() => setModalSubtaskId(null)}
@@ -626,4 +650,89 @@ export function IssueCreateDetail({
 function CreateSubtaskHint({ parentId }: { parentId: string | null }) {
   if (parentId) return null
   return <span className="hidden" aria-hidden="true" />
+}
+
+/**
+ * Watch control beside the issue properties. The initial read is a single
+ * GET; toggling is optimistic and reconciles with the API's returned state,
+ * reverting and surfacing a small error if the write fails.
+ */
+function IssueWatch({ issueIdentifier }: { issueIdentifier: string }) {
+  const [watching, setWatching] = useState<boolean | null>(null)
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let active = true
+    setWatching(null)
+    setError(null)
+    api
+      .getWatch(issueIdentifier)
+      .then((state) => {
+        if (active) setWatching(state.watching)
+      })
+      .catch((err: unknown) => {
+        if (active) {
+          setError(
+            err instanceof Error ? err.message : "Couldn't load watch state."
+          )
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [issueIdentifier])
+
+  async function toggle() {
+    if (watching === null || pending) return
+    const previous = watching
+    const next = !previous
+    setWatching(next)
+    setPending(true)
+    setError(null)
+    try {
+      const state = next
+        ? await api.watchIssue(issueIdentifier)
+        : await api.unwatchIssue(issueIdentifier)
+      setWatching(state.watching)
+    } catch (err) {
+      setWatching(previous)
+      setError(err instanceof Error ? err.message : "Couldn't update watch.")
+    } finally {
+      setPending(false)
+    }
+  }
+
+  if (watching === null) {
+    return error ? (
+      <p role="alert" className="text-destructive text-xs">
+        {error}
+      </p>
+    ) : null
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <h4 className="font-medium text-sm">Watch</h4>
+      <button
+        type="button"
+        onClick={() => void toggle()}
+        aria-pressed={watching}
+        disabled={pending}
+        className="inline-flex w-fit items-center gap-1 rounded-md border border-input px-2 py-1 text-xs disabled:opacity-50"
+      >
+        {watching ? (
+          <EyeOff aria-hidden="true" size={12} />
+        ) : (
+          <Eye aria-hidden="true" size={12} />
+        )}
+        {watching ? "Unwatch" : "Watch"}
+      </button>
+      {error && (
+        <p role="alert" className="text-destructive text-xs">
+          {error}
+        </p>
+      )}
+    </div>
+  )
 }

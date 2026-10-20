@@ -1,3 +1,13 @@
+import {
+  compareTimelineDesc,
+  decodeCursor,
+  diffIssueUpdate,
+  encodeCursor,
+  isDescriptionCoalesced,
+  isOlderThanCursor,
+  mergeTimeline,
+} from "./activity.js"
+
 /** Workspace roles per GLOSSARY.md Member vocabulary. */
 export const WORKSPACE_ROLES = ["Owner", "Admin", "Member"] as const
 
@@ -25,6 +35,8 @@ export interface Membership {
   name?: string
   /** Avatar URL from the auth user record; null when the user has none. */
   image?: string | null
+  /** Email from the auth user record; null when the user has none. */
+  email?: string | null
 }
 
 export interface Invitation {
@@ -33,6 +45,8 @@ export interface Invitation {
   email: string
   role: WorkspaceRole
   invitedBy: string
+  /** Created + 7 days. Expired invitations cannot be accepted. */
+  expiresAt: string
 }
 
 export interface Project {
@@ -156,6 +170,7 @@ export interface SeedIssueFields {
   archived: false
   labels: string[]
   parentId: null
+  createdBy: null
   createdAt: string
   updatedAt: string
 }
@@ -184,6 +199,7 @@ export function seedIssueFields(
     archived: false,
     labels: [],
     parentId: null,
+    createdBy: null,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   }
@@ -248,6 +264,11 @@ export interface Issue {
    * with subtasks cannot become a subtask.
    */
   parentId: string | null
+  /**
+   * Author of the issue: the acting user id, or null for agent/system
+   * creates and seeded sample issues.
+   */
+  createdBy: string | null
   /** Creation timestamp (ISO); every issue carries it alongside `updatedAt`. */
   createdAt: string
   /** Last-write marker for realtime conflict resolution (T4). */
@@ -279,6 +300,101 @@ export interface UpdateIssueInput {
   /** Relink (id) or unlink (null) the Subtask parent. */
   parentId?: string | null
 }
+
+/*
+ * Collaboration core (R1/R2) domain types. Vocabulary is GLOSSARY.md:
+ * Comment, Activity Event, Watcher, Notification, Inbox, Mention.
+ */
+
+/** Every Activity Event actor kind; `github` rows come from link mappings. */
+export type ActivityActorType = "user" | "agent" | "system" | "github"
+
+/** Who performed a mutation. Every issue mutator accepts one. */
+export interface Actor {
+  type: "user" | "agent" | "system"
+  id: string | null
+  /** Display label for agent/system actors (token name, "System"). */
+  name?: string | null
+}
+
+export const SYSTEM_ACTOR: Actor = { type: "system", id: null }
+
+/**
+ * Activity Event actor input. Mutations use `Actor`; the GitHub handler
+ * records migrated/live link events with the synthetic `github` kind.
+ */
+export type ActivityActor =
+  | Actor
+  | { type: "github"; id: string | null; name?: string | null }
+
+export interface Comment {
+  id: string
+  issueId: string
+  authorId: string
+  /** "" once soft-deleted (tombstone row). */
+  body: string
+  /** One level: parent must be top-level and on the same issue. */
+  parentId: string | null
+  editedAt: string | null
+  deletedAt: string | null
+  createdAt: string
+}
+
+export interface ActivityEvent {
+  id: string
+  issueId: string
+  actorType: ActivityActorType
+  actorId: string | null
+  type: string
+  summary: string
+  payload: Record<string, unknown>
+  createdAt: string
+}
+
+export interface Watcher {
+  issueId: string
+  userId: string
+  createdAt: string
+}
+
+export interface Notification {
+  id: string
+  userId: string
+  issueId: string
+  type: string
+  actorType: ActivityActorType
+  actorId: string | null
+  payload: Record<string, unknown>
+  readAt: string | null
+  /** Set when an email covering this row has been sent; drives digest dedupe. */
+  emailedAt: string | null
+  createdAt: string
+}
+
+export type EmailMode = "immediate" | "digest" | "off"
+
+export interface NotificationSettings {
+  userId: string
+  emailMode: EmailMode
+}
+
+/** Cross-project My Issues row: the issue plus the labels its row needs. */
+export interface MyIssue extends Issue {
+  workspaceId: string
+  workspaceName: string
+  projectName: string
+  projectKey: string
+  projectIcon: string
+  projectColor: string
+  statusName: string
+  statusCategory: StatusCategory
+  statusColor: string
+}
+
+/** Timeline union: Activity Events and Comments merged newest first. */
+export type TimelineItem =
+  | ({ kind: "comment" } & Comment)
+  | ({ kind: "activity" } & ActivityEvent)
 
 export interface IssueFilters {
   statusIds?: string[]
@@ -346,11 +462,13 @@ export function normalizeLabelNames(names: string[]): string[] {
 /**
  * Persistence boundary for workspace tenancy. The Hono routes depend only on
  * this interface: contract tests inject the memory store, production injects
- * the Drizzle store over Supabase Postgres.
+ * the Drizzle store over Neon Postgres.
  */
 export interface WorkspaceStore {
   createWorkspace(ownerId: string, name: string): Promise<Workspace>
   listWorkspacesForUser(userId: string): Promise<WorkspaceWithRole[]>
+  /** Workspace row by id, for invite/email content and scoped lookups. */
+  getWorkspace(workspaceId: string): Promise<Workspace | null>
   getMembership(workspaceId: string, userId: string): Promise<Membership | null>
   listMembers(workspaceId: string): Promise<Membership[]>
   createInvitation(input: {
@@ -360,6 +478,12 @@ export interface WorkspaceStore {
     invitedBy: string
   }): Promise<Invitation>
   listInvitationsForEmail(email: string): Promise<Invitation[]>
+  /** Pending invitations for one workspace, for the members tab. */
+  listInvitationsForWorkspace(workspaceId: string): Promise<Invitation[]>
+  /** Delete one invitation by id; true when a row was removed. */
+  deleteInvitation(invitationId: string): Promise<boolean>
+  /** One invitation by id, for the accept page's mismatch/expiry gates. */
+  getInvitation(invitationId: string): Promise<Invitation | null>
   acceptInvitation(invitationId: string, userId: string): Promise<Membership>
   /**
    * Creates the Project already seeded (ADR-0001), always, in one atomic
@@ -372,7 +496,12 @@ export interface WorkspaceStore {
     workspaceId: string,
     input: { name: string; key: string; icon?: string; color?: string }
   ): Promise<Project>
-  listProjects(workspaceId: string): Promise<Project[]>
+  /**
+   * With `userId`, scope to what that user may read: a Member sees every
+   * project in the workspace, a Viewer only the projects granted to them.
+   * Without `userId`, keep the unscoped workspace listing.
+   */
+  listProjects(workspaceId: string, userId?: string): Promise<Project[]>
   getProject(projectId: string): Promise<Project | null>
   updateProject(
     projectId: string,
@@ -399,16 +528,25 @@ export interface WorkspaceStore {
     }
   ): Promise<Status>
   deleteStatus(statusId: string): Promise<void>
-  createIssue(projectId: string, input: CreateIssueInput): Promise<Issue>
+  createIssue(
+    projectId: string,
+    input: CreateIssueInput,
+    actor?: Actor
+  ): Promise<Issue>
   listIssues(projectId: string, filters?: IssueFilters): Promise<Issue[]>
   /** Resolve by human identifier (KEY-N, case-insensitive) or row id. */
   getIssue(ref: string): Promise<Issue | null>
-  updateIssue(ref: string, input: UpdateIssueInput): Promise<Issue>
+  updateIssue(
+    ref: string,
+    input: UpdateIssueInput,
+    actor?: Actor
+  ): Promise<Issue>
   /**
    * T5 hard delete (Owner/Admin only at the route layer). Subtasks of the
-   * deleted issue become top-level; label links drop with the row.
+   * deleted issue become top-level; label links drop with the row. Deleting
+   * emits no Activity Event.
    */
-  deleteIssue(ref: string): Promise<void>
+  deleteIssue(ref: string, actor?: Actor): Promise<void>
   /**
    * T5 direct subtasks of a parent Issue, in number order (archived
    * included; callers decide what counts as open).
@@ -437,6 +575,81 @@ export interface WorkspaceStore {
     workspaceId: string,
     userId: string
   ): Promise<boolean>
+
+  /*
+   * Collaboration core (R1/R2). Comments are never Activity Events;
+   * watchers and Notifications are per-user rows owned by exactly one
+   * Member. Timeline cursors are opaque and shared by comments,
+   * notifications, and the merged timeline.
+   */
+
+  createComment(input: {
+    issueId: string
+    authorId: string
+    body: string
+    parentId?: string | null
+  }): Promise<Comment>
+  getComment(commentId: string): Promise<Comment | null>
+  updateComment(commentId: string, body: string): Promise<Comment>
+  softDeleteComment(commentId: string): Promise<Comment>
+  listComments(
+    issueId: string,
+    opts?: { limit?: number; before?: string }
+  ): Promise<{ comments: Comment[]; nextCursor: string | null }>
+
+  appendActivity(
+    issueId: string,
+    input: {
+      actor: ActivityActor
+      type: string
+      summary: string
+      payload?: Record<string, unknown>
+    }
+  ): Promise<ActivityEvent>
+  /** Ascending by createdAt, then id. */
+  listActivity(issueId: string): Promise<ActivityEvent[]>
+  listTimeline(
+    issueId: string,
+    opts?: { limit?: number; before?: string }
+  ): Promise<{ items: TimelineItem[]; nextCursor: string | null }>
+
+  addWatcher(issueId: string, userId: string): Promise<void>
+  removeWatcher(issueId: string, userId: string): Promise<void>
+  isWatching(issueId: string, userId: string): Promise<boolean>
+  listWatcherIds(issueId: string): Promise<string[]>
+
+  createNotification(
+    input: Pick<
+      Notification,
+      "userId" | "issueId" | "type" | "actorType" | "actorId"
+    > & {
+      payload: Record<string, unknown>
+    }
+  ): Promise<Notification>
+  listNotifications(
+    userId: string,
+    opts: { filter: "all" | "unread"; limit?: number; before?: string }
+  ): Promise<{ notifications: Notification[]; nextCursor: string | null }>
+  /** `null` when the row is missing or owned by another user. */
+  markNotificationRead(id: string, userId: string): Promise<Notification | null>
+  markAllNotificationsRead(userId: string): Promise<number>
+  unreadNotificationCount(userId: string): Promise<number>
+  purgeReadNotifications(olderThan: string): Promise<number>
+  getNotificationSettings(userId: string): Promise<NotificationSettings>
+  setNotificationSettings(
+    userId: string,
+    emailMode: EmailMode
+  ): Promise<NotificationSettings>
+  listDigestGroups(
+    cutoff: string
+  ): Promise<{ userId: string; email: string; notifications: Notification[] }[]>
+  markNotificationsEmailed(ids: string[], at: string): Promise<void>
+
+  /** Issue rows for one My Issues tab, scoped to readable workspaces. */
+  listMyIssues(
+    userId: string,
+    tab: "assigned" | "created" | "watched"
+  ): Promise<Issue[]>
 }
 
 /**
@@ -455,11 +668,14 @@ export interface MemoryWorkspaceStoreOptions {
     projectId: string
   }) => void
   /**
-   * Auth users keyed by id, so `listMembers` can echo the display name and
-   * avatar the real store joins from the user table. Omitted in tests that
-   * do not care about member identity.
+   * Auth users keyed by id, so `listMembers` can echo the display name,
+   * avatar, and email the real store joins from the user table. Omitted in
+   * tests that do not care about member identity.
    */
-  users?: Record<string, { name: string; image?: string | null }>
+  users?: Record<
+    string,
+    { name: string; image?: string | null; email?: string | null }
+  >
 }
 
 export function createMemoryWorkspaceStore(
@@ -477,6 +693,12 @@ export function createMemoryWorkspaceStore(
   /** T5 registry rows by id; issue links by issue id. */
   const labels = new Map<string, Label>()
   const issueLinks = new Map<string, Set<string>>()
+  /** Collaboration core rows. */
+  const comments = new Map<string, Comment>()
+  const activityEvents = new Map<string, ActivityEvent>()
+  const watchers = new Map<string, Watcher>()
+  const notifications = new Map<string, Notification>()
+  const notificationSettings = new Map<string, EmailMode>()
 
   function findLabel(workspaceId: string, name: string): Label | undefined {
     const key = name.toLowerCase()
@@ -564,6 +786,71 @@ export function createMemoryWorkspaceStore(
     return error
   }
 
+  function notFound(message: string): Error {
+    const error = new Error(message)
+    ;(error as { code?: string }).code = "not_found"
+    return error
+  }
+
+  const watcherKey = (issueId: string, userId: string) => `${issueId}:${userId}`
+
+  /** Page sizes documented by the collaboration contracts. */
+  function pageLimit(
+    limit: number | undefined,
+    fallback: number,
+    max: number
+  ): number {
+    const value = Math.floor(limit ?? fallback)
+    if (!Number.isFinite(value) || value <= 0) return fallback
+    return Math.min(value, max)
+  }
+
+  function cloneIssue(issue: Issue): Issue {
+    return { ...issue, labels: [...issue.labels] }
+  }
+
+  function recordActivity(
+    issueId: string,
+    actor: ActivityActor,
+    type: string,
+    summary: string,
+    payload: Record<string, unknown> = {},
+    createdAt = new Date().toISOString()
+  ): ActivityEvent {
+    const event: ActivityEvent = {
+      id: crypto.randomUUID(),
+      issueId,
+      actorType: actor.type,
+      actorId: actor.id,
+      type,
+      summary,
+      payload: { ...payload },
+      createdAt,
+    }
+    activityEvents.set(event.id, event)
+    return { ...event, payload: { ...event.payload } }
+  }
+
+  /** Newest matching description event for the coalescing window. */
+  function newestDescriptionEvent(
+    issueId: string,
+    actor: Actor
+  ): string | null {
+    let newest: string | null = null
+    for (const event of activityEvents.values()) {
+      if (
+        event.issueId !== issueId ||
+        event.type !== "issue.description_changed" ||
+        event.actorType !== actor.type ||
+        event.actorId !== actor.id
+      ) {
+        continue
+      }
+      if (newest === null || event.createdAt > newest) newest = event.createdAt
+    }
+    return newest
+  }
+
   function normalizeDueDate(dueDate: string | null | undefined): string | null {
     if (dueDate === undefined || dueDate === null) return null
     const parsed = new Date(dueDate)
@@ -588,8 +875,10 @@ export function createMemoryWorkspaceStore(
   function newIssueRow(
     project: Project,
     number: number,
-    input: CreateIssueInput
+    input: CreateIssueInput,
+    actor: Actor = SYSTEM_ACTOR
   ): Issue {
+    const now = new Date().toISOString()
     return {
       id: crypto.randomUUID(),
       projectId: project.id,
@@ -605,8 +894,11 @@ export function createMemoryWorkspaceStore(
       archived: false,
       labels: normalizeLabelNames(input.labels ?? []),
       parentId: input.parentId ?? null,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      // Only a signed-in user owns authorship; agent/system creates and
+      // seeded samples stay null.
+      createdBy: actor.type === "user" ? actor.id : null,
+      createdAt: now,
+      updatedAt: now,
     }
   }
 
@@ -645,6 +937,11 @@ export function createMemoryWorkspaceStore(
       return visible
     },
 
+    async getWorkspace(workspaceId) {
+      const found = workspaces.get(workspaceId)
+      return found ? { ...found } : null
+    },
+
     async getMembership(workspaceId, userId) {
       return members.get(memberKey(workspaceId, userId)) ?? null
     },
@@ -655,7 +952,12 @@ export function createMemoryWorkspaceStore(
         .map((m) => {
           const profile = options.users?.[m.userId]
           return profile
-            ? { ...m, name: profile.name, image: profile.image ?? null }
+            ? {
+                ...m,
+                name: profile.name,
+                image: profile.image ?? null,
+                email: profile.email ?? null,
+              }
             : m
         })
     },
@@ -676,6 +978,8 @@ export function createMemoryWorkspaceStore(
         email,
         role: input.role,
         invitedBy: input.invitedBy,
+        // Contract: expiry = created + 7 days.
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
       }
       invitations.set(invitation.id, invitation)
       return invitation
@@ -684,6 +988,21 @@ export function createMemoryWorkspaceStore(
     async listInvitationsForEmail(email) {
       const lower = email.toLowerCase()
       return [...invitations.values()].filter((i) => i.email === lower)
+    },
+
+    async listInvitationsForWorkspace(workspaceId) {
+      return [...invitations.values()].filter(
+        (i) => i.workspaceId === workspaceId
+      )
+    },
+
+    async deleteInvitation(invitationId) {
+      return invitations.delete(invitationId)
+    },
+
+    async getInvitation(invitationId) {
+      const found = invitations.get(invitationId)
+      return found ? { ...found } : null
     },
 
     async acceptInvitation(invitationId, userId) {
@@ -941,7 +1260,11 @@ export function createMemoryWorkspaceStore(
         })
     },
 
-    async createIssue(projectId, input: CreateIssueInput): Promise<Issue> {
+    async createIssue(
+      projectId,
+      input: CreateIssueInput,
+      actor: Actor = SYSTEM_ACTOR
+    ): Promise<Issue> {
       const project = projects.get(projectId)
       if (!project) {
         const error = new Error("Project not found")
@@ -964,19 +1287,28 @@ export function createMemoryWorkspaceStore(
       sequences.set(projectId, number + 1)
       const labelRows = ensureLabelRows(project.workspaceId, input.labels ?? [])
       const parentId = resolveParentId(projectId, null, input.parentId) ?? null
-      const issue = newIssueRow(project, number, {
-        ...input,
-        title,
-        statusId: status.id,
-        priority,
-        assigneeId,
-        dueDate,
-        labels: labelRows.map((row) => row.name),
-        parentId,
-      })
+      const issue = newIssueRow(
+        project,
+        number,
+        {
+          ...input,
+          title,
+          statusId: status.id,
+          priority,
+          assigneeId,
+          dueDate,
+          labels: labelRows.map((row) => row.name),
+          parentId,
+        },
+        actor
+      )
       issues.set(issue.id, issue)
       relinkIssue(issue.id, labelRows)
-      return { ...issue, labels: [...issue.labels] }
+      recordActivity(issue.id, actor, "issue.created", "created the issue", {
+        identifier: issue.identifier,
+        title: issue.title,
+      })
+      return cloneIssue(issue)
     },
 
     async listIssues(projectId, filters?: IssueFilters): Promise<Issue[]> {
@@ -1031,7 +1363,11 @@ export function createMemoryWorkspaceStore(
       return null
     },
 
-    async updateIssue(ref, input: UpdateIssueInput): Promise<Issue> {
+    async updateIssue(
+      ref,
+      input: UpdateIssueInput,
+      actor: Actor = SYSTEM_ACTOR
+    ): Promise<Issue> {
       const issue = issues.get(ref) ?? (await this.getIssue(ref))
       if (!issue) {
         const error = new Error("Issue not found")
@@ -1044,6 +1380,7 @@ export function createMemoryWorkspaceStore(
         ;(error as { code?: string }).code = "not_found"
         throw error
       }
+      const before = cloneIssue(stored)
       let projectId = stored.projectId
       if (
         input.projectId !== undefined &&
@@ -1118,8 +1455,30 @@ export function createMemoryWorkspaceStore(
           ensureLabelRows(project.workspaceId, input.labels)
         )
       }
-      stored.updatedAt = new Date().toISOString()
-      return { ...stored, labels: [...stored.labels] }
+      const now = new Date()
+      stored.updatedAt = now.toISOString()
+      const after = cloneIssue(stored)
+      const parentIdentifier = (id: string | null): string | null =>
+        id === null ? null : (issues.get(id)?.identifier ?? id)
+      const drafts = diffIssueUpdate(before, after, input, {
+        fromParentIdentifier: parentIdentifier(before.parentId),
+        toParentIdentifier: parentIdentifier(after.parentId),
+      }).filter(
+        (draft) =>
+          draft.type !== "issue.description_changed" ||
+          !isDescriptionCoalesced(newestDescriptionEvent(stored.id, actor), now)
+      )
+      for (const draft of drafts) {
+        recordActivity(
+          stored.id,
+          actor,
+          draft.type,
+          draft.summary,
+          draft.payload,
+          now.toISOString()
+        )
+      }
+      return after
     },
 
     async createLabel(workspaceId, input) {
@@ -1224,7 +1583,7 @@ export function createMemoryWorkspaceStore(
         .map((issue) => ({ ...issue, labels: [...issue.labels] }))
     },
 
-    async deleteIssue(ref) {
+    async deleteIssue(ref, _actor?: Actor) {
       const issue = issues.get(ref) ?? (await this.getIssue(ref))
       const stored = issue ? issues.get(issue.id) : undefined
       if (!stored) {
@@ -1234,6 +1593,19 @@ export function createMemoryWorkspaceStore(
       }
       issues.delete(stored.id)
       issueLinks.delete(stored.id)
+      // Collaboration rows cascade with the issue, matching the Drizzle FKs.
+      for (const [id, comment] of comments) {
+        if (comment.issueId === stored.id) comments.delete(id)
+      }
+      for (const [id, event] of activityEvents) {
+        if (event.issueId === stored.id) activityEvents.delete(id)
+      }
+      for (const [key, watcher] of watchers) {
+        if (watcher.issueId === stored.id) watchers.delete(key)
+      }
+      for (const [id, notification] of notifications) {
+        if (notification.issueId === stored.id) notifications.delete(id)
+      }
       // Children become top-level instead of disappearing with the parent.
       for (const child of issues.values()) {
         if (child.parentId === stored.id) child.parentId = null
@@ -1263,8 +1635,14 @@ export function createMemoryWorkspaceStore(
       return probed + stored
     },
 
-    async listProjects(workspaceId) {
-      return [...projects.values()].filter((p) => p.workspaceId === workspaceId)
+    async listProjects(workspaceId, userId?) {
+      const rows = [...projects.values()].filter(
+        (p) => p.workspaceId === workspaceId
+      )
+      if (!userId) return rows
+      // Members see the whole workspace; Viewer grants scope to their rows.
+      if (members.has(memberKey(workspaceId, userId))) return rows
+      return rows.filter((p) => projectViewers.has(`${p.id}:${userId}`))
     },
 
     async getProject(projectId) {
@@ -1290,5 +1668,316 @@ export function createMemoryWorkspaceStore(
       }
       return false
     },
+
+    async createComment(input) {
+      if (!issues.has(input.issueId)) throw invalid("Issue not found")
+      const body = input.body.trim()
+      if (!body) throw invalid("Comment body is required")
+      const parentId = input.parentId ?? null
+      if (parentId !== null) {
+        const parent = comments.get(parentId)
+        if (!parent) throw invalid("Parent comment not found")
+        if (parent.issueId !== input.issueId) {
+          throw invalid("Parent comment belongs to another issue")
+        }
+        if (parent.parentId !== null) {
+          throw invalid("Replies cannot nest more than one level")
+        }
+      }
+      const comment: Comment = {
+        id: crypto.randomUUID(),
+        issueId: input.issueId,
+        authorId: input.authorId,
+        body,
+        parentId,
+        editedAt: null,
+        deletedAt: null,
+        createdAt: new Date().toISOString(),
+      }
+      comments.set(comment.id, comment)
+      return { ...comment }
+    },
+
+    async getComment(commentId) {
+      const comment = comments.get(commentId)
+      return comment ? { ...comment } : null
+    },
+
+    async updateComment(commentId, body) {
+      const comment = comments.get(commentId)
+      if (!comment) throw notFound("Comment not found")
+      if (comment.deletedAt !== null) {
+        throw invalid("Cannot edit a deleted comment")
+      }
+      const trimmed = body.trim()
+      if (!trimmed) throw invalid("Comment body is required")
+      comment.body = trimmed
+      comment.editedAt = new Date().toISOString()
+      return { ...comment }
+    },
+
+    async softDeleteComment(commentId) {
+      const comment = comments.get(commentId)
+      if (!comment) throw notFound("Comment not found")
+      if (comment.deletedAt !== null) return { ...comment }
+      comment.body = ""
+      comment.deletedAt = new Date().toISOString()
+      return { ...comment }
+    },
+
+    async listComments(issueId, opts) {
+      const limit = pageLimit(opts?.limit, 20, 50)
+      const cursor = decodeCursor(opts?.before)
+      const rows = [...comments.values()]
+        .filter((comment) => comment.issueId === issueId)
+        .filter((comment) => !cursor || isOlderThanCursor(comment, cursor))
+        .sort(compareTimelineDesc)
+      const page = rows.slice(0, limit)
+      const last = page[page.length - 1]
+      return {
+        comments: page.map((comment) => ({ ...comment })),
+        nextCursor: rows.length > limit && last ? encodeCursor(last) : null,
+      }
+    },
+
+    async appendActivity(issueId, input) {
+      if (!issues.has(issueId)) throw notFound("Issue not found")
+      return recordActivity(
+        issueId,
+        input.actor,
+        input.type,
+        input.summary,
+        input.payload ?? {}
+      )
+    },
+
+    async listActivity(issueId) {
+      return [...activityEvents.values()]
+        .filter((event) => event.issueId === issueId)
+        .sort((a, b) => {
+          if (a.createdAt !== b.createdAt) {
+            return a.createdAt < b.createdAt ? -1 : 1
+          }
+          if (a.id === b.id) return 0
+          return a.id < b.id ? -1 : 1
+        })
+        .map((event) => ({ ...event, payload: { ...event.payload } }))
+    },
+
+    async listTimeline(issueId, opts) {
+      const limit = pageLimit(opts?.limit, 20, 50)
+      const cursor = decodeCursor(opts?.before)
+      const issueComments = [...comments.values()]
+        .filter((comment) => comment.issueId === issueId)
+        .filter((comment) => !cursor || isOlderThanCursor(comment, cursor))
+        .map((comment) => ({ ...comment }))
+      const events = [...activityEvents.values()]
+        .filter((event) => event.issueId === issueId)
+        .filter((event) => !cursor || isOlderThanCursor(event, cursor))
+        .map((event) => ({ ...event, payload: { ...event.payload } }))
+      return mergeTimeline(issueComments, events, limit)
+    },
+
+    async addWatcher(issueId, userId) {
+      if (!issues.has(issueId)) throw notFound("Issue not found")
+      const key = watcherKey(issueId, userId)
+      if (watchers.has(key)) return
+      watchers.set(key, {
+        issueId,
+        userId,
+        createdAt: new Date().toISOString(),
+      })
+    },
+
+    async removeWatcher(issueId, userId) {
+      watchers.delete(watcherKey(issueId, userId))
+    },
+
+    async isWatching(issueId, userId) {
+      return watchers.has(watcherKey(issueId, userId))
+    },
+
+    async listWatcherIds(issueId) {
+      return [...watchers.values()]
+        .filter((watcher) => watcher.issueId === issueId)
+        .sort((a, b) => {
+          if (a.createdAt !== b.createdAt) {
+            return a.createdAt < b.createdAt ? -1 : 1
+          }
+          return a.userId < b.userId ? -1 : 1
+        })
+        .map((watcher) => watcher.userId)
+    },
+
+    async createNotification(input) {
+      const notification: Notification = {
+        id: crypto.randomUUID(),
+        userId: input.userId,
+        issueId: input.issueId,
+        type: input.type,
+        actorType: input.actorType,
+        actorId: input.actorId,
+        payload: { ...input.payload },
+        readAt: null,
+        emailedAt: null,
+        createdAt: new Date().toISOString(),
+      }
+      notifications.set(notification.id, notification)
+      return { ...notification, payload: { ...notification.payload } }
+    },
+
+    async listNotifications(userId, opts) {
+      const limit = pageLimit(opts.limit, 30, 100)
+      const cursor = decodeCursor(opts.before)
+      const rows = [...notifications.values()]
+        .filter((notification) => notification.userId === userId)
+        .filter(
+          (notification) =>
+            opts.filter === "all" || notification.readAt === null
+        )
+        .filter(
+          (notification) => !cursor || isOlderThanCursor(notification, cursor)
+        )
+        .sort(compareTimelineDesc)
+      const page = rows.slice(0, limit)
+      const last = page[page.length - 1]
+      return {
+        notifications: page.map((notification) => ({
+          ...notification,
+          payload: { ...notification.payload },
+        })),
+        nextCursor: rows.length > limit && last ? encodeCursor(last) : null,
+      }
+    },
+
+    async markNotificationRead(id, userId) {
+      const notification = notifications.get(id)
+      if (!notification || notification.userId !== userId) return null
+      if (notification.readAt === null) {
+        notification.readAt = new Date().toISOString()
+      }
+      return { ...notification, payload: { ...notification.payload } }
+    },
+
+    async markAllNotificationsRead(userId) {
+      const at = new Date().toISOString()
+      let updated = 0
+      for (const notification of notifications.values()) {
+        if (notification.userId !== userId || notification.readAt !== null) {
+          continue
+        }
+        notification.readAt = at
+        updated += 1
+      }
+      return updated
+    },
+
+    async unreadNotificationCount(userId) {
+      let count = 0
+      for (const notification of notifications.values()) {
+        if (notification.userId === userId && notification.readAt === null) {
+          count += 1
+        }
+      }
+      return count
+    },
+
+    async purgeReadNotifications(olderThan) {
+      const cutoff = new Date(olderThan).getTime()
+      let removed = 0
+      for (const [id, notification] of notifications) {
+        if (
+          notification.readAt !== null &&
+          new Date(notification.createdAt).getTime() < cutoff
+        ) {
+          notifications.delete(id)
+          removed += 1
+        }
+      }
+      return removed
+    },
+
+    async getNotificationSettings(userId) {
+      return {
+        userId,
+        emailMode: notificationSettings.get(userId) ?? "digest",
+      }
+    },
+
+    async setNotificationSettings(userId, emailMode) {
+      notificationSettings.set(userId, emailMode)
+      return { userId, emailMode }
+    },
+
+    async listDigestGroups(cutoff) {
+      const cutoffTime = new Date(cutoff).getTime()
+      const grouped = new Map<string, Notification[]>()
+      for (const notification of notifications.values()) {
+        if (notification.readAt !== null || notification.emailedAt !== null) {
+          continue
+        }
+        if (new Date(notification.createdAt).getTime() >= cutoffTime) continue
+        // Default digest, and skip owners whose mode opted out.
+        if (
+          (notificationSettings.get(notification.userId) ?? "digest") !==
+          "digest"
+        ) {
+          continue
+        }
+        if (!options.users?.[notification.userId]?.email) continue
+        const rows = grouped.get(notification.userId) ?? []
+        rows.push({ ...notification, payload: { ...notification.payload } })
+        grouped.set(notification.userId, rows)
+      }
+      return [...grouped.entries()]
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        .map(([userId, rows]) => ({
+          userId,
+          email: options.users?.[userId]?.email ?? "",
+          notifications: rows.sort(compareTimelineDesc).reverse(),
+        }))
+    },
+
+    async markNotificationsEmailed(ids, at) {
+      for (const id of ids) {
+        const notification = notifications.get(id)
+        if (notification) notification.emailedAt = at
+      }
+    },
+
+    async listMyIssues(userId, tab) {
+      // Read scope: every project in a workspace the user belongs to, plus
+      // only the Viewer-granted projects themselves.
+      const workspaceIds = new Set<string>()
+      for (const membership of members.values()) {
+        if (membership.userId === userId) {
+          workspaceIds.add(membership.workspaceId)
+        }
+      }
+      const projectIds = new Set<string>()
+      for (const project of projects.values()) {
+        if (
+          workspaceIds.has(project.workspaceId) ||
+          projectViewers.has(`${project.id}:${userId}`)
+        ) {
+          projectIds.add(project.id)
+        }
+      }
+      return [...issues.values()]
+        .filter((issue) => projectIds.has(issue.projectId))
+        .filter((issue) => {
+          if (tab === "assigned") return issue.assigneeId === userId
+          if (tab === "created") return issue.createdBy === userId
+          return watchers.has(watcherKey(issue.id, userId))
+        })
+        .sort((a, b) => {
+          if (a.updatedAt !== b.updatedAt) {
+            return a.updatedAt < b.updatedAt ? 1 : -1
+          }
+          return a.id < b.id ? -1 : 1
+        })
+        .map(cloneIssue)
+    },
   }
 }
+

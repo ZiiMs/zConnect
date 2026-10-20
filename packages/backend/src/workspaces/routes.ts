@@ -1,5 +1,15 @@
 import { Hono } from "hono"
 import { z } from "zod"
+import type { Mailer } from "../lib/mailer.js"
+import { createCommentsApp } from "./comments.js"
+import { createInvitesApp } from "./invites.js"
+import { createNotificationsApp } from "./notifications.js"
+import { notifyIssueUpdated } from "./notify.js"
+import {
+  manageableProject,
+  readableProject,
+  writableProject,
+} from "./permissions.js"
 import type { GetSession } from "./session.js"
 import {
   isTerminalStatusCategory,
@@ -12,11 +22,6 @@ import {
 } from "./store.js"
 
 const createWorkspaceBody = z.object({ name: z.string().trim().min(1) })
-
-const inviteBody = z.object({
-  email: z.email().trim().toLowerCase(),
-  role: z.enum(WORKSPACE_ROLES),
-})
 
 const projectKeySchema = z
   .string()
@@ -164,6 +169,8 @@ function isInvalid(error: unknown) {
 export interface WorkspacesDeps {
   store: WorkspaceStore
   getSession: GetSession
+  mailer?: Mailer | null
+  frontendUrl?: string
 }
 
 /**
@@ -171,7 +178,12 @@ export interface WorkspacesDeps {
  * via `app.request(...)`: tests assert status codes and response shapes,
  * never SQL or store internals.
  */
-export function createWorkspacesApp({ store, getSession }: WorkspacesDeps) {
+export function createWorkspacesApp({
+  store,
+  getSession,
+  mailer,
+  frontendUrl,
+}: WorkspacesDeps) {
   const app = new Hono()
 
   app.get("/api/workspaces", async (c) => {
@@ -208,66 +220,19 @@ export function createWorkspacesApp({ store, getSession }: WorkspacesDeps) {
     return c.json(await store.listMembers(visible.id))
   })
 
-  app.post("/api/workspaces/:id/invites", async (c) => {
-    const session = await getSession(c.req.raw)
-    if (!session) return c.json({ error: "Unauthorized" }, 401)
-    const workspaceId = c.req.param("id")
-    const membership = await store.getMembership(workspaceId, session.user.id)
-    if (!membership || membership.role === "Member") {
-      return c.json({ error: "Forbidden" }, 403)
-    }
-    const parsed = inviteBody.safeParse(await c.req.json())
-    if (!parsed.success) return c.json({ error: "Invalid invite" }, 400)
-    try {
-      const invitation = await store.createInvitation({
-        workspaceId,
-        email: parsed.data.email,
-        role: parsed.data.role,
-        invitedBy: session.user.id,
-      })
-      return c.json(invitation, 201)
-    } catch (error) {
-      if (isConflict(error)) return c.json({ error: "Already invited" }, 409)
-      throw error
-    }
-  })
-
-  app.get("/api/invitations", async (c) => {
-    const session = await getSession(c.req.raw)
-    if (!session) return c.json({ error: "Unauthorized" }, 401)
-    return c.json(await store.listInvitationsForEmail(session.user.email))
-  })
-
-  app.post("/api/invitations/:id/accept", async (c) => {
-    const session = await getSession(c.req.raw)
-    if (!session) return c.json({ error: "Unauthorized" }, 401)
-    const pending = (
-      await store.listInvitationsForEmail(session.user.email)
-    ).find((i) => i.id === c.req.param("id"))
-    if (!pending) return c.json({ error: "Forbidden" }, 403)
-    try {
-      const membership = await store.acceptInvitation(
-        pending.id,
-        session.user.id
-      )
-      return c.json(membership)
-    } catch (error) {
-      if (isNotFound(error)) return c.json({ error: "Not found" }, 404)
-      throw error
-    }
-  })
+  app.route("/", createInvitesApp({ store, getSession, mailer, frontendUrl }))
+  app.route(
+    "/",
+    createCommentsApp({ store, getSession, mailer, frontendUrl })
+  )
+  app.route(
+    "/",
+    createNotificationsApp({ store, getSession, mailer, frontendUrl })
+  )
 
   async function visibleWorkspace(workspaceId: string, userId: string) {
     const mine = await store.listWorkspacesForUser(userId)
     return mine.find((w) => w.id === workspaceId) ?? null
-  }
-
-  async function readableProject(projectId: string, userId: string) {
-    const project = await store.getProject(projectId)
-    if (!project) return null
-    const visible = await visibleWorkspace(project.workspaceId, userId)
-    if (!visible) return null
-    return project
   }
 
   app.get("/api/workspaces/:id/projects", async (c) => {
@@ -275,7 +240,7 @@ export function createWorkspacesApp({ store, getSession }: WorkspacesDeps) {
     if (!session) return c.json({ error: "Unauthorized" }, 401)
     const visible = await visibleWorkspace(c.req.param("id"), session.user.id)
     if (!visible) return c.json({ error: "Forbidden" }, 403)
-    return c.json(await store.listProjects(visible.id))
+    return c.json(await store.listProjects(visible.id, session.user.id))
   })
 
   app.post("/api/workspaces/:id/projects", async (c) => {
@@ -392,7 +357,11 @@ export function createWorkspacesApp({ store, getSession }: WorkspacesDeps) {
   app.get("/api/projects/:id", async (c) => {
     const session = await getSession(c.req.raw)
     if (!session) return c.json({ error: "Unauthorized" }, 401)
-    const project = await readableProject(c.req.param("id"), session.user.id)
+    const project = await readableProject(
+      store,
+      c.req.param("id"),
+      session.user.id
+    )
     if (!project) {
       const exists = await store.getProject(c.req.param("id"))
       return c.json(
@@ -406,7 +375,11 @@ export function createWorkspacesApp({ store, getSession }: WorkspacesDeps) {
   app.get("/api/projects/:id/statuses", async (c) => {
     const session = await getSession(c.req.raw)
     if (!session) return c.json({ error: "Unauthorized" }, 401)
-    const project = await readableProject(c.req.param("id"), session.user.id)
+    const project = await readableProject(
+      store,
+      c.req.param("id"),
+      session.user.id
+    )
     if (!project) {
       const exists = await store.getProject(c.req.param("id"))
       return c.json(
@@ -441,29 +414,12 @@ export function createWorkspacesApp({ store, getSession }: WorkspacesDeps) {
     }
   })
 
-  async function manageableProject(projectId: string, userId: string) {
-    const project = await store.getProject(projectId)
-    if (!project) return null
-    const membership = await store.getMembership(project.workspaceId, userId)
-    if (!membership || membership.role === "Member") return null
-    return project
-  }
-
-  /** Any workspace membership (Owner/Admin/Member) may write issues. */
-  async function writableProject(projectId: string, userId: string) {
-    const project = await store.getProject(projectId)
-    if (!project) return null
-    const membership = await store.getMembership(project.workspaceId, userId)
-    if (!membership) return null
-    return project
-  }
-
   app.post("/api/projects/:id/statuses", async (c) => {
     const session = await getSession(c.req.raw)
     if (!session) return c.json({ error: "Unauthorized" }, 401)
     const project = await store.getProject(c.req.param("id"))
     if (!project) return c.json({ error: "Not found" }, 404)
-    if (!(await manageableProject(project.id, session.user.id))) {
+    if (!(await manageableProject(store, project.id, session.user.id))) {
       return c.json({ error: "Forbidden" }, 403)
     }
     const parsed = createStatusBody.safeParse(await c.req.json())
@@ -481,6 +437,7 @@ export function createWorkspacesApp({ store, getSession }: WorkspacesDeps) {
     const session = await getSession(c.req.raw)
     if (!session) return c.json({ error: "Unauthorized" }, 401)
     const project = await manageableProject(
+      store,
       c.req.param("projectId"),
       session.user.id
     )
@@ -510,6 +467,7 @@ export function createWorkspacesApp({ store, getSession }: WorkspacesDeps) {
     const session = await getSession(c.req.raw)
     if (!session) return c.json({ error: "Unauthorized" }, 401)
     const project = await manageableProject(
+      store,
       c.req.param("projectId"),
       session.user.id
     )
@@ -540,13 +498,29 @@ export function createWorkspacesApp({ store, getSession }: WorkspacesDeps) {
     if (!session) return c.json({ error: "Unauthorized" }, 401)
     const project = await store.getProject(c.req.param("id"))
     if (!project) return c.json({ error: "Not found" }, 404)
-    if (!(await writableProject(project.id, session.user.id))) {
+    if (!(await writableProject(store, project.id, session.user.id))) {
       return c.json({ error: "Forbidden" }, 403)
     }
     const parsed = createIssueBody.safeParse(await c.req.json())
     if (!parsed.success) return c.json({ error: "Invalid issue" }, 400)
     try {
-      const issue = await store.createIssue(project.id, parsed.data)
+      const actor = { type: "user" as const, id: session.user.id }
+      const issue = await store.createIssue(project.id, parsed.data, actor)
+      // The creator follows their issue; creation itself notifies nobody.
+      await store.addWatcher(issue.id, session.user.id)
+      // Creating the issue already assigned is an assignment: the assignee
+      // follows it and hears about it unless they are the creator.
+      if (issue.assigneeId !== null) {
+        await notifyIssueUpdated(
+          { store, mailer, frontendUrl },
+          {
+            actor,
+            before: { ...issue, assigneeId: null },
+            after: issue,
+            input: { assigneeId: issue.assigneeId },
+          }
+        )
+      }
       return c.json(issue, 201)
     } catch (error) {
       if (isInvalid(error))
@@ -559,7 +533,11 @@ export function createWorkspacesApp({ store, getSession }: WorkspacesDeps) {
   app.get("/api/projects/:id/issues", async (c) => {
     const session = await getSession(c.req.raw)
     if (!session) return c.json({ error: "Unauthorized" }, 401)
-    const project = await readableProject(c.req.param("id"), session.user.id)
+    const project = await readableProject(
+      store,
+      c.req.param("id"),
+      session.user.id
+    )
     if (!project) {
       const exists = await store.getProject(c.req.param("id"))
       return c.json(
@@ -591,7 +569,11 @@ export function createWorkspacesApp({ store, getSession }: WorkspacesDeps) {
     if (!session) return c.json({ error: "Unauthorized" }, 401)
     const issue = await store.getIssue(c.req.param("key"))
     if (!issue) return c.json({ error: "Not found" }, 404)
-    const project = await readableProject(issue.projectId, session.user.id)
+    const project = await readableProject(
+      store,
+      issue.projectId,
+      session.user.id
+    )
     if (!project) return c.json({ error: "Forbidden" }, 403)
     return c.json(issue)
   })
@@ -601,7 +583,11 @@ export function createWorkspacesApp({ store, getSession }: WorkspacesDeps) {
     if (!session) return c.json({ error: "Unauthorized" }, 401)
     const issue = await store.getIssue(c.req.param("key"))
     if (!issue) return c.json({ error: "Not found" }, 404)
-    const project = await readableProject(issue.projectId, session.user.id)
+    const project = await readableProject(
+      store,
+      issue.projectId,
+      session.user.id
+    )
     if (!project) return c.json({ error: "Forbidden" }, 403)
     return c.json(await store.listSubtasks(issue.id))
   })
@@ -642,7 +628,9 @@ export function createWorkspacesApp({ store, getSession }: WorkspacesDeps) {
     if (!session) return c.json({ error: "Unauthorized" }, 401)
     const issue = await store.getIssue(c.req.param("key"))
     if (!issue) return c.json({ error: "Not found" }, 404)
-    if (!(await writableProject(issue.projectId, session.user.id))) {
+    const project = await store.getProject(issue.projectId)
+    if (!project) return c.json({ error: "Not found" }, 404)
+    if (!(await writableProject(store, issue.projectId, session.user.id))) {
       return c.json({ error: "Forbidden" }, 403)
     }
     const parsed = updateIssueBody.safeParse(await c.req.json())
@@ -654,7 +642,12 @@ export function createWorkspacesApp({ store, getSession }: WorkspacesDeps) {
       return c.json({ error: "Not found" }, 404)
     }
     try {
-      const updated = await store.updateIssue(issue.id, parsed.data)
+      const actor = { type: "user" as const, id: session.user.id }
+      const updated = await store.updateIssue(issue.id, parsed.data, actor)
+      await notifyIssueUpdated(
+        { store, mailer, frontendUrl },
+        { actor, before: issue, after: updated, input: parsed.data }
+      )
       return c.json({
         ...updated,
         warnings: await completionWarnings(updated, parsed.data.statusId),

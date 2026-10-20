@@ -58,15 +58,6 @@ describe("external links", () => {
     expect(updated.state).toBe("merged")
   })
 
-  test("timeline events append in order per issue", async () => {
-    const store = createMemoryGitHubStore()
-    await store.appendTimelineEvent("issue-1", "link.opened", "PR #7 opened")
-    await store.appendTimelineEvent("issue-1", "link.merged", "PR #7 merged")
-    const events = await store.listTimelineEvents("issue-1")
-    expect(events.map((e) => e.kind)).toEqual(["link.opened", "link.merged"])
-    expect(await store.listTimelineEvents("issue-other")).toHaveLength(0)
-  })
-
   test("delivery ids are processed once (webhook redelivery)", async () => {
     const store = createMemoryGitHubStore()
     expect(await store.hasProcessedDelivery("d-1")).toBe(false)

@@ -41,6 +41,35 @@ export function buildWorkspacePath(workspaceName: string): string {
   return `/${slugifyWorkspace(workspaceName)}`
 }
 
+/** `/invite/{id}` — invitation accept page (reserved, never a workspace). */
+export function buildInvitePath(id: string): string {
+  return `/invite/${encodeURIComponent(id)}`
+}
+
+/**
+ * Parse `/invite/:id` into the invitation id. The literal is
+ * case-insensitive; the id is URL-decoded. Returns null for every other
+ * path (including a bare `/invite`).
+ */
+export function parseInvitePath(pathname: string): string | null {
+  const segments =
+    pathname
+      .split("?")
+      .at(0)
+      ?.split("#")
+      .at(0)
+      ?.split("/")
+      .filter((s) => s.length > 0) ?? []
+  if (segments.length !== 2) return null
+  if (segments[0].toLowerCase() !== "invite") return null
+  try {
+    const id = decodeURIComponent(segments[1]).trim()
+    return id === "" ? null : id
+  } catch {
+    return segments[1]
+  }
+}
+
 /**
  * `/{workspaceSlug}/issue/{IDENTIFIER}/{title-slug?}` — shareable detail
  * link. The identifier keeps its canonical uppercase KEY-N form.
@@ -76,6 +105,10 @@ export function parseAppPath(pathname: string): AppPath {
       })
       .filter((s) => s.length > 0) ?? []
   if (segments.length === 0) return { workspaceSlug: null, identifier: null }
+  // `/invite/...` is its own page, never a workspace slug.
+  if (segments[0].toLowerCase() === "invite") {
+    return { workspaceSlug: null, identifier: null }
+  }
   const workspaceSlug = segments[0].toLowerCase() || null
   if (segments.length >= 3 && segments[1].toLowerCase() === "issue") {
     const raw = segments[2].trim()

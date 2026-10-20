@@ -1,11 +1,6 @@
 import { and, eq } from "drizzle-orm"
 import type { getDb } from "../db/index.js"
-import {
-  externalLink,
-  githubInstall,
-  timelineEvent,
-  webhookDelivery,
-} from "../db/schema.js"
+import { externalLink, githubInstall, webhookDelivery } from "../db/schema.js"
 import type { ExternalLinkKind } from "./parse.js"
 import type {
   CreateExternalLinkInput,
@@ -13,13 +8,12 @@ import type {
   ExternalLinkState,
   GitHubInstall,
   GitHubStore,
-  TimelineEvent,
 } from "./store.js"
 
 type Db = ReturnType<typeof getDb>
 
 /**
- * Production GitHubStore over Supabase Postgres. Resolves the connection
+ * Production GitHubStore over Neon Postgres. Resolves the connection
  * lazily per call so importing the app never requires DATABASE_URL —
  * contract tests inject the memory store instead.
  */
@@ -102,24 +96,6 @@ export function createDrizzleGitHubStore(resolveDb: () => Db): GitHubStore {
       return rows.map(toLink)
     },
 
-    async appendTimelineEvent(issueId, kind, body) {
-      const db = resolveDb()
-      const [row] = await db
-        .insert(timelineEvent)
-        .values({ issueId, kind, body })
-        .returning()
-      return toEvent(row)
-    },
-
-    async listTimelineEvents(issueId) {
-      const db = resolveDb()
-      const rows = await db
-        .select()
-        .from(timelineEvent)
-        .where(eq(timelineEvent.issueId, issueId))
-      return rows.map(toEvent)
-    },
-
     async hasProcessedDelivery(deliveryId) {
       const db = resolveDb()
       const rows = await db
@@ -159,6 +135,3 @@ function toLink(row: typeof externalLink.$inferSelect): ExternalLink {
   }
 }
 
-function toEvent(row: typeof timelineEvent.$inferSelect): TimelineEvent {
-  return { id: row.id, issueId: row.issueId, kind: row.kind, body: row.body }
-}

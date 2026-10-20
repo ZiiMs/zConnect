@@ -1,26 +1,55 @@
-import { and, asc, eq, inArray, isNull } from "drizzle-orm"
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  or,
+} from "drizzle-orm"
 import { user } from "../db/auth-schema.js"
 import type { getDb } from "../db/index.js"
 import {
+  activityEvent,
+  comment,
   invitation,
   issue,
   issueLabel,
+  issueWatcher,
   label,
+  notification as notificationTable,
   project,
   projectSequence,
   projectViewer,
   status,
+  userNotificationSettings,
   workspace,
   workspaceMember,
 } from "../db/schema.js"
+import {
+  decodeCursor,
+  diffIssueUpdate,
+  encodeCursor,
+  isDescriptionCoalesced,
+  mergeTimeline,
+} from "./activity.js"
 import type {
+  ActivityActor,
+  ActivityActorType,
+  ActivityEvent,
+  Actor,
+  Comment,
   CreateIssueInput,
   CreateLabelInput,
+  EmailMode,
   Invitation,
   Issue,
   IssueFilters,
   Label,
   Membership,
+  Notification,
   Priority,
   Project,
   Status,
@@ -44,6 +73,7 @@ import {
   isValidProjectIcon,
   isValidStatusColor,
   normalizeLabelNames,
+  SYSTEM_ACTOR,
   seedIssueFields,
 } from "./store.js"
 
@@ -171,8 +201,93 @@ async function relinkIssue(
       .values(labelIds.map((labelId) => ({ issueId, labelId })))
   }
 }
+
+/** Page sizes documented by the collaboration contracts. */
+function pageLimit(
+  limit: number | undefined,
+  fallback: number,
+  max: number
+): number {
+  const value = Math.floor(limit ?? fallback)
+  if (!Number.isFinite(value) || value <= 0) return fallback
+  return Math.min(value, max)
+}
+
+function iso(value: Date | null | undefined): string | null {
+  return value ? value.toISOString() : null
+}
+
+function toComment(row: typeof comment.$inferSelect): Comment {
+  return {
+    id: row.id,
+    issueId: row.issueId,
+    authorId: row.authorId,
+    body: row.body,
+    parentId: row.parentId,
+    editedAt: iso(row.editedAt),
+    deletedAt: iso(row.deletedAt),
+    createdAt: row.createdAt.toISOString(),
+  }
+}
+
+function toActivityEvent(
+  row: typeof activityEvent.$inferSelect
+): ActivityEvent {
+  return {
+    id: row.id,
+    issueId: row.issueId,
+    actorType: row.actorType as ActivityActorType,
+    actorId: row.actorId,
+    type: row.type,
+    summary: row.summary,
+    payload: { ...(row.payload ?? {}) },
+    createdAt: row.createdAt.toISOString(),
+  }
+}
+
+function toNotification(
+  row: typeof notificationTable.$inferSelect
+): Notification {
+  return {
+    id: row.id,
+    userId: row.userId,
+    issueId: row.issueId,
+    type: row.type,
+    actorType: row.actorType as ActivityActorType,
+    actorId: row.actorId,
+    payload: { ...(row.payload ?? {}) },
+    readAt: iso(row.readAt),
+    emailedAt: iso(row.emailedAt),
+    createdAt: row.createdAt.toISOString(),
+  }
+}
+
+/** Insert one Activity Event row; shared by mutators and appendActivity. */
+async function insertActivity(
+  db: Db,
+  issueId: string,
+  actor: ActivityActor,
+  type: string,
+  summary: string,
+  payload: Record<string, unknown>,
+  createdAt: Date
+): Promise<ActivityEvent> {
+  const [row] = await db
+    .insert(activityEvent)
+    .values({
+      issueId,
+      actorType: actor.type,
+      actorId: actor.id,
+      type,
+      summary,
+      payload,
+      createdAt,
+    })
+    .returning()
+  return toActivityEvent(row)
+}
 /**
- * Production WorkspaceStore over Supabase Postgres. The database connection
+ * Production WorkspaceStore over Neon Postgres. The database connection
  * resolves lazily per call so importing the app never requires DATABASE_URL —
  * contract tests inject the memory store instead.
  */
@@ -223,6 +338,16 @@ export function createDrizzleWorkspaceStore(
       return visible
     },
 
+    async getWorkspace(workspaceId) {
+      const db = resolveDb()
+      const rows = await db
+        .select()
+        .from(workspace)
+        .where(eq(workspace.id, workspaceId))
+      const row = rows[0]
+      return row ? toWorkspace(row) : null
+    },
+
     async getMembership(workspaceId, userId) {
       const db = resolveDb()
       const rows = await db
@@ -252,6 +377,7 @@ export function createDrizzleWorkspaceStore(
           role: workspaceMember.role,
           name: user.name,
           image: user.image,
+          email: user.email,
         })
         .from(workspaceMember)
         .leftJoin(user, eq(user.id, workspaceMember.userId))
@@ -262,6 +388,7 @@ export function createDrizzleWorkspaceStore(
         role: row.role,
         name: row.name ?? undefined,
         image: row.image ?? null,
+        email: row.email ?? null,
       }))
     },
 
@@ -271,7 +398,12 @@ export function createDrizzleWorkspaceStore(
       try {
         const [row] = await db
           .insert(invitation)
-          .values({ ...input, email })
+          .values({
+            ...input,
+            email,
+            // Contract: expiry = created + 7 days.
+            expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+          })
           .returning()
         return toInvitation(row)
       } catch {
@@ -286,6 +418,34 @@ export function createDrizzleWorkspaceStore(
         .from(invitation)
         .where(eq(invitation.email, email.toLowerCase()))
       return rows.map(toInvitation)
+    },
+
+    async listInvitationsForWorkspace(workspaceId) {
+      const db = resolveDb()
+      const rows = await db
+        .select()
+        .from(invitation)
+        .where(eq(invitation.workspaceId, workspaceId))
+      return rows.map(toInvitation)
+    },
+
+    async deleteInvitation(invitationId) {
+      const db = resolveDb()
+      const deleted = await db
+        .delete(invitation)
+        .where(eq(invitation.id, invitationId))
+        .returning({ id: invitation.id })
+      return deleted.length > 0
+    },
+
+    async getInvitation(invitationId) {
+      const db = resolveDb()
+      const rows = await db
+        .select()
+        .from(invitation)
+        .where(eq(invitation.id, invitationId))
+      const row = rows[0]
+      return row ? toInvitation(row) : null
     },
 
     async acceptInvitation(invitationId, userId) {
@@ -374,13 +534,22 @@ export function createDrizzleWorkspaceStore(
       }
     },
 
-    async listProjects(workspaceId) {
+    async listProjects(workspaceId, userId?) {
       const db = resolveDb()
       const rows = await db
         .select()
         .from(project)
         .where(eq(project.workspaceId, workspaceId))
-      return rows.map(toProject)
+      if (!userId) return rows.map(toProject)
+      // Members see the whole workspace; Viewer grants scope to their rows.
+      const membership = await this.getMembership(workspaceId, userId)
+      if (membership) return rows.map(toProject)
+      const grants = await db
+        .select({ projectId: projectViewer.projectId })
+        .from(projectViewer)
+        .where(eq(projectViewer.userId, userId))
+      const granted = new Set(grants.map((grant) => grant.projectId))
+      return rows.filter((row) => granted.has(row.id)).map(toProject)
     },
 
     async getProject(projectId) {
@@ -567,7 +736,8 @@ export function createDrizzleWorkspaceStore(
 
     async createIssue(
       projectId: string,
-      input: CreateIssueInput
+      input: CreateIssueInput,
+      actor: Actor = SYSTEM_ACTOR
     ): Promise<Issue> {
       const db = resolveDb()
       const projects = await db
@@ -638,12 +808,24 @@ export function createDrizzleWorkspaceStore(
             input.parentId === undefined || input.parentId === null
               ? null
               : await resolveParentRow(db, projectId, null, input.parentId),
+          // Only a signed-in user owns authorship; agent/system creates and
+          // seeded samples stay null.
+          createdBy: actor.type === "user" ? actor.id : null,
         })
         .returning()
       await relinkIssue(
         db,
         row.id,
         labelRows.map((r) => r.id)
+      )
+      await insertActivity(
+        db,
+        row.id,
+        actor,
+        "issue.created",
+        "created the issue",
+        { identifier: row.identifier, title: row.title },
+        new Date()
       )
       return toIssue(row)
     },
@@ -711,7 +893,11 @@ export function createDrizzleWorkspaceStore(
       return byKey[0] ? toIssue(byKey[0]) : null
     },
 
-    async updateIssue(ref: string, input: UpdateIssueInput): Promise<Issue> {
+    async updateIssue(
+      ref: string,
+      input: UpdateIssueInput,
+      actor: Actor = SYSTEM_ACTOR
+    ): Promise<Issue> {
       const db = resolveDb()
       const current = await this.getIssue(ref)
       if (!current) throw notFound("Issue not found")
@@ -843,7 +1029,66 @@ export function createDrizzleWorkspaceStore(
           labelRows.map((r) => r.id)
         )
       }
-      return toIssue(updated)
+      const after = toIssue(updated)
+      const parentIds = [current.parentId, after.parentId].filter(
+        (id): id is string => id !== null
+      )
+      const parentIdentifiers = new Map<string, string>()
+      if (parentIds.length > 0) {
+        const parents = await db
+          .select({ id: issue.id, identifier: issue.identifier })
+          .from(issue)
+          .where(inArray(issue.id, parentIds))
+        for (const parent of parents) {
+          parentIdentifiers.set(parent.id, parent.identifier)
+        }
+      }
+      const identifierOf = (id: string | null): string | null =>
+        id === null ? null : (parentIdentifiers.get(id) ?? id)
+      const now = new Date()
+      let drafts = diffIssueUpdate(current, after, input, {
+        fromParentIdentifier: identifierOf(current.parentId),
+        toParentIdentifier: identifierOf(after.parentId),
+      })
+      if (drafts.some((draft) => draft.type === "issue.description_changed")) {
+        const latest = await db
+          .select({ createdAt: activityEvent.createdAt })
+          .from(activityEvent)
+          .where(
+            and(
+              eq(activityEvent.issueId, current.id),
+              eq(activityEvent.type, "issue.description_changed"),
+              eq(activityEvent.actorType, actor.type),
+              actor.id === null
+                ? isNull(activityEvent.actorId)
+                : eq(activityEvent.actorId, actor.id)
+            )
+          )
+          .orderBy(desc(activityEvent.createdAt))
+          .limit(1)
+        if (
+          isDescriptionCoalesced(
+            latest[0]?.createdAt?.toISOString() ?? null,
+            now
+          )
+        ) {
+          drafts = drafts.filter(
+            (draft) => draft.type !== "issue.description_changed"
+          )
+        }
+      }
+      for (const draft of drafts) {
+        await insertActivity(
+          db,
+          current.id,
+          actor,
+          draft.type,
+          draft.summary,
+          draft.payload,
+          now
+        )
+      }
+      return after
     },
 
     async createLabel(
@@ -991,7 +1236,7 @@ export function createDrizzleWorkspaceStore(
       return rows.map(toIssue)
     },
 
-    async deleteIssue(ref: string): Promise<void> {
+    async deleteIssue(ref: string, _actor?: Actor): Promise<void> {
       const db = resolveDb()
       const current = await this.getIssue(ref)
       if (!current) throw notFound("Issue not found")
@@ -1065,6 +1310,485 @@ export function createDrizzleWorkspaceStore(
         )
       return rows.length > 0
     },
+
+    async createComment(input) {
+      const db = resolveDb()
+      const issueRows = await db
+        .select({ id: issue.id })
+        .from(issue)
+        .where(eq(issue.id, input.issueId))
+      if (!issueRows[0]) throw invalid("Issue not found")
+      const body = input.body.trim()
+      if (!body) throw invalid("Comment body is required")
+      const parentId = input.parentId ?? null
+      if (parentId !== null) {
+        const parents = await db
+          .select()
+          .from(comment)
+          .where(eq(comment.id, parentId))
+        const parent = parents[0]
+        if (!parent) throw invalid("Parent comment not found")
+        if (parent.issueId !== input.issueId) {
+          throw invalid("Parent comment belongs to another issue")
+        }
+        if (parent.parentId !== null) {
+          throw invalid("Replies cannot nest more than one level")
+        }
+      }
+      const [row] = await db
+        .insert(comment)
+        .values({
+          issueId: input.issueId,
+          authorId: input.authorId,
+          body,
+          parentId,
+          createdAt: new Date(),
+        })
+        .returning()
+      return toComment(row)
+    },
+
+    async getComment(commentId) {
+      const db = resolveDb()
+      const rows = await db
+        .select()
+        .from(comment)
+        .where(eq(comment.id, commentId))
+      return rows[0] ? toComment(rows[0]) : null
+    },
+
+    async updateComment(commentId, body) {
+      const db = resolveDb()
+      const rows = await db
+        .select()
+        .from(comment)
+        .where(eq(comment.id, commentId))
+      const row = rows[0]
+      if (!row) throw notFound("Comment not found")
+      if (row.deletedAt !== null) {
+        throw invalid("Cannot edit a deleted comment")
+      }
+      const trimmed = body.trim()
+      if (!trimmed) throw invalid("Comment body is required")
+      const [updated] = await db
+        .update(comment)
+        .set({ body: trimmed, editedAt: new Date() })
+        .where(eq(comment.id, commentId))
+        .returning()
+      return toComment(updated)
+    },
+
+    async softDeleteComment(commentId) {
+      const db = resolveDb()
+      const rows = await db
+        .select()
+        .from(comment)
+        .where(eq(comment.id, commentId))
+      const row = rows[0]
+      if (!row) throw notFound("Comment not found")
+      if (row.deletedAt !== null) return toComment(row)
+      const [updated] = await db
+        .update(comment)
+        .set({ body: "", deletedAt: new Date() })
+        .where(eq(comment.id, commentId))
+        .returning()
+      return toComment(updated)
+    },
+
+    async listComments(issueId, opts) {
+      const db = resolveDb()
+      const limit = pageLimit(opts?.limit, 20, 50)
+      const cursor = decodeCursor(opts?.before)
+      const conditions = [eq(comment.issueId, issueId)]
+      if (cursor) {
+        const at = new Date(cursor.createdAt)
+        conditions.push(
+          or(
+            lt(comment.createdAt, at),
+            and(eq(comment.createdAt, at), lt(comment.id, cursor.id))
+          ) as NonNullable<ReturnType<typeof or>>
+        )
+      }
+      const rows = await db
+        .select()
+        .from(comment)
+        .where(and(...conditions))
+        .orderBy(desc(comment.createdAt), desc(comment.id))
+        .limit(limit + 1)
+      const page = rows.slice(0, limit).map(toComment)
+      const last = page[page.length - 1]
+      return {
+        comments: page,
+        nextCursor: rows.length > limit && last ? encodeCursor(last) : null,
+      }
+    },
+
+    async appendActivity(issueId, input) {
+      const db = resolveDb()
+      const issueRows = await db
+        .select({ id: issue.id })
+        .from(issue)
+        .where(eq(issue.id, issueId))
+      if (!issueRows[0]) throw notFound("Issue not found")
+      return insertActivity(
+        db,
+        issueId,
+        input.actor,
+        input.type,
+        input.summary,
+        input.payload ?? {},
+        new Date()
+      )
+    },
+
+    async listActivity(issueId) {
+      const db = resolveDb()
+      const rows = await db
+        .select()
+        .from(activityEvent)
+        .where(eq(activityEvent.issueId, issueId))
+        .orderBy(asc(activityEvent.createdAt), asc(activityEvent.id))
+      return rows.map(toActivityEvent)
+    },
+
+    async listTimeline(issueId, opts) {
+      const db = resolveDb()
+      const limit = pageLimit(opts?.limit, 20, 50)
+      const cursor = decodeCursor(opts?.before)
+      const commentConditions = [eq(comment.issueId, issueId)]
+      const eventConditions = [eq(activityEvent.issueId, issueId)]
+      if (cursor) {
+        const at = new Date(cursor.createdAt)
+        commentConditions.push(
+          or(
+            lt(comment.createdAt, at),
+            and(eq(comment.createdAt, at), lt(comment.id, cursor.id))
+          ) as NonNullable<ReturnType<typeof or>>
+        )
+        eventConditions.push(
+          or(
+            lt(activityEvent.createdAt, at),
+            and(
+              eq(activityEvent.createdAt, at),
+              lt(activityEvent.id, cursor.id)
+            )
+          ) as NonNullable<ReturnType<typeof or>>
+        )
+      }
+      // Fetch one extra per side, then let the shared merge decide the page.
+      const [commentRows, eventRows] = await Promise.all([
+        db
+          .select()
+          .from(comment)
+          .where(and(...commentConditions))
+          .orderBy(desc(comment.createdAt), desc(comment.id))
+          .limit(limit + 1),
+        db
+          .select()
+          .from(activityEvent)
+          .where(and(...eventConditions))
+          .orderBy(desc(activityEvent.createdAt), desc(activityEvent.id))
+          .limit(limit + 1),
+      ])
+      return mergeTimeline(
+        commentRows.map(toComment),
+        eventRows.map(toActivityEvent),
+        limit
+      )
+    },
+
+    async addWatcher(issueId, userId) {
+      const db = resolveDb()
+      const issueRows = await db
+        .select({ id: issue.id })
+        .from(issue)
+        .where(eq(issue.id, issueId))
+      if (!issueRows[0]) throw notFound("Issue not found")
+      await db
+        .insert(issueWatcher)
+        .values({ issueId, userId, createdAt: new Date() })
+        .onConflictDoNothing()
+    },
+
+    async removeWatcher(issueId, userId) {
+      const db = resolveDb()
+      await db
+        .delete(issueWatcher)
+        .where(
+          and(
+            eq(issueWatcher.issueId, issueId),
+            eq(issueWatcher.userId, userId)
+          )
+        )
+    },
+
+    async isWatching(issueId, userId) {
+      const db = resolveDb()
+      const rows = await db
+        .select({ issueId: issueWatcher.issueId })
+        .from(issueWatcher)
+        .where(
+          and(
+            eq(issueWatcher.issueId, issueId),
+            eq(issueWatcher.userId, userId)
+          )
+        )
+      return rows.length > 0
+    },
+
+    async listWatcherIds(issueId) {
+      const db = resolveDb()
+      const rows = await db
+        .select({ userId: issueWatcher.userId })
+        .from(issueWatcher)
+        .where(eq(issueWatcher.issueId, issueId))
+        .orderBy(asc(issueWatcher.createdAt), asc(issueWatcher.userId))
+      return rows.map((row) => row.userId)
+    },
+
+    async createNotification(input) {
+      const db = resolveDb()
+      const [row] = await db
+        .insert(notificationTable)
+        .values({
+          userId: input.userId,
+          issueId: input.issueId,
+          type: input.type,
+          actorType: input.actorType,
+          actorId: input.actorId,
+          payload: input.payload,
+          createdAt: new Date(),
+        })
+        .returning()
+      return toNotification(row)
+    },
+
+    async listNotifications(userId, opts) {
+      const db = resolveDb()
+      const limit = pageLimit(opts.limit, 30, 100)
+      const cursor = decodeCursor(opts.before)
+      const conditions = [eq(notificationTable.userId, userId)]
+      if (opts.filter === "unread") {
+        conditions.push(isNull(notificationTable.readAt))
+      }
+      if (cursor) {
+        const at = new Date(cursor.createdAt)
+        conditions.push(
+          or(
+            lt(notificationTable.createdAt, at),
+            and(
+              eq(notificationTable.createdAt, at),
+              lt(notificationTable.id, cursor.id)
+            )
+          ) as NonNullable<ReturnType<typeof or>>
+        )
+      }
+      const rows = await db
+        .select()
+        .from(notificationTable)
+        .where(and(...conditions))
+        .orderBy(desc(notificationTable.createdAt), desc(notificationTable.id))
+        .limit(limit + 1)
+      const page = rows.slice(0, limit).map(toNotification)
+      const last = page[page.length - 1]
+      return {
+        notifications: page,
+        nextCursor: rows.length > limit && last ? encodeCursor(last) : null,
+      }
+    },
+
+    async markNotificationRead(id, userId) {
+      const db = resolveDb()
+      const rows = await db
+        .select()
+        .from(notificationTable)
+        .where(eq(notificationTable.id, id))
+      const row = rows[0]
+      // Never expose another user's row: ownership failures are a 404.
+      if (!row || row.userId !== userId) return null
+      if (row.readAt !== null) return toNotification(row)
+      const [updated] = await db
+        .update(notificationTable)
+        .set({ readAt: new Date() })
+        .where(eq(notificationTable.id, id))
+        .returning()
+      return toNotification(updated)
+    },
+
+    async markAllNotificationsRead(userId) {
+      const db = resolveDb()
+      const rows = await db
+        .update(notificationTable)
+        .set({ readAt: new Date() })
+        .where(
+          and(
+            eq(notificationTable.userId, userId),
+            isNull(notificationTable.readAt)
+          )
+        )
+        .returning({ id: notificationTable.id })
+      return rows.length
+    },
+
+    async unreadNotificationCount(userId) {
+      const db = resolveDb()
+      const rows = await db
+        .select({ id: notificationTable.id })
+        .from(notificationTable)
+        .where(
+          and(
+            eq(notificationTable.userId, userId),
+            isNull(notificationTable.readAt)
+          )
+        )
+      return rows.length
+    },
+
+    async purgeReadNotifications(olderThan) {
+      const db = resolveDb()
+      const rows = await db
+        .delete(notificationTable)
+        .where(
+          and(
+            isNotNull(notificationTable.readAt),
+            lt(notificationTable.createdAt, new Date(olderThan))
+          )
+        )
+        .returning({ id: notificationTable.id })
+      return rows.length
+    },
+
+    async getNotificationSettings(userId) {
+      const db = resolveDb()
+      const rows = await db
+        .select()
+        .from(userNotificationSettings)
+        .where(eq(userNotificationSettings.userId, userId))
+      const row = rows[0]
+      return {
+        userId,
+        emailMode: (row?.emailMode as EmailMode | undefined) ?? "digest",
+      }
+    },
+
+    async setNotificationSettings(userId, emailMode) {
+      const db = resolveDb()
+      await db
+        .insert(userNotificationSettings)
+        .values({ userId, emailMode, createdAt: new Date() })
+        .onConflictDoUpdate({
+          target: userNotificationSettings.userId,
+          set: { emailMode },
+        })
+      return { userId, emailMode }
+    },
+
+    async listDigestGroups(cutoff) {
+      const db = resolveDb()
+      const rows = await db
+        .select({ notification: notificationTable, email: user.email })
+        .from(notificationTable)
+        .innerJoin(user, eq(user.id, notificationTable.userId))
+        // LEFT JOIN: a user without a settings row uses the default digest.
+        .leftJoin(
+          userNotificationSettings,
+          eq(userNotificationSettings.userId, notificationTable.userId)
+        )
+        .where(
+          and(
+            isNull(notificationTable.readAt),
+            isNull(notificationTable.emailedAt),
+            lt(notificationTable.createdAt, new Date(cutoff)),
+            or(
+              isNull(userNotificationSettings.emailMode),
+              eq(userNotificationSettings.emailMode, "digest")
+            )
+          )
+        )
+        .orderBy(asc(notificationTable.createdAt), asc(notificationTable.id))
+      const grouped = new Map<
+        string,
+        { email: string; notifications: Notification[] }
+      >()
+      for (const row of rows) {
+        // Skip members the auth user join cannot email.
+        if (!row.email) continue
+        const group = grouped.get(row.notification.userId) ?? {
+          email: row.email,
+          notifications: [],
+        }
+        group.notifications.push(toNotification(row.notification))
+        grouped.set(row.notification.userId, group)
+      }
+      return [...grouped.entries()]
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        .map(([userId, group]) => ({ userId, ...group }))
+    },
+
+    async markNotificationsEmailed(ids, at) {
+      if (ids.length === 0) return
+      const db = resolveDb()
+      await db
+        .update(notificationTable)
+        .set({ emailedAt: new Date(at) })
+        .where(inArray(notificationTable.id, ids))
+    },
+
+    async listMyIssues(userId, tab) {
+      const db = resolveDb()
+      const memberships = await db
+        .select({ workspaceId: workspaceMember.workspaceId })
+        .from(workspaceMember)
+        .where(eq(workspaceMember.userId, userId))
+      const grants = await db
+        .select({ projectId: projectViewer.projectId })
+        .from(projectViewer)
+        .where(eq(projectViewer.userId, userId))
+      const workspaceIds = [
+        ...new Set(memberships.map((row) => row.workspaceId)),
+      ]
+      const projectRows =
+        workspaceIds.length === 0
+          ? []
+          : await db
+              .select({ id: project.id })
+              .from(project)
+              .where(inArray(project.workspaceId, workspaceIds))
+      // Viewer grants add exactly those projects, not their whole workspace.
+      const projectIds = [
+        ...new Set([
+          ...projectRows.map((row) => row.id),
+          ...grants.map((row) => row.projectId),
+        ]),
+      ]
+      if (projectIds.length === 0) return []
+      const scoped = inArray(issue.projectId, projectIds)
+      if (tab === "watched") {
+        const rows = await db
+          .select({ issue })
+          .from(issue)
+          .innerJoin(
+            issueWatcher,
+            and(
+              eq(issueWatcher.issueId, issue.id),
+              eq(issueWatcher.userId, userId)
+            )
+          )
+          .where(scoped)
+          .orderBy(desc(issue.updatedAt), asc(issue.id))
+        return rows.map((row) => toIssue(row.issue))
+      }
+      const condition =
+        tab === "assigned"
+          ? eq(issue.assigneeId, userId)
+          : eq(issue.createdBy, userId)
+      const rows = await db
+        .select()
+        .from(issue)
+        .where(and(scoped, condition))
+        .orderBy(desc(issue.updatedAt), asc(issue.id))
+      return rows.map(toIssue)
+    },
   }
 }
 
@@ -1079,6 +1803,7 @@ function toInvitation(row: typeof invitation.$inferSelect): Invitation {
     email: row.email,
     role: row.role as WorkspaceRole,
     invitedBy: row.invitedBy,
+    expiresAt: row.expiresAt.toISOString(),
   }
 }
 
@@ -1129,6 +1854,7 @@ function toIssue(row: typeof issue.$inferSelect): Issue {
     archived: row.archived,
     labels: [...(row.labels ?? [])],
     parentId: row.parentId,
+    createdBy: row.createdBy,
     createdAt: row.createdAt
       ? row.createdAt.toISOString()
       : new Date().toISOString(),

@@ -22,7 +22,7 @@ afterEach(() => {
 })
 
 describe("external link section", () => {
-  test("shows badges plus timeline events for the issue", async () => {
+  test("shows badges without the old timeline list", async () => {
     mockFetchSequence([
       [
         {
@@ -35,25 +35,18 @@ describe("external link section", () => {
           state: "merged",
         },
       ],
-      [
-        {
-          id: "ev-1",
-          issueId: "issue-1",
-          kind: "link.merged",
-          body: "PR #7 merged",
-        },
-      ],
     ])
     render(<ExternalLinkSection issueIdentifier="WEB-1" canWrite={false} />)
 
     expect(await screen.findByText("Merged")).toBeInTheDocument()
-    expect(await screen.findByText("PR #7 merged")).toBeInTheDocument()
+    // Link events live in the merged Activity timeline now.
+    expect(screen.queryByTestId("timeline-link.merged")).not.toBeInTheDocument()
     expect(screen.queryByLabelText(/paste.*url/i)).not.toBeInTheDocument()
   })
 
   test("shows the empty state and paste form when writable", async () => {
     const user = userEvent.setup()
-    mockFetchSequence([[], []])
+    mockFetchSequence([[]])
     render(<ExternalLinkSection issueIdentifier="WEB-1" canWrite={true} />)
 
     expect(await screen.findByText(/no linked prs/i)).toBeInTheDocument()

@@ -33,7 +33,7 @@ function toRecord(row: typeof workspaceToken.$inferSelect): WorkspaceToken {
 }
 
 /**
- * Production TokenStore over Supabase Postgres. Same lazy-db pattern as the
+ * Production TokenStore over Neon Postgres. Same lazy-db pattern as the
  * Drizzle workspace store: importing never requires DATABASE_URL.
  */
 export function createDrizzleTokenStore(resolveDb: () => Db): TokenStore {
@@ -86,3 +86,4 @@ export function createDrizzleTokenStore(resolveDb: () => Db): TokenStore {
     },
   }
 }
+

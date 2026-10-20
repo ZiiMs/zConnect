@@ -159,8 +159,8 @@ describe("github installs", () => {
 })
 
 describe("manual external links", () => {
-  test("pasting a PR URL creates a link plus a timeline event", async () => {
-    const { app, workspaces, github } = setup()
+  test("pasting a PR URL creates a link plus an Activity Event", async () => {
+    const { app, workspaces } = setup()
     const { issue } = await seed(app, workspaces)
     const created = await app.request(
       `/api/issues/${issue.identifier}/external-links`,
@@ -175,10 +175,15 @@ describe("manual external links", () => {
       provider: "github",
       kind: "pr",
     })
-    expect(await github.listExternalLinks(issue.id)).toHaveLength(1)
-    expect(
-      (await github.listTimelineEvents(issue.id)).map((e) => e.kind)
-    ).toEqual(["link.manual"])
+    const events = await workspaces.listActivity(issue.id)
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({
+      actorType: "github",
+      actorId: null,
+      type: "github.link.manual",
+      summary: "External Link added (pr acme/web)",
+      payload: { kind: "link.manual" },
+    })
   })
 
   test("non-GitHub URLs are rejected; outsiders are forbidden", async () => {
@@ -302,8 +307,8 @@ describe("webhook intake", () => {
   })
 })
 
-describe("link and timeline reads", () => {
-  test("issue shows the merged badge plus timeline after the job runs", async () => {
+describe("link reads", () => {
+  test("issue shows the merged badge after the job runs", async () => {
     const { app, workspaces, github } = setup()
     const { workspaceId, issue } = await seed(app, workspaces)
     await github.createInstall(workspaceId, ["acme/web"])
@@ -341,13 +346,10 @@ describe("link and timeline reads", () => {
     )
     expect(links.status).toBe(200)
     expect(await links.json()).toMatchObject([{ state: "merged" }])
-    const timeline = await app.request(
-      `/api/issues/${issue.identifier}/timeline`,
-      { headers: auth(member.id) }
-    )
-    expect(timeline.status).toBe(200)
-    expect(
-      ((await timeline.json()) as { kind: string }[]).map((e) => e.kind)
-    ).toEqual(["link.opened", "link.merged"])
+    const activity = await workspaces.listActivity(issue.id)
+    expect(activity.map((event) => event.type).sort()).toEqual([
+      "github.link.merged",
+      "github.link.opened",
+    ])
   })
 })

@@ -35,3 +35,9 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # OpenChamber agent artifacts (screenshots, etc.)
 .openchamber
+.neon
+
+# Playwright
+test-results/
+playwright-report/
+playwright/.cache/

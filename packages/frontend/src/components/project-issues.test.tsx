@@ -17,6 +17,13 @@ vi.mock("@/lib/api", async (importOriginal) => {
       createIssue: vi.fn(),
       updateIssue: vi.fn(),
       deleteIssue: vi.fn(),
+      listTimeline: vi.fn(),
+      createComment: vi.fn(),
+      updateComment: vi.fn(),
+      deleteComment: vi.fn(),
+      getWatch: vi.fn(),
+      watchIssue: vi.fn(),
+      unwatchIssue: vi.fn(),
     },
   }
 })
@@ -81,6 +88,11 @@ function setup(canWrite = true, canAdmin = false, registry: Label[] = []) {
   listLabels.mockResolvedValue(registry)
   listSubtasks.mockResolvedValue([])
   listIssues.mockResolvedValue(issues)
+  vi.mocked(api.listTimeline).mockResolvedValue({
+    items: [],
+    nextCursor: null,
+  })
+  vi.mocked(api.getWatch).mockResolvedValue({ watching: false })
   return render(
     <ProjectIssues
       project={project}

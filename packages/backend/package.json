@@ -7,7 +7,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
-    "auth:schema": "bun x auth@latest generate --config ./src/lib/auth.ts --output ./src/db/auth-schema.ts -y",
+    "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write ."
@@ -16,17 +16,21 @@
     "@aws-sdk/client-s3": "^3.1152.0",
     "@aws-sdk/s3-request-presigner": "^3.1152.0",
     "@better-auth/drizzle-adapter": "^1.7.9",
-    "@supabase/supabase-js": "^2.117.3",
+    "@neon/realtime": "^0.1.2",
+    "@neon/realtime-drizzle": "^0.1.0",
     "better-auth": "^1.7.9",
     "bullmq": "^6.3.15",
+    "dotenv": "^18.0.8",
     "drizzle-orm": "^0.45.4",
     "hono": "^4.13.13",
     "ioredis": "^6.0.0",
+    "nodemailer": "^10.1.7",
     "postgres": "^3.4.9",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/bun": "latest",
+    "@types/nodemailer": "^8.0.2",
     "drizzle-kit": "^0.31.11"
   }
 }

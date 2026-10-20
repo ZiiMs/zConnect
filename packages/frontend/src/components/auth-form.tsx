@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
+import { navigate } from "@/hooks/use-pathname"
 import {
   authClient,
   signIn,
@@ -11,7 +12,7 @@ import {
 const inputClass =
   "w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
 
-export function AuthForm() {
+export function AuthForm({ callbackURL }: { callbackURL?: string }) {
   const { data: session, isPending } = useSession()
   const [mode, setMode] = useState<"signIn" | "signUp">("signIn")
   const [name, setName] = useState("")
@@ -46,11 +47,25 @@ export function AuthForm() {
     setLoading(true)
     try {
       if (mode === "signUp") {
-        const { error } = await signUp.email({ name, email, password })
+        const { error } = await signUp.email({
+          name,
+          email,
+          password,
+          callbackURL,
+        })
         if (error) throw new Error(error.message)
       } else {
-        const { error } = await signIn.email({ email, password })
+        const { error } = await signIn.email({
+          email,
+          password,
+          callbackURL,
+        })
         if (error) throw new Error(error.message)
+      }
+      // The session atom may not have re-rendered yet; restore the invite
+      // page explicitly so the callback URL is never lost.
+      if (callbackURL && window.location.pathname !== callbackURL) {
+        navigate(callbackURL, { replace: true })
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong")
@@ -62,7 +77,7 @@ export function AuthForm() {
   async function handleGoogle() {
     setError(null)
     await authClient.signIn.social(
-      { provider: "google", callbackURL: "/" },
+      { provider: "google", callbackURL: callbackURL ?? "/" },
       { onError: (ctx) => setError(ctx.error.message) }
     )
   }

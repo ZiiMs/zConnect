@@ -52,6 +52,47 @@ _Avoid_: Severity, Importance
 A user belonging to a workspace with a role Owner, Admin, or Member.
 _Avoid_: Teammate, Collaborator
 
+**Comment**:
+A markdown message on an Issue, written by a Member, optionally one level of reply under
+another Comment on the same Issue. Edits keep the row and set an edited marker; deletes
+clear the body and leave a tombstone.
+_Avoid_: Note, Message, Post
+
+**Activity**:
+The issue history feed: Activity Events and Comments merged chronologically into one
+timeline.
+_Avoid_: Audit log, Changelog
+
+**Activity Event**:
+One recorded Issue mutation (status, assignee, priority, due date, title, description,
+labels, parent, project, archive) or external GitHub link event, with an actor and old/new
+values. Comments are not Activity Events.
+_Avoid_: Timeline event, Log entry
+
+**Watcher**:
+A Member subscribed to an Issue's notifications. Auto-watched on create, assignment,
+comment, and mention; can be toggled manually.
+_Avoid_: Follower, Subscriber
+
+**Notification**:
+An in-app row telling one Member that something happened on an Issue they are assigned
+to, mentioned in, or watching. Owned by exactly one Member.
+_Avoid_: Alert, Ping
+
+**Inbox**:
+The Member's list of Notifications, newest first, with All and Unread filters and an
+unread count in the rail.
+_Avoid_: Feed, Activity
+
+**Mention**:
+A link to a Member inside a Comment body, written as `[@Display Name](mention:<userId>)`
+by autocomplete. Only workspace Members eligible to read the Issue can be mentioned.
+_Avoid_: Tag, At-mention
+
+**Saved Filter**:
+A named, reusable Issue query. Deferred to R3.
+_Avoid_: Preset, View
+
 ## Deferred
 
 **Epic, Sprint, Milestone, Automation, Report**:

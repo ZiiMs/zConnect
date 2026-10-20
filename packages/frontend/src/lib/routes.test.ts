@@ -1,9 +1,11 @@
 import { describe, expect, test } from "vitest"
 import {
+  buildInvitePath,
   buildIssuePath,
   buildWorkspacePath,
   findWorkspaceBySlug,
   parseAppPath,
+  parseInvitePath,
   slugifyTitle,
   slugifyWorkspace,
 } from "./routes.js"
@@ -50,6 +52,28 @@ describe("routes", () => {
     expect(parseAppPath("/acme/issue/WEB-9")).toEqual({
       workspaceSlug: "acme",
       identifier: "WEB-9",
+    })
+  })
+
+  test("builds and parses invite paths", () => {
+    expect(buildInvitePath("inv-1")).toBe("/invite/inv-1")
+    expect(buildInvitePath("inv 1/x")).toBe("/invite/inv%201%2Fx")
+    expect(parseInvitePath("/invite/inv-1")).toBe("inv-1")
+    expect(parseInvitePath("/INVITE/inv%201")).toBe("inv 1")
+    expect(parseInvitePath("/invite/inv-1?from=email")).toBe("inv-1")
+    expect(parseInvitePath("/invite/")).toBeNull()
+    expect(parseInvitePath("/invite")).toBeNull()
+    expect(parseInvitePath("/acme/issue/WEB-1")).toBeNull()
+  })
+
+  test("an invite URL is never parsed as a workspace", () => {
+    expect(parseAppPath("/invite/x")).toEqual({
+      workspaceSlug: null,
+      identifier: null,
+    })
+    expect(parseAppPath("/INVITE/x/issue/WEB-1")).toEqual({
+      workspaceSlug: null,
+      identifier: null,
     })
   })
 

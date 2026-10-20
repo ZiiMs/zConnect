@@ -15,8 +15,12 @@ import { IssueFilterPresetTabs } from "@/components/issue-filter-preset-tabs"
 import { IssueList } from "@/components/issue-list"
 import { IssueTable } from "@/components/issue-table"
 import { KanbanBoard } from "@/components/kanban-board"
+import {
+  LiveIssueBridge,
+  LiveIssuesBridge,
+} from "@/components/realtime/live-issues"
 import { Button } from "@/components/ui/button"
-import { useIssueSubscription } from "@/hooks/use-issue-subscription"
+import { usePolling } from "@/hooks/use-polling"
 import {
   api,
   applyRemoteIssue,
@@ -24,12 +28,12 @@ import {
   type Issue,
   type Label,
   type Member,
-  matchesIssueFilters,
   type Project,
   type Status,
   type UpdateIssueInput,
 } from "@/lib/api"
 import { activeStatusIds } from "@/lib/issue-filter-presets"
+import { realtimeEnabled } from "@/lib/realtime"
 
 /**
  * List view container: the same filtered Issue query later views reuse,
@@ -42,11 +46,12 @@ import { activeStatusIds } from "@/lib/issue-filter-presets"
  *
  * T4 renders that same query as a Table (inline status/priority/assignee
  * edits) and a Kanban board (drag cards between Status columns with an
- * optimistic update). A per-project realtime subscription merges remote
- * inserts/updates last-write-wins; a move the server resolves elsewhere (or
- * a stale remote write) surfaces a conflict toast instead of silently
- * forking the view. No presence or locking: concurrent writers simply see
- * the latest write win.
+ * optimistic update). Polling (every 30 s plus window focus) replaces the
+ * old realtime subscription: each polled row merges last-write-wins through
+ * `applyRemoteIssue`, and a move the server resolves elsewhere (or a stale
+ * remote write) surfaces a conflict toast instead of silently forking the
+ * view. No presence or locking: concurrent writers simply see the latest
+ * write win.
  *
  * T6 adds the filter row above the view row — Active (the open categories,
  * the first visit's landing), Backlog, and All Issues — and the breadcrumb
@@ -55,6 +60,31 @@ import { activeStatusIds } from "@/lib/issue-filter-presets"
  * its localStorage persistence.
  */
 const ISSUE_VIEWS: IssueView[] = ["list", "table", "kanban"]
+
+/** Fields a polled row can move; identity and `warnings` never do. */
+const POLLED_ISSUE_FIELDS = [
+  "title",
+  "description",
+  "statusId",
+  "priority",
+  "assigneeId",
+  "dueDate",
+  "archived",
+  "labels",
+  "parentId",
+] as const
+
+/** True when a polled row carries a change the view has not seen yet. */
+function issueChanged(current: Issue, incoming: Issue): boolean {
+  return POLLED_ISSUE_FIELDS.some((field) => {
+    const before = current[field]
+    const after = incoming[field]
+    if (Array.isArray(before) && Array.isArray(after)) {
+      return before.join("\u0000") !== after.join("\u0000")
+    }
+    return before !== after
+  })
+}
 
 function viewStorageKey(userId: string, projectId: string): string {
   return `zconnect:issue-view:${userId}:${projectId}`
@@ -131,6 +161,8 @@ export function ProjectIssues({
   const [loading, setLoading] = useState(true)
   /** A filter re-query in flight; stale views stay mounted underneath. */
   const [refreshing, setRefreshing] = useState(false)
+  /** The live subscription is authoritative; polling pauses while it is up. */
+  const [issuesLive, setIssuesLive] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -181,6 +213,17 @@ export function ProjectIssues({
   const loadedOnceRef = useRef(false)
   /** Which open issues currently hold unsaved edits (sender/conflict gate). */
   const editingRef = useRef<Record<string, boolean>>({})
+  /** A poll is in flight; overlapping timer/focus events ride the same one. */
+  const pollingRef = useRef(false)
+  /** Extra (deep-linked) row outside the filtered list, for poll conflicts. */
+  const extraIssueRef = useRef<Issue | null>(extraIssue)
+  extraIssueRef.current = extraIssue
+  /** Open subtask footers, so a polled edit can gate the row being edited. */
+  const subtasksRef = useRef(subtasks)
+  subtasksRef.current = subtasks
+  /** Rows in the previous live snapshot, so deletions are detected without
+   * dropping optimistic rows that the snapshot has not seen yet. */
+  const liveIssueIdsRef = useRef<Set<string>>(new Set())
 
   /**
    * The project's workflow loads once per project: a filter change only
@@ -256,48 +299,128 @@ export function ProjectIssues({
   const issuesRef = useRef(issues)
   issuesRef.current = issues
 
-  useIssueSubscription(project.id, (event) => {
-    if (event.type === "INSERT" && !matchesIssueFilters(event.issue, filters)) {
-      return
+  /**
+   * Merge one poll response into the view. Polling replaces the old realtime
+   * stream (ADR-0002), so it has to behave like an UPDATE per row instead of
+   * replacing the list:
+   * - an open editor holds the remote row behind the conflict banner;
+   * - otherwise `applyRemoteIssue` keeps last-write-wins and toasts a stale
+   *   write instead of silently forking the row;
+   * - open subtask footers take the same refreshed rows.
+   * No `loading` here: the timer runs in the background and stale rows stay
+   * mounted under the small `refreshing` indicator.
+   */
+  const applyPolledIssues = useCallback((polled: Issue[]) => {
+    const current = issuesRef.current
+    const localById = new Map(current.map((issue) => [issue.id, issue]))
+    const extra = extraIssueRef.current
+    if (extra) localById.set(extra.id, extra)
+    // Subtask rows live outside `issues` once their modal opened; keep them
+    // available so an edit in that modal holds its own conflict banner.
+    for (const rows of Object.values(subtasksRef.current)) {
+      for (const row of rows) {
+        if (!localById.has(row.id)) localById.set(row.id, row)
+      }
     }
-    // Conflict-while-editing (§7): pause autosave and hold the remote row
-    // behind a Load-latest / Keep-editing banner instead of silently
-    // overwriting the draft. Otherwise LWW + toast as before. Any open
-    // editor (detail or subtask modal) gates its own id via editingRef.
-    if (event.type === "UPDATE" && editingRef.current[event.issue.id]) {
-      setPendingConflicts((current) => ({
-        ...current,
-        [event.issue.id]: event.issue,
-      }))
-      return
+    const remoteById = new Map(polled.map((issue) => [issue.id, issue]))
+
+    const conflicts: Record<string, Issue> = {}
+    let merged = current
+    let stale = false
+    for (const remote of polled) {
+      const local = localById.get(remote.id)
+      // No visible move: leave the row (and its reference) untouched.
+      if (local && !issueChanged(local, remote)) continue
+      // Conflict-while-editing (§7): pause autosave and hold the remote row
+      // behind a Load-latest / Keep-editing banner instead of silently
+      // overwriting the draft. Any open editor (detail or subtask modal)
+      // gates its own id via editingRef.
+      if (local && editingRef.current[remote.id]) {
+        conflicts[remote.id] = remote
+        continue
+      }
+      const result = applyRemoteIssue(merged, remote)
+      merged = result.issues
+      if (!result.applied) stale = true
     }
-    const { issues: next, applied } = applyRemoteIssue(
-      issuesRef.current,
-      event.issue
-    )
-    if (!applied) {
-      setToast("Conflict resolved: kept the latest change.")
-      return
+
+    if (Object.keys(conflicts).length > 0) {
+      setPendingConflicts((pending) => ({ ...pending, ...conflicts }))
     }
-    setIssues(next)
+    if (stale) setToast("Conflict resolved: kept the latest change.")
+    if (merged !== current) setIssues(merged)
+
     // Keep an open subtask footer fresh when its rows move remotely.
-    setSubtasks((current) => {
+    setSubtasks((currentSubtasks) => {
       let changed = false
       const nextMap: Record<string, Issue[]> = {}
-      for (const [parentId, rows] of Object.entries(current)) {
-        const idx = rows.findIndex((r) => r.id === event.issue.id)
-        if (idx === -1) {
-          nextMap[parentId] = rows
-          continue
-        }
-        changed = true
-        const updated = [...rows]
-        updated[idx] = event.issue
-        nextMap[parentId] = updated
+      for (const [parentId, rows] of Object.entries(currentSubtasks)) {
+        let rowsChanged = false
+        const nextRows = rows.map((row) => {
+          const remote = remoteById.get(row.id)
+          if (!remote || conflicts[row.id] || editingRef.current[row.id]) {
+            return row
+          }
+          if (!issueChanged(row, remote)) return row
+          const result = applyRemoteIssue([row], remote)
+          if (!result.applied) return row
+          rowsChanged = true
+          return remote
+        })
+        if (rowsChanged) changed = true
+        nextMap[parentId] = rowsChanged ? nextRows : rows
       }
-      return changed ? nextMap : current
+      return changed ? nextMap : currentSubtasks
     })
-  })
+    // Refs and state setters only: the merge always sees the latest view.
+  }, [])
+
+  /** Background refresh: never clears the view and never shows the loader. */
+  const pollIssues = useCallback(async () => {
+    if (pollingRef.current) return
+    pollingRef.current = true
+    if (loadedOnceRef.current) setRefreshing(true)
+    const requestId = requestRef.current
+    try {
+      const filtersNow = filtersRef.current
+      const next = await api.listIssues(project.id, {
+        statusIds: filtersNow.statusIds,
+        priorities: filtersNow.priorities,
+        assigneeId: filtersNow.assigneeId,
+        labels: filtersNow.labels,
+        text: filtersNow.text,
+      })
+      // A filter re-query or project switch superseded this snapshot: its
+      // rows belong to the old query and must not leak into the new list.
+      if (requestRef.current !== requestId) return
+      applyPolledIssues(next)
+    } catch {
+      // A transient poll failure keeps the last good rows and their banner:
+      // the next timer tick (or window focus) retries.
+    } finally {
+      pollingRef.current = false
+      setRefreshing(false)
+    }
+  }, [project.id, applyPolledIssues])
+
+  // Realtime is gone: one filtered refetch every 30 s and on window focus,
+  // only after the first-visit preset has resolved. The Neon live subscription
+  // pauses this timer while it is live.
+  usePolling(pollIssues, { enabled: presetResolved && !issuesLive })
+
+  // A new query starts from "connecting"; resume polling until it is live so a
+  // failed sealed-query fetch can never leave the list frozen.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the filter fields are the query scope.
+  useEffect(() => {
+    setIssuesLive(false)
+  }, [
+    project.id,
+    filters.statusIds,
+    filters.priorities,
+    filters.assigneeId,
+    filters.labels,
+    filters.text,
+  ])
 
   function handleFilters(next: IssueFilterValue) {
     userChangedFiltersRef.current = true
@@ -310,7 +433,7 @@ export function ProjectIssues({
     saveIssueView(userId, project.id, next)
   }
 
-  function applyUpdated(updated: Issue) {
+  const applyUpdated = useCallback((updated: Issue) => {
     setIssues((current) =>
       current.map((item) => (item.id === updated.id ? updated : item))
     )
@@ -330,7 +453,75 @@ export function ProjectIssues({
       }
       return changed ? nextMap : current
     })
-  }
+  }, [])
+
+  /**
+   * Deep-linked rows outside the filtered list are not refreshed by the list
+   * poll. Poll the open out-of-list issue too so detail stays within the
+   * 30-second freshness bar without replacing a dirty editor's draft.
+   */
+  const pollExtraIssue = useCallback(async () => {
+    const extra = extraIssueRef.current
+    if (!extra) return
+    try {
+      const fetched = await api.getIssue(extra.identifier)
+      if (editingRef.current[fetched.id]) {
+        setPendingConflicts((current) => ({
+          ...current,
+          [fetched.id]: fetched,
+        }))
+        return
+      }
+      applyUpdated(fetched)
+    } catch {
+      // Keep the last known row; the next poll retries.
+    }
+  }, [applyUpdated])
+
+  usePolling(pollExtraIssue, { enabled: presetResolved })
+
+  /** A deleted or moved-away issue disappears from this project's list. */
+  const removeIssue = useCallback((issueId: string) => {
+    setIssues((current) => current.filter((item) => item.id !== issueId))
+    setExtraIssue((current) => (current?.id === issueId ? null : current))
+    setSubtasks((current) => {
+      const next: Record<string, Issue[]> = {}
+      for (const [parentId, rows] of Object.entries(current)) {
+        if (parentId === issueId) continue
+        next[parentId] = rows.filter((row) => row.id !== issueId)
+      }
+      return next
+    })
+    setPendingConflicts((current) => {
+      if (!(issueId in current)) return current
+      const next = { ...current }
+      delete next[issueId]
+      return next
+    })
+    delete editingRef.current[issueId]
+    setSelectedId((current) => (current === issueId ? null : current))
+  }, [])
+
+  /**
+   * Apply a Neon Realtime snapshot. Updates use the same conflict rules as
+   * polling; rows that were in the previous snapshot and are now gone were
+   * deleted or moved out of the query, so they are removed. Rows the snapshot
+   * has never seen (an optimistic create) stay until the next snapshot.
+   */
+  const applyLiveIssues = useCallback(
+    (rows: readonly Issue[]) => {
+      const previous = liveIssueIdsRef.current
+      const next = new Set(rows.map((row) => row.id))
+      liveIssueIdsRef.current = next
+      applyPolledIssues([...rows])
+      for (const issueId of previous) {
+        if (!next.has(issueId) && !editingRef.current[issueId]) {
+          removeIssue(issueId)
+        }
+      }
+    },
+    [applyPolledIssues, removeIssue]
+  )
 
   async function handleUpdate(
     issue: Issue,
@@ -359,8 +550,22 @@ export function ProjectIssues({
     }
   }
 
+  /**
+   * Fire-and-forget update for prop callbacks. `handleUpdate` rethrows so
+   * awaiters (autosave) can react, but nothing here awaits a rail edit: the
+   * failure is already shown via `actionError`, so swallow the rejection
+   * instead of leaving it unhandled.
+   */
+  function runUpdate(issue: Issue, input: UpdateIssueInput): void {
+    void handleUpdate(issue, input).catch(() => {
+      // actionError already carries the message.
+    })
+  }
+
   async function handleStatusChange(issue: Issue, statusId: string) {
-    await handleUpdate(issue, { statusId })
+    await handleUpdate(issue, { statusId }).catch(() => {
+      // actionError already carries the message.
+    })
   }
 
   async function handleMove(issue: Issue, statusId: string) {
@@ -587,7 +792,7 @@ export function ProjectIssues({
               icon: { name: project.icon, color: project.color },
             },
             { label: "Issues", onClick: showIssuesRoot },
-            { label: "New issue", current: true },
+            { label: "New issue", onClick: showIssuesRoot, current: true },
           ]
 
   useEffect(() => {
@@ -668,7 +873,12 @@ export function ProjectIssues({
         <p className="text-muted-foreground text-sm">Loading issues…</p>
       )}
       {refreshing && !loading && (
-        <p role="status" className="text-muted-foreground text-xs">
+        <p
+          role="status"
+          aria-live="polite"
+          data-testid="issues-updating"
+          className="pointer-events-none fixed right-4 bottom-4 z-50 rounded-md border bg-background/95 px-2 py-1 text-muted-foreground text-xs shadow-sm"
+        >
           Updating…
         </p>
       )}
@@ -711,6 +921,7 @@ export function ProjectIssues({
           subtasks={subtasks[selectedIssue.id] ?? []}
           canEdit={canWrite}
           canAdmin={canAdmin}
+          currentUserId={userId}
           conflictRemote={pendingConflicts[selectedIssue.id] ?? null}
           onBack={() => {
             delete editingRef.current[selectedIssue.id]
@@ -722,7 +933,7 @@ export function ProjectIssues({
             void handleStatusChange(issue, statusId)
           }
           onUpdate={(issue, input) => {
-            void handleUpdate(issue, input)
+            runUpdate(issue, input)
           }}
           onArchivedChanged={handleArchivedChanged}
           onDeleted={(deleted) => {
@@ -755,7 +966,7 @@ export function ProjectIssues({
               })
             }
           }}
-          onCreateSubtask={(parent, input) => handleCreate(input)}
+          onCreateSubtask={(_parent, input) => handleCreate(input)}
           onSubtaskEditingChange={(subtaskId, editing) => {
             if (editing) editingRef.current[subtaskId] = true
             else delete editingRef.current[subtaskId]
@@ -796,7 +1007,7 @@ export function ProjectIssues({
             onStatusChange={(issue, statusId) =>
               void handleStatusChange(issue, statusId)
             }
-            onUpdate={(issue, input) => void handleUpdate(issue, input)}
+            onUpdate={runUpdate}
             onAddIssue={
               canWrite
                 ? (statusId) => {
@@ -823,7 +1034,7 @@ export function ProjectIssues({
             members={members}
             labels={labels}
             canEdit={canWrite}
-            onUpdate={(issue, input) => void handleUpdate(issue, input)}
+            onUpdate={runUpdate}
             onOpenDetail={(issue) => openIssue(issue)}
           />
         )}
@@ -842,12 +1053,37 @@ export function ProjectIssues({
             canEdit={canWrite}
             visibleStatusIds={filters.statusIds}
             onMove={(issue, statusId) => void handleMove(issue, statusId)}
-            onAssign={(issue, assigneeId) =>
-              void handleUpdate(issue, { assigneeId })
-            }
+            onAssign={(issue, assigneeId) => runUpdate(issue, { assigneeId })}
             onOpenDetail={(issue) => openIssue(issue)}
           />
         )}
+      {realtimeEnabled && (
+        <>
+          <LiveIssuesBridge
+            projectId={project.id}
+            filters={{
+              statusIds: filters.statusIds,
+              priorities: filters.priorities,
+              assigneeId: filters.assigneeId,
+              labels: filters.labels,
+              text: filters.text,
+            }}
+            enabled={presetResolved}
+            onRows={applyLiveIssues}
+            onStatus={(status) => setIssuesLive(status === "live")}
+          />
+          {extraIssue !== null && (
+            <LiveIssueBridge
+              issueRef={extraIssue.identifier}
+              onRows={(rows) => {
+                const row = rows[0]
+                if (row) applyUpdated(row)
+                else setExtraIssue(null)
+              }}
+            />
+          )}
+        </>
+      )}
     </div>
   )
 }

@@ -1,7 +1,10 @@
 import { Hono } from "hono"
 import { z } from "zod"
+import type { Mailer } from "../lib/mailer.js"
+import { notifyIssueUpdated } from "../workspaces/notify.js"
 import type { GetSession } from "../workspaces/session.js"
 import {
+  type Actor,
   PRIORITIES,
   type Priority,
   type WorkspaceStore,
@@ -18,6 +21,12 @@ const rpcEnvelope = z.object({
 })
 
 const getIssueParams = z.object({ ref: z.string().trim().min(1) })
+
+const listCommentsParams = z.object({
+  ref: z.string().trim().min(1),
+  limit: z.number().int().min(1).max(50).optional(),
+  before: z.string().trim().min(1).optional(),
+})
 
 const createIssueParams = z.object({
   projectId: z.string().trim().min(1),
@@ -82,19 +91,33 @@ const DATA_TOOLS = [
     name: "project.list",
     description: "List projects in the token workspace.",
   },
+  {
+    name: "comment.list",
+    description:
+      "List comments for an issue in the token workspace (read-only, tombstones included).",
+  },
 ] as const
 
 export interface McpDeps {
   store: WorkspaceStore
   tokens: TokenStore
   getSession: GetSession
+  /** Optional: agent-driven assignment/status changes still create in-app rows. */
+  mailer?: Mailer | null
+  frontendUrl?: string
 }
 
 /**
  * Workspace token issuance (session-authenticated, Owner/Admin only, mirroring
  * the invite guards) plus the Streamable HTTP MCP route below.
  */
-export function createMcpApp({ store, tokens, getSession }: McpDeps) {
+export function createMcpApp({
+  store,
+  tokens,
+  getSession,
+  mailer = null,
+  frontendUrl,
+}: McpDeps) {
   const app = new Hono()
 
   app.post("/api/workspaces/:id/tokens", async (c) => {
@@ -147,7 +170,8 @@ export function createMcpApp({ store, tokens, getSession }: McpDeps) {
   /**
    * Streamable HTTP MCP route (hand-rolled JSON-RPC dispatcher, no extra
    * dependencies): the JSON-RPC method name IS the tool name, so the surface
-   * is exactly the five MVP tools plus tools/list. Bearer workspace token
+   * is exactly the five MVP tools plus the read-only `comment.list` and
+   * tools/list. Bearer workspace token
    * auth grants Member-level access scoped to the token workspace; every
    * failure mirrors its REST counterpart status with a REST-shaped
    * `{ error }` body, while success wraps the REST-shaped payload in
@@ -163,7 +187,10 @@ export function createMcpApp({ store, tokens, getSession }: McpDeps) {
     if (method === "tools/list") {
       return c.json({ jsonrpc: "2.0", id, result: { tools: DATA_TOOLS } })
     }
-    const outcome = await dispatchTool(store, method, params ?? {}, resolved)
+    const outcome = await dispatchTool(store, method, params ?? {}, resolved, {
+      mailer,
+      frontendUrl,
+    })
     if ("error" in outcome)
       return c.json({ error: outcome.error }, outcome.status)
     return c.json(
@@ -219,7 +246,11 @@ async function dispatchTool(
   store: WorkspaceStore,
   method: string,
   params: unknown,
-  token: WorkspaceToken
+  token: WorkspaceToken,
+  notify: {
+    mailer?: Mailer | null
+    frontendUrl?: string
+  } = {}
 ): Promise<ToolResult | ToolError> {
   if (method === "project.list") {
     return { status: 200, result: await store.listProjects(token.workspaceId) }
@@ -266,11 +297,25 @@ async function dispatchTool(
     const scoped = await scopedProject(store, token, parsed.data.projectId)
     if ("error" in scoped) return scoped
     const { projectId: _projectId, ...input } = parsed.data
+    const actor = agentActor(token)
     try {
-      return {
-        status: 201,
-        result: await store.createIssue(scoped.id, input),
+      const created = await store.createIssue(scoped.id, input, actor)
+      if (created.assigneeId !== null) {
+        await notifyIssueUpdated(
+          {
+            store,
+            mailer: notify.mailer,
+            frontendUrl: notify.frontendUrl,
+          },
+          {
+            actor,
+            before: { ...created, assigneeId: null },
+            after: created,
+            input: { assigneeId: created.assigneeId },
+          }
+        )
       }
+      return { status: 201, result: created }
     } catch (error) {
       if (isInvalid(error))
         return { status: 400, error: (error as Error).message }
@@ -295,8 +340,18 @@ async function dispatchTool(
       return { status: 404, error: "Not found" }
     }
     const { ref: _ref, ...input } = parsed.data
+    const actor = agentActor(token)
     try {
-      return { status: 200, result: await store.updateIssue(issue.id, input) }
+      const updated = await store.updateIssue(issue.id, input, actor)
+      await notifyIssueUpdated(
+        {
+          store,
+          mailer: notify.mailer,
+          frontendUrl: notify.frontendUrl,
+        },
+        { actor, before: issue, after: updated, input }
+      )
+      return { status: 200, result: updated }
     } catch (error) {
       if (isInvalid(error))
         return { status: 400, error: (error as Error).message }
@@ -305,5 +360,36 @@ async function dispatchTool(
     }
   }
 
+  if (method === "comment.list") {
+    const parsed = listCommentsParams.safeParse(params)
+    if (!parsed.success) return { status: 400, error: "Invalid params" }
+    const issue = await store.getIssue(parsed.data.ref)
+    if (!issue) return { status: 404, error: "Not found" }
+    const project = await store.getProject(issue.projectId)
+    if (!project || project.workspaceId !== token.workspaceId) {
+      return { status: 403, error: "Forbidden" }
+    }
+    const { comments, nextCursor } = await store.listComments(issue.id, {
+      limit: parsed.data.limit,
+      before: parsed.data.before,
+    })
+    return {
+      status: 200,
+      result: {
+        comments: comments.map((comment) => ({
+          ...comment,
+          deleted: comment.deletedAt !== null,
+          body: comment.deletedAt ? "" : comment.body,
+        })),
+        nextCursor,
+      },
+    }
+  }
+
   return { status: 404, error: "Unknown method" }
+}
+
+/** Workspace tokens act as agents so Activity Events attribute the token. */
+function agentActor(token: WorkspaceToken): Actor {
+  return { type: "agent", id: token.id, name: token.name }
 }

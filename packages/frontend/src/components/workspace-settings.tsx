@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from "react"
 import { CreateStatusForm } from "@/components/create-status-form"
 import { CreateWorkspaceForm } from "@/components/create-workspace-form"
 import { InviteMemberForm } from "@/components/invite-member-form"
+import { NotificationSettings } from "@/components/notification-settings"
+import { PendingInvites } from "@/components/pending-invites"
 import { ProjectKeyForm } from "@/components/project-key-form"
 import { StatusDot } from "@/components/status-dot"
 import { Button } from "@/components/ui/button"
@@ -15,13 +17,19 @@ import {
 } from "@/lib/api"
 import { ProjectIcon } from "@/lib/project-icons"
 
-type SettingsTab = "general" | "members" | "workflow" | "labels"
+type SettingsTab =
+  | "general"
+  | "members"
+  | "workflow"
+  | "labels"
+  | "notifications"
 
 const TABS: { id: SettingsTab; label: string }[] = [
   { id: "general", label: "General" },
   { id: "members", label: "Members" },
   { id: "workflow", label: "Workflow" },
   { id: "labels", label: "Labels" },
+  { id: "notifications", label: "Notifications" },
 ]
 
 /**
@@ -207,6 +215,7 @@ export function WorkspaceSettings({
   onWorkspaceCreated: (workspace: Workspace) => void
 }) {
   const [tab, setTab] = useState<SettingsTab>("general")
+  const [invitesKey, setInvitesKey] = useState(0)
 
   useEffect(() => {
     if (!project) setTab("members")
@@ -271,12 +280,21 @@ export function WorkspaceSettings({
             {canManage ? (
               <div className="flex flex-col gap-2">
                 <h3 className="font-medium text-sm">Invite a member</h3>
-                <InviteMemberForm workspaceId={workspace.id} />
+                <InviteMemberForm
+                  workspaceId={workspace.id}
+                  onInvited={() => setInvitesKey((key) => key + 1)}
+                />
               </div>
             ) : (
               <p className="text-muted-foreground text-sm">
                 Only Owners and Admins can invite members.
               </p>
+            )}
+            {canManage && (
+              <div className="flex flex-col gap-2">
+                <h3 className="font-medium text-sm">Pending invites</h3>
+                <PendingInvites key={invitesKey} workspaceId={workspace.id} />
+              </div>
             )}
           </div>
         )}
@@ -293,6 +311,7 @@ export function WorkspaceSettings({
             </p>
           ))}
         {tab === "labels" && <LabelsSection workspaceId={workspace.id} />}
+        {tab === "notifications" && <NotificationSettings />}
       </div>
     </div>
   )

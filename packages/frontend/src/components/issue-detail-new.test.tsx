@@ -7,8 +7,8 @@ import {
   within,
 } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { describe, expect, test, vi } from "vitest"
-import type { Issue, Status } from "@/lib/api"
+import { beforeEach, describe, expect, test, vi } from "vitest"
+import { api, type Issue, type Status } from "@/lib/api"
 import { IssueDetail } from "./issue-detail.js"
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -24,8 +24,23 @@ vi.mock("@/lib/api", async (importOriginal) => {
       createIssue: vi.fn(),
       updateIssue: vi.fn(),
       deleteIssue: vi.fn(),
+      listTimeline: vi.fn(),
+      createComment: vi.fn(),
+      updateComment: vi.fn(),
+      deleteComment: vi.fn(),
+      getWatch: vi.fn(),
+      watchIssue: vi.fn(),
+      unwatchIssue: vi.fn(),
     },
   }
+})
+
+beforeEach(() => {
+  vi.mocked(api.listTimeline).mockResolvedValue({
+    items: [],
+    nextCursor: null,
+  })
+  vi.mocked(api.getWatch).mockResolvedValue({ watching: false })
 })
 
 const statuses: Status[] = [
@@ -90,6 +105,7 @@ function renderPersisted(
       subtasks={[]}
       canEdit={true}
       canAdmin={false}
+      currentUserId="user-a"
       onBack={callbacks.onBack}
       onStatusChange={callbacks.onStatusChange}
       onUpdate={callbacks.onUpdate}

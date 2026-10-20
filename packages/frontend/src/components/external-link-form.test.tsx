@@ -10,7 +10,7 @@ describe("external link form", () => {
       id: "link-1",
       url: "https://github.com/acme/web/pull/7",
     })
-    render(<ExternalLinkForm onAdd={onAdd} />)
+    render(<ExternalLinkForm onAdd={onAdd} onClose={vi.fn()} />)
 
     await user.type(
       screen.getByLabelText(/paste.*url/i),
@@ -24,7 +24,12 @@ describe("external link form", () => {
 
   test("shows the error when adding fails", async () => {
     const user = userEvent.setup()
-    render(<ExternalLinkForm onAdd={() => Promise.reject(new Error("Nope"))} />)
+    render(
+      <ExternalLinkForm
+        onAdd={() => Promise.reject(new Error("Nope"))}
+        onClose={vi.fn()}
+      />
+    )
 
     await user.type(screen.getByLabelText(/paste.*url/i), "https://x.example/y")
     await user.keyboard("{Enter}")
