@@ -98,6 +98,12 @@ export const statusSchema = z.object({
     .regex(/^#[0-9a-fA-F]{6}$/)
     .default("#94a3b8"),
   position: z.number(),
+  /** Optional guidance shown under the status name in Workflow settings. */
+  description: z.string().nullable().optional(),
+  /** The status new Issues start in. */
+  isDefault: z.boolean().optional(),
+  /** Issues currently in this status. */
+  issueCount: z.number().optional(),
 })
 
 export const prioritySchema = z.enum([
@@ -149,6 +155,15 @@ export const labelSchema = z.object({
   workspaceId: z.string(),
   name: z.string(),
   color: z.string(),
+  /** Optional explanation shown in the workspace Labels table. */
+  description: z.string().nullable().optional(),
+  /** Optional group parent; one level only. */
+  parentId: z.string().nullable().optional(),
+  /** Issues carrying this label. */
+  issueCount: z.number().optional(),
+  /** Most recent time this label was attached to an Issue. */
+  lastAppliedAt: z.string().nullable().optional(),
+  createdAt: z.string().optional(),
 })
 
 export const commentSchema = z.object({
@@ -358,11 +373,15 @@ export function issueProgress(
 export interface CreateLabelInput {
   name: string
   color?: string
+  description?: string | null
+  parentId?: string | null
 }
 
 export interface UpdateLabelInput {
   name?: string
   color?: string
+  description?: string | null
+  parentId?: string | null
 }
 
 export class ApiError extends Error {
@@ -497,7 +516,13 @@ export const api = {
 
   createStatus(
     projectId: string,
-    input: { name: string; category: StatusCategory; color?: string }
+    input: {
+      name: string
+      category: StatusCategory
+      color?: string
+      description?: string | null
+      isDefault?: boolean
+    }
   ): Promise<Status> {
     return request(`/api/projects/${projectId}/statuses`, statusSchema, {
       method: "POST",
@@ -513,6 +538,8 @@ export const api = {
       category?: StatusCategory
       color?: string
       position?: number
+      description?: string | null
+      isDefault?: boolean
     }
   ): Promise<Status> {
     return request(

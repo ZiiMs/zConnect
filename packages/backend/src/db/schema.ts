@@ -99,12 +99,22 @@ export const status = pgTable(
       .$type<StatusCategory>(),
     color: varchar("color", { length: 7 }).notNull().default("#94a3b8"),
     position: integer("position").notNull(),
+    /** Short guidance shown under the status name in Workflow settings. */
+    description: text("description"),
+    /**
+     * The status new Issues start in. One per Project; the partial unique
+     * index below enforces that at the database level.
+     */
+    isDefault: boolean("is_default").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
   },
   (table) => [
     uniqueIndex("status_project_name_unique").on(table.projectId, table.name),
+    uniqueIndex("status_project_default_unique")
+      .on(table.projectId)
+      .where(sql`${table.isDefault}`),
   ]
 )
 
@@ -215,6 +225,13 @@ export const label = pgTable(
       .references(() => workspace.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     color: varchar("color", { length: 7 }).notNull().default("#94a3b8"),
+    /** Optional explanation shown in the workspace Labels table. */
+    description: text("description"),
+    /**
+     * Optional group parent. One level only: a child label cannot itself be
+     * a parent. Deleting the parent promotes children to top level.
+     */
+    parentId: uuid("parent_id"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -224,6 +241,11 @@ export const label = pgTable(
       table.workspaceId,
       table.name
     ),
+    foreignKey({
+      name: "label_parent_id_label_id_fk",
+      columns: [table.parentId],
+      foreignColumns: [table.id],
+    }).onDelete("set null"),
   ]
 )
 
@@ -236,6 +258,10 @@ export const issueLabel = pgTable(
     labelId: uuid("label_id")
       .notNull()
       .references(() => label.id, { onDelete: "cascade" }),
+    /** When this label was last attached to the issue (Settings "Last applied"). */
+    appliedAt: timestamp("applied_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
   (table) => [primaryKey({ columns: [table.issueId, table.labelId] })]
 )

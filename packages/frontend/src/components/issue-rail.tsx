@@ -31,6 +31,7 @@ export function IssueRail({
   canEdit,
   onStatusChange,
   onUpdate,
+  onCreateLabel,
 }: {
   issue: Issue
   statuses: Status[]
@@ -39,6 +40,8 @@ export function IssueRail({
   canEdit: boolean
   onStatusChange: (issue: Issue, statusId: string) => void
   onUpdate: (issue: Issue, input: UpdateIssueInput) => void
+  /** Create a workspace label from the picker. */
+  onCreateLabel?: (name: string) => Promise<Label>
 }) {
   const statusName =
     statuses.find((status) => status.id === issue.statusId)?.name ?? "Unknown"
@@ -249,6 +252,7 @@ export function IssueRail({
                 onChange={(names) => {
                   onUpdate(issue, { labels: names })
                 }}
+                onCreateLabel={onCreateLabel}
               />
               <button
                 type="button"

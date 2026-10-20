@@ -115,14 +115,50 @@ export const DEFAULT_STATUS_ROSTER: readonly {
   name: string
   category: StatusCategory
   color: string
+  description: string
 }[] = [
-  { name: "Backlog", category: "Backlog", color: "#bec2c8" },
-  { name: "Todo", category: "Unstarted", color: "#e2e2e2" },
-  { name: "In Progress", category: "In Progress", color: "#f2c94c" },
-  { name: "In Review", category: "In Progress", color: "#0f783c" },
-  { name: "Done", category: "Completed", color: "#5e6ad2" },
-  { name: "Canceled", category: "Canceled", color: "#95a2b3" },
-  { name: "Duplicate", category: "Duplicate", color: "#95a2b3" },
+  {
+    name: "Backlog",
+    category: "Backlog",
+    color: "#bec2c8",
+    description: "Ideas and work that is not scheduled yet.",
+  },
+  {
+    name: "Todo",
+    category: "Unstarted",
+    color: "#e2e2e2",
+    description: "Ready to be picked up.",
+  },
+  {
+    name: "In Progress",
+    category: "In Progress",
+    color: "#f2c94c",
+    description: "Actively being worked on.",
+  },
+  {
+    name: "In Review",
+    category: "In Progress",
+    color: "#0f783c",
+    description: "Pull request is being reviewed.",
+  },
+  {
+    name: "Done",
+    category: "Completed",
+    color: "#5e6ad2",
+    description: "Work is complete.",
+  },
+  {
+    name: "Canceled",
+    category: "Canceled",
+    color: "#95a2b3",
+    description: "Won't be done.",
+  },
+  {
+    name: "Duplicate",
+    category: "Duplicate",
+    color: "#95a2b3",
+    description: "Already tracked elsewhere.",
+  },
 ]
 
 /**
@@ -238,6 +274,12 @@ export interface Status {
   category: StatusCategory
   color: string
   position: number
+  /** Optional guidance shown under the status name in Workflow settings. */
+  description: string | null
+  /** The status new Issues start in; at most one per Project. */
+  isDefault: boolean
+  /** Issues currently in this status (including archived ones). */
+  issueCount: number
 }
 
 export interface Issue {
@@ -411,16 +453,29 @@ export interface Label {
   workspaceId: string
   name: string
   color: string
+  /** Optional explanation shown in the workspace Labels table. */
+  description: string | null
+  /** Optional group parent; one level only. */
+  parentId: string | null
+  /** Issues carrying this label. */
+  issueCount: number
+  /** Most recent time this label was attached to an Issue, if ever. */
+  lastAppliedAt: string | null
+  createdAt: string
 }
 
 export interface CreateLabelInput {
   name: string
   color?: string
+  description?: string | null
+  parentId?: string | null
 }
 
 export interface UpdateLabelInput {
   name?: string
   color?: string
+  description?: string | null
+  parentId?: string | null
 }
 
 /** Default swatch for registry rows auto-created from free-form names. */
@@ -513,9 +568,15 @@ export interface WorkspaceStore {
   hasIssues(projectId: string): Promise<boolean>
   createStatus(
     projectId: string,
-    input: { name: string; category: StatusCategory; color?: string }
+    input: {
+      name: string
+      category: StatusCategory
+      color?: string
+      description?: string | null
+      isDefault?: boolean
+    }
   ): Promise<Status>
-  /** Statuses in Kanban order (ascending position). */
+  /** Statuses in Kanban order (ascending position), with issue counts. */
   listStatuses(projectId: string): Promise<Status[]>
   getStatus(statusId: string): Promise<Status | null>
   updateStatus(
@@ -525,6 +586,8 @@ export interface WorkspaceStore {
       category?: StatusCategory
       color?: string
       position?: number
+      description?: string | null
+      isDefault?: boolean
     }
   ): Promise<Status>
   deleteStatus(statusId: string): Promise<void>
@@ -693,6 +756,8 @@ export function createMemoryWorkspaceStore(
   /** T5 registry rows by id; issue links by issue id. */
   const labels = new Map<string, Label>()
   const issueLinks = new Map<string, Set<string>>()
+  /** Per-issue label attach timestamps (Settings "Last applied"). */
+  const issueLabelTimes = new Map<string, Map<string, string>>()
   /** Collaboration core rows. */
   const comments = new Map<string, Comment>()
   const activityEvents = new Map<string, ActivityEvent>()
@@ -723,21 +788,88 @@ export function createMemoryWorkspaceStore(
         workspaceId,
         name,
         color: DEFAULT_LABEL_COLOR,
+        description: null,
+        parentId: null,
+        issueCount: 0,
+        lastAppliedAt: null,
+        createdAt: new Date().toISOString(),
       }
       labels.set(row.id, row)
       return row
     })
   }
 
+  /**
+   * Resolve an optional group parent: same workspace, one level only, and
+   * never the label itself. Returns null for an explicit top-level label.
+   */
+  function resolveLabelParent(
+    workspaceId: string,
+    selfId: string | null,
+    parentId: string | null | undefined
+  ): string | null | undefined {
+    if (parentId === undefined) return undefined
+    if (parentId === null) return null
+    const parent = labels.get(parentId)
+    if (!parent || parent.workspaceId !== workspaceId) {
+      throw invalid("Label group not found")
+    }
+    if (selfId !== null && parent.id === selfId) {
+      throw invalid("A label cannot be its own group")
+    }
+    if (parent.parentId) {
+      throw invalid("Label groups cannot nest more than one level")
+    }
+    if (selfId !== null) {
+      const hasChildren = [...labels.values()].some(
+        (l) => l.parentId === selfId
+      )
+      if (hasChildren) {
+        throw invalid("A label with children cannot become a child")
+      }
+    }
+    return parent.id
+  }
+
   function relinkIssue(issueId: string, rows: Label[]): string[] {
+    const previous = issueLabelTimes.get(issueId) ?? new Map<string, string>()
+    const appliedAt = new Map<string, string>()
+    const now = new Date().toISOString()
+    for (const row of rows) {
+      appliedAt.set(row.id, previous.get(row.id) ?? now)
+    }
     issueLinks.set(issueId, new Set(rows.map((row) => row.id)))
+    issueLabelTimes.set(issueId, appliedAt)
     return rows.map((row) => row.name)
+  }
+
+  /** Attach live Issue counts and the most recent apply time to a Label row. */
+  function withLabelStats(label: Label): Label {
+    let issueCount = 0
+    let lastAppliedAt: string | null = null
+    for (const [issueId, ids] of issueLinks) {
+      if (!ids.has(label.id)) continue
+      issueCount += 1
+      const applied = issueLabelTimes.get(issueId)?.get(label.id)
+      if (applied && (!lastAppliedAt || applied > lastAppliedAt)) {
+        lastAppliedAt = applied
+      }
+    }
+    return { ...label, issueCount, lastAppliedAt }
   }
 
   function childCount(issueId: string): number {
     let count = 0
     for (const issue of issues.values()) {
       if (issue.parentId === issueId) count += 1
+    }
+    return count
+  }
+
+  function statusIssueCount(statusId: string): number {
+    let count = issueRefs.filter((r) => r.statusId === statusId).length
+    for (const issue of issues.values()) {
+      if (issue.statusId === statusId) count += 1
     }
     return count
   }
@@ -1066,6 +1198,9 @@ export function createMemoryWorkspaceStore(
           category: entry.category,
           color: entry.color,
           position,
+          description: entry.description,
+          isDefault: entry.name === "Todo",
+          issueCount: 0,
         })
       }
       const statusIdByName = new Map(
@@ -1183,6 +1318,18 @@ export function createMemoryWorkspaceStore(
         category: input.category,
         color: input.color ?? defaultStatusColorForName(input.name),
         position,
+        description: input.description?.trim() || null,
+        isDefault: input.isDefault === true,
+        issueCount: 0,
+      }
+      const currentDefault = [...statuses.values()].find(
+        (s) => s.projectId === projectId && s.isDefault
+      )
+      if (!currentDefault) status.isDefault = true
+      if (status.isDefault) {
+        for (const other of statuses.values()) {
+          if (other.projectId === projectId) other.isDefault = false
+        }
       }
       statuses.set(status.id, status)
       return { ...status }
@@ -1192,12 +1339,14 @@ export function createMemoryWorkspaceStore(
       return [...statuses.values()]
         .filter((s) => s.projectId === projectId)
         .sort((a, b) => a.position - b.position)
-        .map((s) => ({ ...s }))
+        .map((s) => ({ ...s, issueCount: statusIssueCount(s.id) }))
     },
 
     async getStatus(statusId) {
       const status = statuses.get(statusId)
-      return status ? { ...status } : null
+      return status
+        ? { ...status, issueCount: statusIssueCount(statusId) }
+        : null
     },
 
     async updateStatus(statusId, input) {
@@ -1227,6 +1376,17 @@ export function createMemoryWorkspaceStore(
           throw invalid("Invalid status color")
         status.color = input.color
       }
+      if (input.description !== undefined) {
+        status.description = input.description?.trim() || null
+      }
+      if (input.isDefault === true) {
+        for (const other of statuses.values()) {
+          if (other.projectId === status.projectId) other.isDefault = false
+        }
+        status.isDefault = true
+      } else if (input.isDefault === false) {
+        status.isDefault = false
+      }
       if (input.position !== undefined) {
         const ordered = [...statuses.values()]
           .filter((s) => s.projectId === status.projectId)
@@ -1238,7 +1398,7 @@ export function createMemoryWorkspaceStore(
           s.position = index
         })
       }
-      return { ...status }
+      return { ...status, issueCount: statusIssueCount(statusId) }
     },
 
     async deleteStatus(statusId) {
@@ -1252,12 +1412,15 @@ export function createMemoryWorkspaceStore(
         throw locked("Cannot delete a status that holds issues")
       }
       statuses.delete(statusId)
-      ;[...statuses.values()]
+      const remaining = [...statuses.values()]
         .filter((s) => s.projectId === status.projectId)
         .sort((a, b) => a.position - b.position)
-        .forEach((s, index) => {
-          s.position = index
-        })
+      remaining.forEach((s, index) => {
+        s.position = index
+      })
+      if (status.isDefault && remaining.length > 0) {
+        remaining[0].isDefault = true
+      }
     },
 
     async createIssue(
@@ -1496,21 +1659,27 @@ export function createMemoryWorkspaceStore(
         ;(error as { code?: string }).code = "conflict"
         throw error
       }
+      const parentId = resolveLabelParent(workspaceId, null, input.parentId)
       const label: Label = {
         id: crypto.randomUUID(),
         workspaceId,
         name,
         color,
+        description: input.description?.trim() || null,
+        parentId: parentId ?? null,
+        issueCount: 0,
+        lastAppliedAt: null,
+        createdAt: new Date().toISOString(),
       }
       labels.set(label.id, label)
-      return { ...label }
+      return withLabelStats(label)
     },
 
     async listLabels(workspaceId) {
       return [...labels.values()]
         .filter((l) => l.workspaceId === workspaceId)
         .sort((a, b) => a.name.localeCompare(b.name))
-        .map((l) => ({ ...l }))
+        .map(withLabelStats)
     },
 
     async updateLabel(labelId, input) {
@@ -1543,6 +1712,17 @@ export function createMemoryWorkspaceStore(
           throw invalid("Invalid label color")
         label.color = input.color
       }
+      if (input.description !== undefined) {
+        label.description = input.description?.trim() || null
+      }
+      if (input.parentId !== undefined) {
+        const parentId = resolveLabelParent(
+          label.workspaceId,
+          label.id,
+          input.parentId
+        )
+        label.parentId = parentId ?? null
+      }
       if (oldName !== undefined && oldName !== label.name) {
         // Rename propagation: linked issues keep the T3 text[] names in sync.
         for (const [issueId, ids] of issueLinks) {
@@ -1555,7 +1735,7 @@ export function createMemoryWorkspaceStore(
           }
         }
       }
-      return { ...label }
+      return withLabelStats(label)
     },
 
     async deleteLabel(labelId) {
@@ -1567,13 +1747,21 @@ export function createMemoryWorkspaceStore(
       }
       const name = label.name
       labels.delete(labelId)
+      // Promote children to top level instead of cascading the parent.
+      for (const child of labels.values()) {
+        if (child.parentId === labelId) child.parentId = null
+      }
       // Scrub the T3 text[] names on linked issues so filters stay correct.
       for (const [issueId, ids] of issueLinks) {
         if (!ids.delete(labelId)) continue
+        issueLabelTimes.get(issueId)?.delete(labelId)
         const stored = issues.get(issueId)
         if (stored) stored.labels = stored.labels.filter((n) => n !== name)
         if (ids.size === 0) issueLinks.delete(issueId)
       }
+      issueLabelTimes.forEach((times, issueId) => {
+        if (times.size === 0) issueLabelTimes.delete(issueId)
+      })
     },
 
     async listSubtasks(parentId) {
@@ -1593,6 +1781,7 @@ export function createMemoryWorkspaceStore(
       }
       issues.delete(stored.id)
       issueLinks.delete(stored.id)
+      issueLabelTimes.delete(stored.id)
       // Collaboration rows cascade with the issue, matching the Drizzle FKs.
       for (const [id, comment] of comments) {
         if (comment.issueId === stored.id) comments.delete(id)
@@ -1980,4 +2169,3 @@ export function createMemoryWorkspaceStore(
     },
   }
 }
-

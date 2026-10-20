@@ -56,6 +56,7 @@ export function IssueDetail({
   subtaskConflicts,
   onSubtaskKeepEditing,
   onSubtaskLoadLatest,
+  onCreateLabel,
 }: {
   issue: Issue
   statuses: Status[]
@@ -82,6 +83,8 @@ export function IssueDetail({
   subtaskConflicts?: Record<string, Issue>
   onSubtaskKeepEditing?: (subtaskId: string) => void
   onSubtaskLoadLatest?: (subtaskId: string) => void
+  /** Create a workspace label from the issue label picker. */
+  onCreateLabel?: (name: string) => Promise<Label>
 }) {
   const [modalSubtaskId, setModalSubtaskId] = useState<string | null>(null)
   const [creatingSubtask, setCreatingSubtask] = useState(false)
@@ -341,6 +344,7 @@ export function IssueDetail({
                     statuses={statuses}
                     members={members}
                     labels={labels}
+                    onCreateLabel={onCreateLabel}
                     onCreated={async (input) => {
                       const created = await onCreateSubtask(issue, {
                         ...input,
@@ -368,6 +372,7 @@ export function IssueDetail({
             canEdit={canEdit}
             onStatusChange={onStatusChange}
             onUpdate={onUpdate}
+            onCreateLabel={onCreateLabel}
           />
           <div className="mt-3 border-t pt-3">
             <ExternalLinkSection
@@ -398,6 +403,7 @@ export function IssueDetail({
             statuses={statuses}
             members={members}
             labels={labels}
+            onCreateLabel={onCreateLabel}
             subtasks={[]}
             canEdit={canEdit}
             canAdmin={canAdmin}
@@ -452,6 +458,7 @@ export function IssueCreateDetail({
   compact = false,
   onBack,
   onCreated,
+  onCreateLabel,
 }: {
   projectId: string
   statuses: Status[]
@@ -463,8 +470,14 @@ export function IssueCreateDetail({
   compact?: boolean
   onBack: () => void
   onCreated: (input: CreateIssueInput) => Promise<Issue>
+  /** Create a workspace label from the draft's label picker. */
+  onCreateLabel?: (name: string) => Promise<Label>
 }) {
-  const defaultStatusId = initialStatusId ?? statuses[0]?.id ?? ""
+  const defaultStatusId =
+    initialStatusId ??
+    statuses.find((status) => status.isDefault)?.id ??
+    statuses[0]?.id ??
+    ""
   const [title, setTitle] = useState("")
   const [committed, setCommitted] = useState(false)
   const [titleHint, setTitleHint] = useState(false)
@@ -620,6 +633,7 @@ export function IssueCreateDetail({
             members={members}
             labels={labels}
             canEdit={canEdit}
+            onCreateLabel={onCreateLabel}
             onStatusChange={(_issue, nextStatusId) => setStatusId(nextStatusId)}
             onUpdate={(_issue, input) => {
               if (input.priority !== undefined) setPriority(input.priority)

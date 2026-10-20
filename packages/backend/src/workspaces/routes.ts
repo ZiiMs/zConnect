@@ -61,17 +61,25 @@ const grantViewerBody = z.object({ userId: z.string().trim().min(1) })
 /** T5 workspace-shared Label registry: names unique per workspace. */
 const labelColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/)
 
+/** Optional row copy for the Labels settings table. */
+const labelDescriptionSchema = z.string().trim().max(500).nullable()
+
 const createLabelBody = z.object({
   name: z.string().trim().min(1).max(64),
   color: labelColorSchema.optional(),
+  description: labelDescriptionSchema.optional(),
+  /** Group parent; null/omitted means a top-level label. */
+  parentId: z.string().trim().min(1).nullable().optional(),
 })
 
 const updateLabelBody = z
   .object({
     name: z.string().trim().min(1).max(64).optional(),
     color: labelColorSchema.optional(),
+    description: labelDescriptionSchema.optional(),
+    parentId: z.string().trim().min(1).nullable().optional(),
   })
-  .refine((body) => body.name !== undefined || body.color !== undefined, {
+  .refine((body) => Object.values(body).some((v) => v !== undefined), {
     message: "Nothing to update",
   })
 
@@ -81,6 +89,8 @@ const createStatusBody = z.object({
   name: z.string().trim().min(1),
   category: z.enum(STATUS_CATEGORIES),
   color: statusColorSchema.optional(),
+  description: z.string().trim().max(500).nullable().optional(),
+  isDefault: z.boolean().optional(),
 })
 
 const updateStatusBody = z
@@ -89,15 +99,12 @@ const updateStatusBody = z
     category: z.enum(STATUS_CATEGORIES).optional(),
     color: statusColorSchema.optional(),
     position: z.number().int().min(0).optional(),
+    description: z.string().trim().max(500).nullable().optional(),
+    isDefault: z.boolean().optional(),
   })
-  .refine(
-    (body) =>
-      body.name !== undefined ||
-      body.category !== undefined ||
-      body.color !== undefined ||
-      body.position !== undefined,
-    { message: "Nothing to update" }
-  )
+  .refine((body) => Object.values(body).some((v) => v !== undefined), {
+    message: "Nothing to update",
+  })
 
 const createIssueBody = z.object({
   title: z.string().trim().min(1),
@@ -221,10 +228,7 @@ export function createWorkspacesApp({
   })
 
   app.route("/", createInvitesApp({ store, getSession, mailer, frontendUrl }))
-  app.route(
-    "/",
-    createCommentsApp({ store, getSession, mailer, frontendUrl })
-  )
+  app.route("/", createCommentsApp({ store, getSession, mailer, frontendUrl }))
   app.route(
     "/",
     createNotificationsApp({ store, getSession, mailer, frontendUrl })

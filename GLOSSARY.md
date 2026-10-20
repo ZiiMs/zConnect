@@ -29,11 +29,11 @@ An issue reference to a GitHub PR, branch, or commit, created manually or auto-c
 _Avoid_: Integration, Sync
 
 **Status**:
-A named step in a project's workflow (e.g. In Review), ordered for Kanban display, with a display color.
+A named step in a project's workflow (e.g. In Review), ordered for Kanban display, with a display color, optional description, and an issue count. Exactly one status per project is the Default new issues start in.
 _Avoid_: State, Column
 
 **Status Category**:
-The fixed bucket a status rolls up to: Backlog, Unstarted, In Progress, Completed, Canceled, or Duplicate. Completed, Canceled, and Duplicate are terminal: they count as done everywhere (grouping, progress, guardrails).
+The fixed bucket a status rolls up to: Backlog, Unstarted, In Progress, Completed, Canceled, or Duplicate. Completed, Canceled, and Duplicate are terminal: they count as done everywhere (grouping, progress, guardrails). Workflow settings groups statuses under these headings.
 _Avoid_: Group, Phase
 
 **Project Key**:
@@ -41,8 +41,12 @@ A short uppercase prefix (e.g. WEB) used to form human issue identifiers like WE
 _Avoid_: Prefix, Code
 
 **Label**:
-A free-form tag for grouping and filtering issues.
+A workspace-shared tag for grouping and filtering issues, with a color, optional description, issue count, and last-applied time. Labels are created from Settings or inline from an issue's label picker.
 _Avoid_: Tag
+
+**Label Group**:
+A top-level label whose children are labels nested one level beneath it. Grouping is presentation and filtering, not a separate entity; deleting the group promotes its children to top level.
+_Avoid_: Label Category, Parent Label
 
 **Priority**:
 Urgency of an issue: Urgent, High, Medium, Low, or None.

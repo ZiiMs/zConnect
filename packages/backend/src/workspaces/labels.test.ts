@@ -222,6 +222,137 @@ describe("workspace label registry", () => {
     expect(crossWorkspace.status).toBe(404)
   })
 
+  test("labels support one-level groups, descriptions, counts, and last applied", async () => {
+    const parent = (await (
+      await createLabel(workspaceId, member.id, {
+        name: "Area",
+        description: "The part of the product this touches.",
+      })
+    ).json()) as { id: string }
+    const child = (await (
+      await createLabel(workspaceId, member.id, {
+        name: "Frontend",
+        description: "Browser-facing work.",
+        parentId: parent.id,
+      })
+    ).json()) as {
+      id: string
+      parentId: string | null
+      description: string | null
+      issueCount: number
+      lastAppliedAt: string | null
+      createdAt: string
+    }
+    expect(child).toMatchObject({
+      parentId: parent.id,
+      description: "Browser-facing work.",
+      issueCount: 0,
+      lastAppliedAt: null,
+    })
+    expect(child.createdAt).toBeString()
+
+    const statuses = (await (
+      await app.request(`/api/projects/${projectId}/statuses`, {
+        headers: auth(member.id),
+      })
+    ).json()) as { id: string; name: string }[]
+    const todo = statuses.find((status) => status.name === "Todo")
+    if (!todo) throw new Error("seeded Todo status missing")
+
+    const issue = await app.request(`/api/projects/${projectId}/issues`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...auth(member.id) },
+      body: JSON.stringify({
+        title: "Build the label table",
+        statusId: todo.id,
+        labels: ["Frontend"],
+      }),
+    })
+    expect(issue.status).toBe(201)
+
+    const labels = (await (
+      await listLabels(workspaceId, member.id)
+    ).json()) as {
+      name: string
+      parentId: string | null
+      issueCount: number
+      lastAppliedAt: string | null
+    }[]
+    expect(labels.find((label) => label.name === "Frontend")).toMatchObject({
+      parentId: parent.id,
+      issueCount: 1,
+    })
+    expect(
+      labels.find((label) => label.name === "Frontend")?.lastAppliedAt
+    ).toBeString()
+    expect(labels.find((label) => label.name === "Area")).toMatchObject({
+      parentId: null,
+      issueCount: 0,
+      lastAppliedAt: null,
+    })
+  })
+
+  test("label groups cannot nest or point at themselves", async () => {
+    const area = (await (
+      await createLabel(workspaceId, member.id, { name: "Area" })
+    ).json()) as { id: string }
+    const child = (await (
+      await createLabel(workspaceId, member.id, {
+        name: "Frontend",
+        parentId: area.id,
+      })
+    ).json()) as { id: string }
+
+    const nested = await createLabel(workspaceId, member.id, {
+      name: "Buttons",
+      parentId: child.id,
+    })
+    expect(nested.status).toBe(400)
+
+    const self = await app.request(
+      `/api/workspaces/${workspaceId}/labels/${area.id}`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json", ...auth(member.id) },
+        body: JSON.stringify({ parentId: area.id }),
+      }
+    )
+    expect(self.status).toBe(400)
+
+    const parentWithChildren = await app.request(
+      `/api/workspaces/${workspaceId}/labels/${area.id}`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json", ...auth(member.id) },
+        body: JSON.stringify({ parentId: child.id }),
+      }
+    )
+    expect(parentWithChildren.status).toBe(400)
+  })
+
+  test("deleting a group promotes its children to top level", async () => {
+    const area = (await (
+      await createLabel(workspaceId, member.id, { name: "Area" })
+    ).json()) as { id: string }
+    const child = (await (
+      await createLabel(workspaceId, member.id, {
+        name: "Frontend",
+        parentId: area.id,
+      })
+    ).json()) as { id: string }
+
+    const deleted = await app.request(
+      `/api/workspaces/${workspaceId}/labels/${area.id}`,
+      { method: "DELETE", headers: auth(member.id) }
+    )
+    expect(deleted.status).toBe(204)
+
+    const labels = (await (
+      await listLabels(workspaceId, member.id)
+    ).json()) as { id: string; parentId: string | null }[]
+    expect(labels.find((label) => label.id === child.id)?.parentId).toBeNull()
+  })
+
   test("label DELETE removes it from the registry", async () => {
     const created = (await (
       await createLabel(workspaceId, member.id, { name: "bug" })

@@ -40,6 +40,7 @@ export function SubtaskComposer({
   labels = [],
   onCreated,
   onCancel,
+  onCreateLabel,
 }: {
   parent: Issue
   statuses: Status[]
@@ -47,8 +48,11 @@ export function SubtaskComposer({
   labels?: Label[]
   onCreated: (input: CreateIssueInput) => Promise<unknown>
   onCancel: () => void
+  /** Create a workspace label from the picker. */
+  onCreateLabel?: (name: string) => Promise<Label>
 }) {
-  const defaultStatusId = statuses[0]?.id ?? ""
+  const defaultStatusId =
+    statuses.find((status) => status.isDefault)?.id ?? statuses[0]?.id ?? ""
   const [title, setTitle] = useState("")
   const [titleHint, setTitleHint] = useState(false)
   const [body, setBody] = useState("")
@@ -292,6 +296,7 @@ export function SubtaskComposer({
                 labels={labels}
                 selected={labelNames}
                 onChange={setLabelNames}
+                onCreateLabel={onCreateLabel}
               />
               <button
                 type="button"

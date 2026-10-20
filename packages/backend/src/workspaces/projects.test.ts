@@ -259,6 +259,84 @@ describe("project seeding waterfall", () => {
     )
   })
 
+  test("seeded statuses carry descriptions, counts, and one default", async () => {
+    const project = await createProject()
+    expect(project.status).toBe(201)
+    const { id } = (await project.json()) as { id: string }
+    const statuses = (await listStatuses(id)) as unknown as {
+      name: string
+      description: string | null
+      isDefault: boolean
+      issueCount: number
+    }[]
+
+    expect(statuses.filter((s) => s.isDefault).map((s) => s.name)).toEqual([
+      "Todo",
+    ])
+    expect(statuses.every((s) => typeof s.description === "string")).toBe(true)
+    expect(
+      statuses.reduce((total, status) => total + status.issueCount, 0)
+    ).toBe(6)
+  })
+
+  test("creating a default status moves the Default badge", async () => {
+    const project = await createProject()
+    expect(project.status).toBe(201)
+    const { id } = (await project.json()) as { id: string }
+    const res = await app.request(`/api/projects/${id}/statuses`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...auth(owner.id) },
+      body: JSON.stringify({
+        name: "Triage",
+        category: "Unstarted",
+        description: "Needs a first look.",
+        isDefault: true,
+      }),
+    })
+    expect(res.status).toBe(201)
+    const statuses = (await listStatuses(id)) as unknown as {
+      name: string
+      description: string | null
+      isDefault: boolean
+      issueCount: number
+    }[]
+    expect(statuses.filter((s) => s.isDefault).map((s) => s.name)).toEqual([
+      "Triage",
+    ])
+    expect(statuses.find((s) => s.name === "Triage")).toMatchObject({
+      description: "Needs a first look.",
+      issueCount: 0,
+    })
+  })
+
+  test("deleting the default status promotes the next one", async () => {
+    const project = await createProject()
+    expect(project.status).toBe(201)
+    const { id } = (await project.json()) as { id: string }
+    const created = await app.request(`/api/projects/${id}/statuses`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...auth(owner.id) },
+      body: JSON.stringify({
+        name: "Triage",
+        category: "Unstarted",
+        isDefault: true,
+      }),
+    })
+    const triage = (await created.json()) as { id: string }
+    const deleted = await app.request(
+      `/api/projects/${id}/statuses/${triage.id}`,
+      { method: "DELETE", headers: auth(owner.id) }
+    )
+    expect(deleted.status).toBe(204)
+    const statuses = (await listStatuses(id)) as unknown as {
+      name: string
+      isDefault: boolean
+    }[]
+    expect(statuses.filter((s) => s.isDefault).map((s) => s.name)).toEqual([
+      "Backlog",
+    ])
+  })
+
   test("POST project seeds the six tutorial issues verbatim", async () => {
     const project = await createProject()
     const { id } = (await project.json()) as { id: string }

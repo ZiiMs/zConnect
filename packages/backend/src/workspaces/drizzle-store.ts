@@ -189,16 +189,64 @@ async function ensureLabelRow(
   }
 }
 
+/**
+ * Resolve an optional group parent: same workspace, one level only, and
+ * never the label itself.
+ */
+async function resolveLabelParentRow(
+  db: Db,
+  workspaceId: string,
+  selfId: string | null,
+  parentId: string | null | undefined
+): Promise<string | null | undefined> {
+  if (parentId === undefined) return undefined
+  if (parentId === null) return null
+  const rows = await db.select().from(label).where(eq(label.id, parentId))
+  const parent = rows[0]
+  if (!parent || parent.workspaceId !== workspaceId) {
+    throw invalid("Label group not found")
+  }
+  if (selfId !== null && parent.id === selfId) {
+    throw invalid("A label cannot be its own group")
+  }
+  if (parent.parentId) {
+    throw invalid("Label groups cannot nest more than one level")
+  }
+  if (selfId !== null) {
+    const children = await db
+      .select({ id: label.id })
+      .from(label)
+      .where(eq(label.parentId, selfId))
+    if (children.length > 0) {
+      throw invalid("A label with children cannot become a child")
+    }
+  }
+  return parent.id
+}
+
 async function relinkIssue(
   db: Db,
   issueId: string,
   labelIds: string[]
 ): Promise<void> {
+  const existing = await db
+    .select()
+    .from(issueLabel)
+    .where(eq(issueLabel.issueId, issueId))
+  const previous = new Map(
+    existing.map((link) => [link.labelId, link.appliedAt] as const)
+  )
   await db.delete(issueLabel).where(eq(issueLabel.issueId, issueId))
   if (labelIds.length > 0) {
-    await db
-      .insert(issueLabel)
-      .values(labelIds.map((labelId) => ({ issueId, labelId })))
+    const now = new Date()
+    await db.insert(issueLabel).values(
+      labelIds.map((labelId) => ({
+        issueId,
+        labelId,
+        // Unchanged links keep their original application time.
+        appliedAt: previous.get(labelId) ?? now,
+      }))
+    )
   }
 }
 
@@ -499,6 +547,8 @@ export function createDrizzleWorkspaceStore(
                 category: entry.category,
                 color: entry.color,
                 position,
+                description: entry.description,
+                isDefault: entry.name === "Todo",
               }))
             )
             .returning()
@@ -637,10 +687,26 @@ export function createDrizzleWorkspaceStore(
       const position = existing.length
       const color = input.color ?? defaultStatusColorForName(input.name)
       if (!isValidStatusColor(color)) throw invalid("Invalid status color")
+      const isDefault =
+        input.isDefault === true || existing.every((s) => !s.isDefault)
       try {
+        if (isDefault) {
+          await db
+            .update(status)
+            .set({ isDefault: false })
+            .where(eq(status.projectId, projectId))
+        }
         const [row] = await db
           .insert(status)
-          .values({ ...input, color, projectId, position })
+          .values({
+            projectId,
+            name: input.name,
+            category: input.category,
+            color,
+            position,
+            description: input.description?.trim() || null,
+            isDefault,
+          })
           .returning()
         return toStatus(row)
       } catch {
@@ -655,14 +721,20 @@ export function createDrizzleWorkspaceStore(
         .from(status)
         .where(eq(status.projectId, projectId))
         .orderBy(asc(status.position))
-      return rows.map(toStatus)
+      const counts = await statusIssueCounts(db, projectId)
+      return rows.map((row) => ({
+        ...toStatus(row),
+        issueCount: counts.get(row.id) ?? 0,
+      }))
     },
 
     async getStatus(statusId) {
       const db = resolveDb()
       const rows = await db.select().from(status).where(eq(status.id, statusId))
       const row = rows[0]
-      return row ? toStatus(row) : null
+      if (!row) return null
+      const counts = await statusIssueCounts(db, row.projectId)
+      return { ...toStatus(row), issueCount: counts.get(row.id) ?? 0 }
     },
 
     async updateStatus(statusId, input) {
@@ -673,12 +745,20 @@ export function createDrizzleWorkspaceStore(
       if (
         input.name !== undefined ||
         input.category !== undefined ||
-        input.color !== undefined
+        input.color !== undefined ||
+        input.description !== undefined ||
+        input.isDefault !== undefined
       ) {
         if (input.color !== undefined && !isValidStatusColor(input.color)) {
           throw invalid("Invalid status color")
         }
         try {
+          if (input.isDefault === true) {
+            await db
+              .update(status)
+              .set({ isDefault: false })
+              .where(eq(status.projectId, row.projectId))
+          }
           await db
             .update(status)
             .set({
@@ -687,6 +767,12 @@ export function createDrizzleWorkspaceStore(
                 ? { category: input.category }
                 : {}),
               ...(input.color !== undefined ? { color: input.color } : {}),
+              ...(input.description !== undefined
+                ? { description: input.description?.trim() || null }
+                : {}),
+              ...(input.isDefault !== undefined
+                ? { isDefault: input.isDefault }
+                : {}),
             })
             .where(eq(status.id, statusId))
         } catch {
@@ -731,6 +817,12 @@ export function createDrizzleWorkspaceStore(
           .update(status)
           .set({ position: index })
           .where(eq(status.id, item.id))
+      }
+      if (row.isDefault && remaining.length > 0) {
+        await db
+          .update(status)
+          .set({ isDefault: true })
+          .where(eq(status.id, remaining[0].id))
       }
     },
 
@@ -1100,10 +1192,22 @@ export function createDrizzleWorkspaceStore(
       if (!name) throw invalid("Invalid label name")
       const color = input.color ?? DEFAULT_LABEL_COLOR
       if (!isValidLabelColor(color)) throw invalid("Invalid label color")
+      const parentId = await resolveLabelParentRow(
+        db,
+        workspaceId,
+        null,
+        input.parentId
+      )
       try {
         const [row] = await db
           .insert(label)
-          .values({ workspaceId, name, color })
+          .values({
+            workspaceId,
+            name,
+            color,
+            description: input.description?.trim() || null,
+            parentId: parentId ?? null,
+          })
           .returning()
         return toLabel(row)
       } catch {
@@ -1118,7 +1222,23 @@ export function createDrizzleWorkspaceStore(
         .from(label)
         .where(eq(label.workspaceId, workspaceId))
         .orderBy(asc(label.name))
-      return rows.map(toLabel)
+      const links = await db
+        .select({
+          labelId: issueLabel.labelId,
+          appliedAt: issueLabel.appliedAt,
+        })
+        .from(issueLabel)
+        .innerJoin(label, eq(label.id, issueLabel.labelId))
+        .where(eq(label.workspaceId, workspaceId))
+      const stats = labelStatsByLabel(links)
+      return rows.map((row) => {
+        const found = stats.get(row.id)
+        return {
+          ...toLabel(row),
+          issueCount: found?.issueCount ?? 0,
+          lastAppliedAt: found?.lastAppliedAt ?? null,
+        }
+      })
     },
 
     async updateLabel(
@@ -1129,7 +1249,12 @@ export function createDrizzleWorkspaceStore(
       const rows = await db.select().from(label).where(eq(label.id, labelId))
       const row = rows[0]
       if (!row) throw notFound("Label not found")
-      const patch: { name?: string; color?: string } = {}
+      const patch: {
+        name?: string
+        color?: string
+        description?: string | null
+        parentId?: string | null
+      } = {}
       if (input.name !== undefined) {
         const name = input.name.trim()
         if (!name) throw invalid("Invalid label name")
@@ -1141,7 +1266,34 @@ export function createDrizzleWorkspaceStore(
         }
         patch.color = input.color
       }
-      if (Object.keys(patch).length === 0) return toLabel(row)
+      if (input.description !== undefined) {
+        patch.description = input.description?.trim() || null
+      }
+      if (input.parentId !== undefined) {
+        const parentId = await resolveLabelParentRow(
+          db,
+          row.workspaceId,
+          labelId,
+          input.parentId
+        )
+        if ((parentId ?? null) !== row.parentId)
+          patch.parentId = parentId ?? null
+      }
+      if (Object.keys(patch).length === 0) {
+        const linkRows = await db
+          .select({
+            labelId: issueLabel.labelId,
+            appliedAt: issueLabel.appliedAt,
+          })
+          .from(issueLabel)
+          .where(eq(issueLabel.labelId, labelId))
+        const stats = labelStatsByLabel(linkRows).get(labelId)
+        return {
+          ...toLabel(row),
+          issueCount: stats?.issueCount ?? 0,
+          lastAppliedAt: stats?.lastAppliedAt ?? null,
+        }
+      }
       const nextName = patch.name
       const siblings = await db
         .select()
@@ -1185,7 +1337,19 @@ export function createDrizzleWorkspaceStore(
               .where(eq(issue.id, link.issueId))
           }
         }
-        return toLabel(updated)
+        const linkRows = await db
+          .select({
+            labelId: issueLabel.labelId,
+            appliedAt: issueLabel.appliedAt,
+          })
+          .from(issueLabel)
+          .where(eq(issueLabel.labelId, labelId))
+        const stats = labelStatsByLabel(linkRows).get(labelId)
+        return {
+          ...toLabel(updated),
+          issueCount: stats?.issueCount ?? 0,
+          lastAppliedAt: stats?.lastAppliedAt ?? null,
+        }
       } catch (error) {
         if (
           typeof error === "object" &&
@@ -1223,6 +1387,7 @@ export function createDrizzleWorkspaceStore(
           .where(eq(issue.id, link.issueId))
       }
       await db.delete(issueLabel).where(eq(issueLabel.labelId, labelId))
+      // The self FK is ON DELETE SET NULL, so child labels become top-level.
       await db.delete(label).where(eq(label.id, labelId))
     },
 
@@ -1826,6 +1991,9 @@ function toStatus(row: typeof status.$inferSelect): Status {
     category: row.category as StatusCategory,
     color: row.color ?? DEFAULT_LABEL_COLOR,
     position: row.position,
+    description: row.description ?? null,
+    isDefault: row.isDefault,
+    issueCount: 0,
   }
 }
 
@@ -1835,7 +2003,50 @@ function toLabel(row: typeof label.$inferSelect): Label {
     workspaceId: row.workspaceId,
     name: row.name,
     color: row.color ?? DEFAULT_LABEL_COLOR,
+    description: row.description ?? null,
+    parentId: row.parentId ?? null,
+    issueCount: 0,
+    lastAppliedAt: null,
+    createdAt: row.createdAt.toISOString(),
   }
+}
+
+/** One pass over a project's issues yields every status count. */
+async function statusIssueCounts(
+  db: Db,
+  projectId: string
+): Promise<Map<string, number>> {
+  const rows = await db
+    .select({ statusId: issue.statusId })
+    .from(issue)
+    .where(eq(issue.projectId, projectId))
+  const counts = new Map<string, number>()
+  for (const row of rows) {
+    counts.set(row.statusId, (counts.get(row.statusId) ?? 0) + 1)
+  }
+  return counts
+}
+
+type LabelStats = { issueCount: number; lastAppliedAt: string | null }
+
+/** Aggregate Issue counts and last-apply times for a workspace's labels. */
+function labelStatsByLabel(
+  links: { labelId: string; appliedAt: Date }[]
+): Map<string, LabelStats> {
+  const stats = new Map<string, LabelStats>()
+  for (const link of links) {
+    const current = stats.get(link.labelId) ?? {
+      issueCount: 0,
+      lastAppliedAt: null,
+    }
+    current.issueCount += 1
+    const applied = link.appliedAt.toISOString()
+    if (!current.lastAppliedAt || applied > current.lastAppliedAt) {
+      current.lastAppliedAt = applied
+    }
+    stats.set(link.labelId, current)
+  }
+  return stats
 }
 
 function toIssue(row: typeof issue.$inferSelect): Issue {

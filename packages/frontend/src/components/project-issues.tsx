@@ -636,6 +636,20 @@ export function ProjectIssues({
     return created
   }
 
+  /**
+   * Create a label from the issue picker. The picker selects the returned
+   * name immediately; the registry update keeps color swatches in sync.
+   */
+  async function handleCreateLabel(name: string): Promise<Label> {
+    const created = await api.createLabel(project.workspaceId, { name })
+    setLabels((current) =>
+      current.some((label) => label.id === created.id)
+        ? current
+        : [...current, created]
+    )
+    return created
+  }
+
   const selectedIssue =
     issues.find((item) => item.id === selectedId) ??
     (extraIssue && extraIssue.id === selectedId ? extraIssue : null) ??
@@ -903,6 +917,7 @@ export function ProjectIssues({
           initialStatusId={creating?.statusId ?? undefined}
           canEdit={canWrite}
           onBack={() => setCreating(null)}
+          onCreateLabel={handleCreateLabel}
           onCreated={async (input) => {
             const created = await handleCreate(input)
             setCreating(null)
@@ -935,6 +950,7 @@ export function ProjectIssues({
           onUpdate={(issue, input) => {
             runUpdate(issue, input)
           }}
+          onCreateLabel={handleCreateLabel}
           onArchivedChanged={handleArchivedChanged}
           onDeleted={(deleted) => {
             handleDeleted(deleted)
