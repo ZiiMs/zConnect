@@ -6,6 +6,7 @@ import { redis } from "./redis.js"
 export const QUEUES = {
   default: "default",
   githubWebhook: GITHUB_WEBHOOK_JOB,
+  githubSync: "github-sync",
   digest: "notification-digest",
 } as const
 
@@ -21,10 +22,20 @@ export const queues = {
     },
   }),
   [QUEUES.digest]: new Queue(QUEUES.digest, { connection: redis }),
+  [QUEUES.githubSync]: new Queue(QUEUES.githubSync, {
+    connection: redis,
+    defaultJobOptions: {
+      attempts: 3,
+      backoff: { type: "exponential", delay: 5000 },
+      removeOnComplete: 50,
+      removeOnFail: 100,
+    },
+  }),
 } satisfies Record<QueueName, Queue>
 
 export type JobPayloads = {
   [QUEUES.default]: { task: string }
   [QUEUES.githubWebhook]: GitHubWebhookPayload
+  [QUEUES.githubSync]: { repositoryId: string }
   [QUEUES.digest]: Record<string, never>
 }

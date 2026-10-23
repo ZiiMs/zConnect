@@ -2,8 +2,11 @@ import "./lib/env.js"
 import { Worker } from "bullmq"
 import { getDb } from "./db/index.js"
 import { createDrizzleGitHubStore } from "./github/drizzle-store.js"
+import { createGitHubProvider } from "./github/github-provider.js"
 import { handlePullRequestEvent, handlePushEvent } from "./github/handler.js"
 import type { GitHubWebhookPayload } from "./github/job.js"
+import { syncRepository } from "./github/sync.js"
+import { createIntegrationCipher } from "./lib/cipher.js"
 import { createMailerFromEnv } from "./lib/mailer.js"
 import { type JobPayloads, QUEUES, queues } from "./lib/queue.js"
 import { createWorkerConnection } from "./lib/redis.js"
@@ -70,6 +73,54 @@ githubWorker.on("failed", (job, err) => {
 console.log(`[worker] listening on queue "${QUEUES.githubWebhook}"`)
 
 /**
+ * GitHub View sync (#49). One job per repository (`jobId` collapses
+ * duplicates on the queue); the runner writes Pull Request snapshots and
+ * freshness. Sweep scheduling and retention arrive with #51.
+ */
+const githubProvider = createGitHubProvider()
+const integrationCipher = process.env.INTEGRATION_ENCRYPTION_KEY
+  ? createIntegrationCipher(process.env.INTEGRATION_ENCRYPTION_KEY)
+  : null
+
+const githubSyncWorker = new Worker<JobPayloads[typeof QUEUES.githubSync]>(
+  QUEUES.githubSync,
+  async (job) => {
+    if (!integrationCipher) {
+      console.warn(
+        "[worker] github-sync skipped: INTEGRATION_ENCRYPTION_KEY is unset"
+      )
+      return { skipped: true }
+    }
+    const db = () => getDb()
+    const outcome = await syncRepository(
+      {
+        workspaces: createDrizzleWorkspaceStore(db),
+        github: createDrizzleGitHubStore(db),
+        provider: githubProvider,
+        decrypt: (payload: string) => integrationCipher.decrypt(payload),
+        now: () => new Date(),
+      },
+      job.data.repositoryId
+    )
+    console.log(
+      `[worker] github-sync ${job.data.repositoryId}: ${outcome.status}`
+    )
+    return outcome
+  },
+  { connection: createWorkerConnection(), concurrency: 3 }
+)
+
+githubSyncWorker.on("completed", (job) => {
+  console.log(`[worker] completed github-sync (${job.id})`)
+})
+
+githubSyncWorker.on("failed", (job, err) => {
+  console.error(`[worker] failed github-sync (${job?.id}):`, err.message)
+})
+
+console.log(`[worker] listening on queue "${QUEUES.githubSync}"`)
+
+/**
  * Digest worker (R2): one email per user covering unread notifications older
  * than the 30-minute window, plus the 90-day read-notification purge. Mailed
  * rows are stamped so a retry or the next run never repeats them.
@@ -120,4 +171,4 @@ void queues[QUEUES.digest]
   })
 
 export type { JobPayloads }
-export { digestWorker, githubWorker, worker }
+export { digestWorker, githubSyncWorker, githubWorker, worker }

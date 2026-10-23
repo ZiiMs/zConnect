@@ -4,11 +4,12 @@ import { cors } from "hono/cors"
 import { getDb } from "./db/index.js"
 import { createGitHubConnectionApp } from "./github/connection-routes.js"
 import { createDrizzleGitHubStore } from "./github/drizzle-store.js"
+import { createGitHubProvider } from "./github/github-provider.js"
 import type { GitHubWebhookPayload } from "./github/job.js"
 import { createGitHubProjectApp } from "./github/project-routes.js"
-import { createGitHubRepositoryRemote } from "./github/repository-source.js"
 import { createGitHubApp } from "./github/routes.js"
 import { createBetterAuthGitHubAccountSource } from "./github/token-source.js"
+import { createGitHubViewApp } from "./github/view-routes.js"
 import { createIntegrationCipher } from "./lib/cipher.js"
 import { createMailerFromEnv } from "./lib/mailer.js"
 import { allowedOrigins } from "./lib/origins.js"
@@ -32,6 +33,10 @@ const getSession = async (req: Request) => {
 const integrationCipher = process.env.INTEGRATION_ENCRYPTION_KEY
   ? createIntegrationCipher(process.env.INTEGRATION_ENCRYPTION_KEY)
   : null
+
+// One adapter satisfies both seams: the Connection routes' remote listing and
+// the sync/view apps' GitProvider.
+const githubProvider = createGitHubProvider()
 
 app.use(
   "/api/*",
@@ -100,7 +105,7 @@ app.route(
     accounts: createBetterAuthGitHubAccountSource(
       async () => (await import("./lib/auth.js")).auth
     ),
-    remote: createGitHubRepositoryRemote(),
+    remote: githubProvider,
   })
 )
 
@@ -112,6 +117,26 @@ app.route(
     workspaces: createDrizzleWorkspaceStore(() => getDb()),
     github: createDrizzleGitHubStore(() => getDb()),
     getSession,
+  })
+)
+
+// GitHub View (#49): project read for the Pull Request tab and the manual
+// refresh. The queue import stays dynamic so the app object is import-safe
+// without REDIS_URL.
+app.route(
+  "/",
+  createGitHubViewApp({
+    workspaces: createDrizzleWorkspaceStore(() => getDb()),
+    github: createDrizzleGitHubStore(() => getDb()),
+    getSession,
+    enqueueSync: async (repositoryId: string) => {
+      const { queues, QUEUES } = await import("./lib/queue.js")
+      await queues[QUEUES.githubSync].add(
+        "github-sync",
+        { repositoryId },
+        { jobId: repositoryId }
+      )
+    },
   })
 )
 
