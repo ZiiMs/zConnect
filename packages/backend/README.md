@@ -38,6 +38,46 @@ Member lists and notification digests read profiles from the `public.user` table
 The repo-root `.env.local` supplies only the Neon Postgres URLs. Neon Auth is not used at
 runtime; if it is provisioned on the branch, it can be left unused or disabled later.
 
+## GitHub Connection
+
+Settings → Connections → GitHub lets an Owner or Admin authorize one GitHub OAuth App per
+workspace, then choose up to 50 repositories the workspace may use. The flow uses Better
+Auth's GitHub social provider: `linkSocial` asks for the `repo` scope, the callback returns
+to Settings with `?linked=1`, and a finalize request stores the Connection. The GitHub
+account is linked per user, then finalized to the workspace as the shared credential.
+Members can read the connection status; connecting, reconnecting, changing the allowlist,
+and disconnecting are Owner/Admin only.
+
+Register the OAuth App on GitHub with:
+
+- **Homepage URL**: the frontend URL (`FRONTEND_URL`, e.g. `http://localhost:5173`)
+- **Authorization callback URL**: `<BETTER_AUTH_URL>/api/auth/callback/github`
+  (e.g. `http://localhost:3000/api/auth/callback/github`)
+
+Set in this package's `.env`:
+
+```sh
+GITHUB_CLIENT_ID=""
+GITHUB_CLIENT_SECRET=""
+# 32-byte base64 key; generate with: openssl rand -base64 32
+INTEGRATION_ENCRYPTION_KEY=""
+```
+
+The access token is encrypted at rest with AES-256-GCM under
+`INTEGRATION_ENCRYPTION_KEY` (versioned `v1.` payload) and never appears in an API response
+or a log. Without that key the Connection feature is unavailable and the connect request
+answers `503`; set it before connecting GitHub. Rotating the key requires reconnecting,
+because existing payloads cannot be decrypted with a new key.
+
+Disconnecting deletes the Connection, its repositories, project repository links, and
+cached Pull Requests and GitHub Issues. External Links on Issues survive with their last
+known state.
+
+**Upgrade note**: the old manual `github_install` repository list is retired in favor of
+the Connection allowlist. After upgrading, open Settings → Connections → GitHub, connect
+GitHub, and re-select the repositories. The webhook endpoint is unchanged and accepts
+deliveries for repositories selected under the new model.
+
 ## Realtime
 
 Neon Realtime is the live transport: the backend seals one deterministic SQL

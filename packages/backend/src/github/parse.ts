@@ -4,7 +4,7 @@
  * GLOSSARY.md: External Link (never Integration/Sync).
  */
 
-export type ExternalLinkKind = "pr" | "branch" | "commit"
+export type ExternalLinkKind = "pr" | "issue" | "branch" | "commit"
 
 export interface ParsedExternalUrl {
   provider: "github"

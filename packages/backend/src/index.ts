@@ -2,9 +2,13 @@ import "./lib/env.js"
 import { Hono } from "hono"
 import { cors } from "hono/cors"
 import { getDb } from "./db/index.js"
+import { createGitHubConnectionApp } from "./github/connection-routes.js"
 import { createDrizzleGitHubStore } from "./github/drizzle-store.js"
 import type { GitHubWebhookPayload } from "./github/job.js"
+import { createGitHubRepositoryRemote } from "./github/repository-source.js"
 import { createGitHubApp } from "./github/routes.js"
+import { createBetterAuthGitHubAccountSource } from "./github/token-source.js"
+import { createIntegrationCipher } from "./lib/cipher.js"
 import { createMailerFromEnv } from "./lib/mailer.js"
 import { allowedOrigins } from "./lib/origins.js"
 import { createDrizzleTokenStore } from "./mcp/drizzle-tokens.js"
@@ -21,6 +25,12 @@ const getSession = async (req: Request) => {
   if (!session) return null
   return { user: { id: session.user.id, email: session.user.email } }
 }
+
+// Unset key leaves the GitHub Connection feature unavailable (POST answers
+// 503); a set-but-invalid key fails loudly at startup.
+const integrationCipher = process.env.INTEGRATION_ENCRYPTION_KEY
+  ? createIntegrationCipher(process.env.INTEGRATION_ENCRYPTION_KEY)
+  : null
 
 app.use(
   "/api/*",
@@ -76,6 +86,20 @@ app.route(
         jobId: job.deliveryId,
       })
     },
+  })
+)
+
+app.route(
+  "/",
+  createGitHubConnectionApp({
+    workspaces: createDrizzleWorkspaceStore(() => getDb()),
+    github: createDrizzleGitHubStore(() => getDb()),
+    getSession,
+    cipher: integrationCipher,
+    accounts: createBetterAuthGitHubAccountSource(
+      async () => (await import("./lib/auth.js")).auth
+    ),
+    remote: createGitHubRepositoryRemote(),
   })
 )
 
