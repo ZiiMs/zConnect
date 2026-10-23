@@ -5,6 +5,7 @@
  * Vocabulary per GLOSSARY.md: External Link (never Integration/Sync).
  */
 import type { ExternalLinkKind } from "./parse.js"
+import type { RemotePullRequest } from "./provider.js"
 
 export type ExternalLinkState = "open" | "merged" | "closed"
 
@@ -83,6 +84,142 @@ export interface ProjectRepositoryLink {
   repositoryId: string
   linkedBy: string
   linkedAt: string
+}
+
+export type PullRequestState = "open" | "merged" | "closed"
+export type GitHubIssueState = "open" | "closed"
+
+export interface PullRequestSnapshot {
+  id: string
+  repositoryId: string
+  number: number
+  title: string
+  state: PullRequestState
+  draft: boolean
+  authorLogin: string
+  authorAvatarUrl: string | null
+  url: string
+  sourceBranch: string
+  targetBranch: string
+  checksState: string | null
+  reviewDecision: string | null
+  commentCount: number
+  bodyExcerpt: string | null
+  githubCreatedAt: string
+  githubUpdatedAt: string
+  mergedAt: string | null
+  closedAt: string | null
+  syncedAt: string
+}
+
+export interface GitHubLabel {
+  name: string
+  color: string
+}
+
+export interface GitHubAssignee {
+  login: string
+  avatarUrl: string | null
+}
+
+export interface GitHubIssueSnapshot {
+  id: string
+  repositoryId: string
+  number: number
+  title: string
+  state: GitHubIssueState
+  authorLogin: string
+  authorAvatarUrl: string | null
+  url: string
+  labels: GitHubLabel[]
+  assignees: GitHubAssignee[]
+  commentCount: number
+  bodyExcerpt: string | null
+  githubCreatedAt: string
+  githubUpdatedAt: string
+  closedAt: string | null
+  syncedAt: string
+}
+
+/** Chip shown on a GitHub Item row. One entry per External Link. */
+export interface LinkedIssueRef {
+  linkId: string
+  issueId: string
+  identifier: string
+  title: string
+}
+
+export interface GitHubItemFilters {
+  state: "open" | "merged" | "closed" | "all"
+  author?: string | null
+  label?: string | null
+  query?: string | null
+  limit?: number
+  cursor?: string | null
+}
+
+export const DEFAULT_GITHUB_ITEM_LIMIT = 30
+export const MAX_GITHUB_ITEM_LIMIT = 100
+
+/**
+ * Opaque snapshot cursor: base64url of `${githubUpdatedAt}|${id}`, meaning
+ * "strictly older than this item" in the documented order
+ * (`github_updated_at DESC, id DESC`). Malformed input is ignored so a stale
+ * client cursor never 500s a list route.
+ */
+export function encodeGitHubItemCursor(item: {
+  githubUpdatedAt: string
+  id: string
+}): string {
+  return Buffer.from(`${item.githubUpdatedAt}|${item.id}`, "utf8").toString(
+    "base64url"
+  )
+}
+
+export function decodeGitHubItemCursor(
+  cursor: string | null | undefined
+): { githubUpdatedAt: string; id: string } | null {
+  if (!cursor) return null
+  try {
+    const raw = Buffer.from(cursor, "base64url").toString("utf8")
+    const separator = raw.indexOf("|")
+    if (separator <= 0) return null
+    const githubUpdatedAt = raw.slice(0, separator)
+    const id = raw.slice(separator + 1)
+    if (!githubUpdatedAt || !id) return null
+    if (Number.isNaN(new Date(githubUpdatedAt).getTime())) return null
+    return { githubUpdatedAt, id }
+  } catch {
+    return null
+  }
+}
+
+/** Newest first: githubUpdatedAt descending, then id descending. */
+export function compareGitHubItemsDesc(
+  a: { githubUpdatedAt: string; id: string },
+  b: { githubUpdatedAt: string; id: string }
+): number {
+  if (a.githubUpdatedAt !== b.githubUpdatedAt) {
+    return a.githubUpdatedAt < b.githubUpdatedAt ? 1 : -1
+  }
+  if (a.id === b.id) return 0
+  return a.id < b.id ? 1 : -1
+}
+
+function isOlderThanGitHubCursor(
+  item: { githubUpdatedAt: string; id: string },
+  cursor: { githubUpdatedAt: string; id: string }
+): boolean {
+  if (item.githubUpdatedAt !== cursor.githubUpdatedAt) {
+    return item.githubUpdatedAt < cursor.githubUpdatedAt
+  }
+  return item.id < cursor.id
+}
+
+function githubItemLimit(filters: GitHubItemFilters): number {
+  const raw = filters.limit ?? DEFAULT_GITHUB_ITEM_LIMIT
+  if (!Number.isFinite(raw)) return DEFAULT_GITHUB_ITEM_LIMIT
+  return Math.min(MAX_GITHUB_ITEM_LIMIT, Math.max(1, Math.floor(raw)))
 }
 
 /** Provider-agnostic repository listing shape shared with the GitProvider seam. */
@@ -193,10 +330,43 @@ export interface GitHubStore {
   listLinkedRepositories(): Promise<GitHubRepository[]>
   /**
    * Removes a repository and its project links. Drizzle cascades the cached
-   * snapshots; the memory store drops them in `removeRepository` once #49/#50
-   * add those maps.
+   * snapshots; the memory store drops them in `removeRepository`.
    */
   deleteRepository(repositoryId: string): Promise<void>
+
+  /** #49 — connection lookup for the sync runner (queue jobs carry repository ids). */
+  getConnectionById(
+    connectionId: string
+  ): Promise<GitHubConnectionSecret | null>
+
+  /** #49 — Pull Request snapshots. */
+  upsertPullRequests(
+    repositoryId: string,
+    items: RemotePullRequest[],
+    at: string
+  ): Promise<void>
+  listPullRequestsForProject(
+    projectId: string,
+    filters: GitHubItemFilters
+  ): Promise<{ items: PullRequestSnapshot[]; nextCursor: string | null }>
+  listOpenPullRequests(repositoryId: string): Promise<PullRequestSnapshot[]>
+  getPullRequest(
+    repositoryId: string,
+    number: number
+  ): Promise<PullRequestSnapshot | null>
+  setPullRequestState(
+    repositoryId: string,
+    number: number,
+    patch: {
+      state: PullRequestState
+      mergedAt: string | null
+      closedAt: string | null
+      githubUpdatedAt: string
+    },
+    at: string
+  ): Promise<void>
+  /** #49 — External Link chips for a page of GitHub Items, newest link first. */
+  listLinkedIssueRefs(urls: string[]): Promise<Record<string, LinkedIssueRef[]>>
 }
 
 export interface MemoryGitHubStoreOptions {
@@ -206,6 +376,13 @@ export interface MemoryGitHubStoreOptions {
    * fixtures that exercise project links pass the workspace store here.
    */
   projectWorkspaceId?: (projectId: string) => Promise<string | null>
+  /**
+   * Resolves an Issue for External Link chips. The Drizzle store joins the
+   * Issue row; fixtures pass the workspace store here.
+   */
+  getIssue?: (
+    issueId: string
+  ) => Promise<{ identifier: string; title: string } | null>
 }
 
 function invalid(message: string): Error {
@@ -222,6 +399,7 @@ export function createMemoryGitHubStore(
   const connections = new Map<string, GitHubConnectionSecret>()
   const repositories = new Map<string, GitHubRepository>()
   const projectLinks = new Map<string, ProjectRepositoryLink>()
+  const pullRequests = new Map<string, PullRequestSnapshot>()
 
   function cloneConnection(
     connection: GitHubConnectionSecret
@@ -247,10 +425,12 @@ export function createMemoryGitHubStore(
   }
 
   function removeRepository(id: string) {
-    // Project links cascade with the repository. #49/#50 must also drop the
-    // cached pull request and issue snapshots for `id` here — the memory store
-    // has no foreign keys.
+    // Project links cascade with the repository, and so do cached snapshots
+    // (the memory store has no foreign keys).
     removeLinksForRepository(id)
+    for (const [key, snapshot] of pullRequests) {
+      if (snapshot.repositoryId === id) pullRequests.delete(key)
+    }
     repositories.delete(id)
   }
 
@@ -556,6 +736,125 @@ export function createMemoryGitHubStore(
 
     async deleteRepository(repositoryId) {
       removeRepository(repositoryId)
+    },
+
+    async getConnectionById(connectionId) {
+      for (const connection of connections.values()) {
+        if (connection.id === connectionId) return cloneConnection(connection)
+      }
+      return null
+    },
+
+    async upsertPullRequests(repositoryId, items, at) {
+      for (const item of items) {
+        const key = `${repositoryId}:${item.number}`
+        const current = pullRequests.get(key)
+        const snapshot: PullRequestSnapshot = {
+          id: current?.id ?? crypto.randomUUID(),
+          repositoryId,
+          number: item.number,
+          title: item.title,
+          state: "open",
+          draft: item.draft,
+          authorLogin: item.authorLogin,
+          authorAvatarUrl: item.authorAvatarUrl,
+          url: item.url,
+          sourceBranch: item.sourceBranch,
+          targetBranch: item.targetBranch,
+          checksState: item.checksState,
+          reviewDecision: item.reviewDecision,
+          commentCount: item.commentCount,
+          bodyExcerpt: item.bodyExcerpt,
+          githubCreatedAt: item.createdAt,
+          githubUpdatedAt: item.updatedAt,
+          mergedAt: null,
+          closedAt: null,
+          syncedAt: at,
+        }
+        pullRequests.set(key, snapshot)
+      }
+    },
+
+    async listPullRequestsForProject(projectId, filters) {
+      const repositoryIds = new Set(
+        [...projectLinks.values()]
+          .filter((link) => link.projectId === projectId)
+          .map((link) => link.repositoryId)
+      )
+      const cursor = decodeGitHubItemCursor(filters.cursor)
+      const author = filters.author?.toLowerCase() ?? null
+      const query = filters.query?.trim().toLowerCase() ?? ""
+      const matching = [...pullRequests.values()]
+        .filter((item) => repositoryIds.has(item.repositoryId))
+        .filter(
+          (item) => filters.state === "all" || item.state === filters.state
+        )
+        .filter((item) => !author || item.authorLogin.toLowerCase() === author)
+        .filter(
+          (item) => query === "" || item.title.toLowerCase().includes(query)
+        )
+        .filter((item) => !cursor || isOlderThanGitHubCursor(item, cursor))
+        .sort(compareGitHubItemsDesc)
+      const limit = githubItemLimit(filters)
+      const page = matching.slice(0, limit)
+      return {
+        items: page.map((item) => ({ ...item })),
+        nextCursor:
+          matching.length > page.length && page.length > 0
+            ? encodeGitHubItemCursor(
+                page[page.length - 1] as PullRequestSnapshot
+              )
+            : null,
+      }
+    },
+
+    async listOpenPullRequests(repositoryId) {
+      return [...pullRequests.values()]
+        .filter(
+          (item) => item.repositoryId === repositoryId && item.state === "open"
+        )
+        .sort(compareGitHubItemsDesc)
+        .map((item) => ({ ...item }))
+    },
+
+    async getPullRequest(repositoryId, number) {
+      const snapshot = pullRequests.get(`${repositoryId}:${number}`)
+      return snapshot ? { ...snapshot } : null
+    },
+
+    async setPullRequestState(repositoryId, number, patch, at) {
+      const key = `${repositoryId}:${number}`
+      const snapshot = pullRequests.get(key)
+      if (!snapshot) return
+      snapshot.state = patch.state
+      snapshot.mergedAt = patch.mergedAt
+      snapshot.closedAt = patch.closedAt
+      snapshot.githubUpdatedAt = patch.githubUpdatedAt
+      snapshot.syncedAt = at
+    },
+
+    async listLinkedIssueRefs(urls) {
+      const wanted = new Set(urls)
+      const byUrl: Record<string, LinkedIssueRef[]> = {}
+      for (const url of wanted) byUrl[url] = []
+      // Newest first: the memory map preserves insertion order, so walk it
+      // backwards (the Drizzle store orders by createdAt DESC).
+      const ordered = [...links.values()].reverse()
+      for (const link of ordered) {
+        if (!wanted.has(link.url)) continue
+        if (link.kind !== "pr" && link.kind !== "issue") continue
+        const issue = options.getIssue
+          ? await options.getIssue(link.issueId)
+          : null
+        if (!issue) continue
+        byUrl[link.url]?.push({
+          linkId: link.id,
+          issueId: link.issueId,
+          identifier: issue.identifier,
+          title: issue.title,
+        })
+      }
+      return byUrl
     },
   }
 }

@@ -1,25 +1,34 @@
-import { and, eq, inArray, sql } from "drizzle-orm"
+import { and, desc, eq, ilike, inArray, lt, or, sql } from "drizzle-orm"
 import type { getDb } from "../db/index.js"
 import {
   externalLink,
   githubConnection,
+  githubPullRequest,
   githubRepository,
+  issue,
   project,
   projectRepository,
   webhookDelivery,
 } from "../db/schema.js"
 import type { ExternalLinkKind } from "./parse.js"
+import type { RemotePullRequest } from "./provider.js"
 import {
   type CreateExternalLinkInput,
+  decodeGitHubItemCursor,
   type ExternalLink,
   type ExternalLinkState,
+  encodeGitHubItemCursor,
   type GitHubConnection,
   type GitHubConnectionSecret,
   type GitHubConnectionStatus,
+  type GitHubItemFilters,
   type GitHubRepository,
   type GitHubStore,
+  type LinkedIssueRef,
   MAX_ALLOWLIST,
+  MAX_GITHUB_ITEM_LIMIT,
   type ProjectRepository,
+  type PullRequestSnapshot,
   type RemoteRepository,
 } from "./store.js"
 
@@ -477,6 +486,212 @@ export function createDrizzleGitHubStore(resolveDb: () => Db): GitHubStore {
         .delete(githubRepository)
         .where(eq(githubRepository.id, repositoryId))
     },
+
+    async getConnectionById(connectionId) {
+      const db = resolveDb()
+      const [row] = await db
+        .select()
+        .from(githubConnection)
+        .where(eq(githubConnection.id, connectionId))
+      return row ? toConnection(row) : null
+    },
+
+    async upsertPullRequests(repositoryId, items: RemotePullRequest[], at) {
+      const db = resolveDb()
+      const syncedAt = new Date(at)
+      for (const item of items) {
+        const values = {
+          repositoryId,
+          number: item.number,
+          title: item.title,
+          state: "open" as const,
+          draft: item.draft,
+          authorLogin: item.authorLogin,
+          authorAvatarUrl: item.authorAvatarUrl,
+          url: item.url,
+          sourceBranch: item.sourceBranch,
+          targetBranch: item.targetBranch,
+          checksState: item.checksState,
+          reviewDecision: item.reviewDecision,
+          commentCount: item.commentCount,
+          bodyExcerpt: item.bodyExcerpt,
+          githubCreatedAt: new Date(item.createdAt),
+          githubUpdatedAt: new Date(item.updatedAt),
+          mergedAt: null,
+          closedAt: null,
+          syncedAt,
+        }
+        await db
+          .insert(githubPullRequest)
+          .values(values)
+          .onConflictDoUpdate({
+            target: [githubPullRequest.repositoryId, githubPullRequest.number],
+            set: {
+              title: values.title,
+              state: "open",
+              draft: values.draft,
+              authorLogin: values.authorLogin,
+              authorAvatarUrl: values.authorAvatarUrl,
+              url: values.url,
+              sourceBranch: values.sourceBranch,
+              targetBranch: values.targetBranch,
+              checksState: values.checksState,
+              reviewDecision: values.reviewDecision,
+              commentCount: values.commentCount,
+              bodyExcerpt: values.bodyExcerpt,
+              githubCreatedAt: values.githubCreatedAt,
+              githubUpdatedAt: values.githubUpdatedAt,
+              mergedAt: null,
+              closedAt: null,
+              syncedAt,
+            },
+          })
+      }
+    },
+
+    async listPullRequestsForProject(projectId, filters: GitHubItemFilters) {
+      const db = resolveDb()
+      const limit = Math.min(
+        MAX_GITHUB_ITEM_LIMIT,
+        Math.max(1, Math.floor(filters.limit ?? 30))
+      )
+      const cursor = decodeGitHubItemCursor(filters.cursor)
+      const conditions = [eq(projectRepository.projectId, projectId)]
+      if (filters.state !== "all") {
+        conditions.push(eq(githubPullRequest.state, filters.state))
+      }
+      if (filters.author) {
+        conditions.push(
+          sql`lower(${githubPullRequest.authorLogin}) = ${filters.author.toLowerCase()}`
+        )
+      }
+      if (filters.query?.trim()) {
+        conditions.push(
+          ilike(githubPullRequest.title, `%${filters.query.trim()}%`)
+        )
+      }
+      if (cursor) {
+        const cursorCondition = or(
+          lt(
+            githubPullRequest.githubUpdatedAt,
+            new Date(cursor.githubUpdatedAt)
+          ),
+          and(
+            eq(
+              githubPullRequest.githubUpdatedAt,
+              new Date(cursor.githubUpdatedAt)
+            ),
+            lt(githubPullRequest.id, cursor.id)
+          )
+        )
+        if (cursorCondition) conditions.push(cursorCondition)
+      }
+      const rows = await db
+        .select({ snapshot: githubPullRequest })
+        .from(githubPullRequest)
+        .innerJoin(
+          projectRepository,
+          eq(projectRepository.repositoryId, githubPullRequest.repositoryId)
+        )
+        .where(and(...conditions))
+        .orderBy(
+          desc(githubPullRequest.githubUpdatedAt),
+          desc(githubPullRequest.id)
+        )
+        .limit(limit + 1)
+      const page = rows
+        .slice(0, limit)
+        .map((row) => toPullRequest(row.snapshot))
+      const last = page.at(-1)
+      return {
+        items: page,
+        nextCursor:
+          rows.length > limit && last
+            ? encodeGitHubItemCursor({
+                githubUpdatedAt: last.githubUpdatedAt,
+                id: last.id,
+              })
+            : null,
+      }
+    },
+
+    async listOpenPullRequests(repositoryId) {
+      const db = resolveDb()
+      const rows = await db
+        .select()
+        .from(githubPullRequest)
+        .where(
+          and(
+            eq(githubPullRequest.repositoryId, repositoryId),
+            eq(githubPullRequest.state, "open")
+          )
+        )
+        .orderBy(
+          desc(githubPullRequest.githubUpdatedAt),
+          desc(githubPullRequest.id)
+        )
+      return rows.map(toPullRequest)
+    },
+
+    async getPullRequest(repositoryId, number) {
+      const db = resolveDb()
+      const [row] = await db
+        .select()
+        .from(githubPullRequest)
+        .where(
+          and(
+            eq(githubPullRequest.repositoryId, repositoryId),
+            eq(githubPullRequest.number, number)
+          )
+        )
+      return row ? toPullRequest(row) : null
+    },
+
+    async setPullRequestState(repositoryId, number, patch, at) {
+      const db = resolveDb()
+      await db
+        .update(githubPullRequest)
+        .set({
+          state: patch.state,
+          mergedAt: patch.mergedAt ? new Date(patch.mergedAt) : null,
+          closedAt: patch.closedAt ? new Date(patch.closedAt) : null,
+          githubUpdatedAt: new Date(patch.githubUpdatedAt),
+          syncedAt: new Date(at),
+        })
+        .where(
+          and(
+            eq(githubPullRequest.repositoryId, repositoryId),
+            eq(githubPullRequest.number, number)
+          )
+        )
+    },
+
+    async listLinkedIssueRefs(urls) {
+      const byUrl: Record<string, LinkedIssueRef[]> = {}
+      if (urls.length === 0) return byUrl
+      for (const url of new Set(urls)) byUrl[url] = []
+      const db = resolveDb()
+      const rows = await db
+        .select({ link: externalLink, issue })
+        .from(externalLink)
+        .innerJoin(issue, eq(externalLink.issueId, issue.id))
+        .where(
+          and(
+            inArray(externalLink.url, [...new Set(urls)]),
+            inArray(externalLink.kind, ["pr", "issue"])
+          )
+        )
+        .orderBy(desc(externalLink.createdAt))
+      for (const row of rows) {
+        byUrl[row.link.url]?.push({
+          linkId: row.link.id,
+          issueId: row.link.issueId,
+          identifier: row.issue.identifier,
+          title: row.issue.title,
+        })
+      }
+      return byUrl
+    },
   }
 }
 
@@ -534,6 +749,33 @@ function toRepository(
     selectedAt: row.selectedAt.toISOString(),
     lastSyncedAt: iso(row.lastSyncedAt),
     syncError: row.syncError,
+  }
+}
+
+function toPullRequest(
+  row: typeof githubPullRequest.$inferSelect
+): PullRequestSnapshot {
+  return {
+    id: row.id,
+    repositoryId: row.repositoryId,
+    number: row.number,
+    title: row.title,
+    state: row.state,
+    draft: row.draft,
+    authorLogin: row.authorLogin,
+    authorAvatarUrl: row.authorAvatarUrl,
+    url: row.url,
+    sourceBranch: row.sourceBranch,
+    targetBranch: row.targetBranch,
+    checksState: row.checksState,
+    reviewDecision: row.reviewDecision,
+    commentCount: row.commentCount,
+    bodyExcerpt: row.bodyExcerpt,
+    githubCreatedAt: row.githubCreatedAt.toISOString(),
+    githubUpdatedAt: row.githubUpdatedAt.toISOString(),
+    mergedAt: iso(row.mergedAt),
+    closedAt: iso(row.closedAt),
+    syncedAt: row.syncedAt.toISOString(),
   }
 }
 
