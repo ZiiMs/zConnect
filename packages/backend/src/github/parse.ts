@@ -35,6 +35,33 @@ export function extractIssueRefs(text: string): string[] {
   return found
 }
 
+function pushRefs(text: string, found: string[], seen: Set<string>): void {
+  for (const identifier of extractIssueRefs(text)) {
+    if (seen.has(identifier)) continue
+    seen.add(identifier)
+    found.push(identifier)
+  }
+}
+
+/**
+ * Issue identifiers that should link automatically: a Pull Request's source
+ * branch first, then its title; a GitHub Issue contributes its title only.
+ * Deduped, uppercase, in first-appearance order.
+ */
+export function autoLinkRefs(input: {
+  kind: "pr" | "issue"
+  sourceBranch?: string
+  title: string
+}): string[] {
+  const found: string[] = []
+  const seen = new Set<string>()
+  if (input.kind === "pr" && input.sourceBranch) {
+    pushRefs(input.sourceBranch, found, seen)
+  }
+  pushRefs(input.title, found, seen)
+  return found
+}
+
 const GITHUB_URL_PATTERN =
   /^https?:\/\/(?:www\.)?github\.com\/([^/]+)\/([^/]+)\/(pull|issues|commit|tree)\/([^/]+?)(?:\/|\?|#|$)/i
 

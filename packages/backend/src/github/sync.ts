@@ -16,7 +16,9 @@
  * - Sweep selection and 90-day retention, both driven by the injected clock.
  */
 
+import { githubActivityDraft } from "../workspaces/activity.js"
 import type { WorkspaceStore } from "../workspaces/store.js"
+import { autoLinkRefs } from "./parse.js"
 import type {
   GitProvider,
   RemoteGitHubIssue,
@@ -25,8 +27,10 @@ import type {
 import { GitProviderError } from "./provider.js"
 import type {
   GitHubConnectionStatus,
+  GitHubIssueState,
   GitHubRepository,
   GitHubStore,
+  PullRequestState,
 } from "./store.js"
 
 export interface GitHubSyncDeps {
@@ -64,6 +68,172 @@ function chunk<T>(items: T[], size: number): T[][] {
     batches.push(items.slice(index, index + size))
   }
   return batches
+}
+
+/** Automatic links and transitions are authored by GitHub, never a user. */
+const GITHUB_ACTOR = { type: "github", id: null } as const
+
+type TransitionState = "merged" | "closed" | "open"
+
+/**
+ * Overlapping runs for one repository (a manual refresh racing the sweep, or
+ * two queued jobs in this process) would otherwise capture the same pre-sync
+ * state: both could create a link/event pair or report the same transition.
+ * Serialize per repository id so every run starts from what the previous one
+ * persisted. Cross-process duplicate links stay protected by the store's
+ * `(issue, url)` uniqueness.
+ */
+const repositorySyncQueues = new Map<string, Promise<void>>()
+
+async function serializeRepositorySync<T>(
+  repositoryId: string,
+  run: () => Promise<T>
+): Promise<T> {
+  const previous = repositorySyncQueues.get(repositoryId) ?? Promise.resolve()
+  let release: () => void = () => {}
+  const current = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const tail = previous.then(() => current)
+  repositorySyncQueues.set(repositoryId, tail)
+  await previous
+  try {
+    return await run()
+  } finally {
+    release()
+    if (repositorySyncQueues.get(repositoryId) === tail) {
+      repositorySyncQueues.delete(repositoryId)
+    }
+  }
+}
+
+function transitionDraft(
+  kind: "pr" | "issue",
+  state: TransitionState,
+  number: number
+): { type: string; summary: string } {
+  if (kind === "pr") {
+    if (state === "merged") {
+      return {
+        type: "github.pull_request.merged",
+        summary: `Merged pull request #${number}`,
+      }
+    }
+    if (state === "closed") {
+      return {
+        type: "github.pull_request.closed",
+        summary: `Closed pull request #${number}`,
+      }
+    }
+    return {
+      type: "github.pull_request.reopened",
+      summary: `Reopened pull request #${number}`,
+    }
+  }
+  if (state === "closed") {
+    return {
+      type: "github.issue.closed",
+      summary: `Closed GitHub issue #${number}`,
+    }
+  }
+  return {
+    type: "github.issue.reopened",
+    summary: `Reopened GitHub issue #${number}`,
+  }
+}
+
+/**
+ * Refreshes every External Link pointing at the GitHub Item and appends one
+ * Activity Event per linked Issue. Called only when a transition was observed
+ * against the stored row, so a no-op sync writes nothing.
+ */
+async function emitTransition(
+  deps: GitHubSyncDeps,
+  repository: GitHubRepository,
+  item: { kind: "pr" | "issue"; number: number; url: string; title: string },
+  state: TransitionState
+): Promise<void> {
+  const links = await deps.github.findExternalLinksByUrl(item.url)
+  const draft = transitionDraft(item.kind, state, item.number)
+  const payload = {
+    kind: item.kind,
+    number: item.number,
+    url: item.url,
+    repository: repository.fullName,
+  }
+  for (const link of links) {
+    await deps.github.updateExternalLink(link.id, {
+      title: item.title,
+      state,
+    })
+    await deps.workspaces.appendActivity(link.issueId, {
+      actor: GITHUB_ACTOR,
+      ...draft,
+      payload,
+    })
+  }
+}
+
+/**
+ * Links a GitHub Item's `KEY-N` refs to Issues in the Connection's workspace.
+ * Unresolved refs and refs that resolve outside the workspace are ignored.
+ * An existing link for the same Issue and URL (a retry, overlap, or a manual
+ * link) is left untouched, so the Activity Event fires only on a new link.
+ * Returns the number of links created.
+ */
+async function autoLinkItem(
+  deps: GitHubSyncDeps,
+  input: {
+    kind: "pr" | "issue"
+    sourceBranch?: string
+    title: string
+    url: string
+    number: number
+    connectionWorkspaceId: string
+    repository: GitHubRepository
+  }
+): Promise<number> {
+  const refs = autoLinkRefs(input)
+  if (refs.length === 0) return 0
+
+  let created = 0
+  for (const identifier of refs) {
+    const issue = await deps.workspaces.getIssue(identifier)
+    if (!issue) continue
+    const project = await deps.workspaces.getProject(issue.projectId)
+    if (!project || project.workspaceId !== input.connectionWorkspaceId) {
+      continue
+    }
+    const existing = (await deps.github.findExternalLinksByUrl(input.url)).find(
+      (link) => link.issueId === issue.id
+    )
+    if (existing) continue
+
+    await deps.github.createExternalLink(issue.id, {
+      provider: "github",
+      kind: input.kind,
+      url: input.url,
+      title: input.title,
+      state: "open",
+    })
+    const draft = githubActivityDraft(
+      "linked",
+      `Linked automatically from ${identifier}`
+    )
+    await deps.workspaces.appendActivity(issue.id, {
+      actor: GITHUB_ACTOR,
+      ...draft,
+      payload: {
+        kind: input.kind,
+        number: input.number,
+        url: input.url,
+        repository: input.repository.fullName,
+        identifier,
+      },
+    })
+    created += 1
+  }
+  return created
 }
 
 /**
@@ -141,6 +311,7 @@ async function resolveMissingPullRequests(
   at: string
 ): Promise<void> {
   const stored = await deps.github.listOpenPullRequests(repositoryId)
+  const storedByNumber = new Map(stored.map((item) => [item.number, item]))
   const fetchedNumbers = new Set(fetched.map((item) => item.number))
   const missing = stored
     .filter((item) => !fetchedNumbers.has(item.number))
@@ -166,6 +337,19 @@ async function resolveMissingPullRequests(
         },
         at
       )
+      const item = storedByNumber.get(number)
+      if (!item || state.state === "open") continue
+      await emitTransition(
+        deps,
+        repository,
+        {
+          kind: "pr",
+          number,
+          url: item.url,
+          title: item.title,
+        },
+        state.state
+      )
     }
   }
 }
@@ -179,6 +363,7 @@ async function resolveMissingGitHubIssues(
   at: string
 ): Promise<void> {
   const stored = await deps.github.listOpenGitHubIssues(repositoryId)
+  const storedByNumber = new Map(stored.map((item) => [item.number, item]))
   const fetchedNumbers = new Set(fetched.map((item) => item.number))
   const missing = stored
     .filter((item) => !fetchedNumbers.has(item.number))
@@ -203,11 +388,24 @@ async function resolveMissingGitHubIssues(
         },
         at
       )
+      const item = storedByNumber.get(number)
+      if (!item || state.state !== "closed") continue
+      await emitTransition(
+        deps,
+        repository,
+        {
+          kind: "issue",
+          number,
+          url: item.url,
+          title: item.title,
+        },
+        "closed"
+      )
     }
   }
 }
 
-export async function syncRepository(
+async function runRepositorySync(
   deps: GitHubSyncDeps,
   repositoryId: string
 ): Promise<SyncOutcome> {
@@ -268,7 +466,42 @@ export async function syncRepository(
     return recordFailure(deps, repositoryId, connection.workspaceId, error, at)
   }
 
+  // The upsert forces every fetched row back to `open` and clears its closing
+  // fields, so the previous state must be captured first to detect a reopen.
+  const previousPullRequests = new Map<number, PullRequestState>()
+  for (const item of pullRequests) {
+    const previous = await deps.github.getPullRequest(repositoryId, item.number)
+    if (previous) previousPullRequests.set(item.number, previous.state)
+  }
+
+  let linked = 0
   await deps.github.upsertPullRequests(repositoryId, pullRequests, at)
+  for (const item of pullRequests) {
+    linked += await autoLinkItem(deps, {
+      kind: "pr",
+      sourceBranch: item.sourceBranch,
+      title: item.title,
+      url: item.url,
+      number: item.number,
+      connectionWorkspaceId: connection.workspaceId,
+      repository,
+    })
+    const previous = previousPullRequests.get(item.number)
+    if (previous === "merged" || previous === "closed") {
+      await emitTransition(
+        deps,
+        repository,
+        {
+          kind: "pr",
+          number: item.number,
+          url: item.url,
+          title: item.title,
+        },
+        "open"
+      )
+    }
+  }
+
   try {
     await resolveMissingPullRequests(
       deps,
@@ -300,7 +533,40 @@ export async function syncRepository(
       )
     }
 
+    const previousIssues = new Map<number, GitHubIssueState>()
+    for (const item of issues) {
+      const previous = await deps.github.getGitHubIssue(
+        repositoryId,
+        item.number
+      )
+      if (previous) previousIssues.set(item.number, previous.state)
+    }
+
     await deps.github.upsertGitHubIssues(repositoryId, issues, at)
+    for (const item of issues) {
+      linked += await autoLinkItem(deps, {
+        kind: "issue",
+        title: item.title,
+        url: item.url,
+        number: item.number,
+        connectionWorkspaceId: connection.workspaceId,
+        repository,
+      })
+      if (previousIssues.get(item.number) === "closed") {
+        await emitTransition(
+          deps,
+          repository,
+          {
+            kind: "issue",
+            number: item.number,
+            url: item.url,
+            title: item.title,
+          },
+          "open"
+        )
+      }
+    }
+
     try {
       await resolveMissingGitHubIssues(
         deps,
@@ -331,8 +597,17 @@ export async function syncRepository(
     repositories: 1,
     pullRequests: pullRequests.length,
     issues: issues.length,
-    linked: 0,
+    linked,
   }
+}
+
+export async function syncRepository(
+  deps: GitHubSyncDeps,
+  repositoryId: string
+): Promise<SyncOutcome> {
+  return serializeRepositorySync(repositoryId, () =>
+    runRepositorySync(deps, repositoryId)
+  )
 }
 
 export async function syncConnection(

@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { createMemoryWorkspaceStore } from "../workspaces/store.js"
+import {
+  createMemoryWorkspaceStore,
+  type WorkspaceStore,
+} from "../workspaces/store.js"
 import { createFakeProvider } from "./fake-provider.js"
 import {
   GitProviderError,
@@ -87,6 +90,7 @@ async function setup(
     pullRequests: options.pullRequests ?? { "acme/web": [openPullRequest] },
     issues: options.issues ?? {},
   })
+  const clock = { at: FIXED }
   const workspace = await workspaces.createWorkspace(owner.id, "Acme")
   const project = await workspaces.createProject(workspace.id, {
     name: "Web",
@@ -124,7 +128,7 @@ async function setup(
       if (payload !== "encrypted:token-1") throw new Error("cipher: tampered")
       return "token-1"
     },
-    now: () => new Date(FIXED),
+    now: () => new Date(clock.at),
   }
   return {
     workspaces,
@@ -136,6 +140,7 @@ async function setup(
     connection,
     web,
     api,
+    clock,
   }
 }
 
@@ -778,6 +783,411 @@ describe("github retention", () => {
     })
     expect(retainedIssues.items.map((item) => item.number).sort()).toEqual([
       6, 7,
+    ])
+  })
+})
+
+async function issueByKey(workspaces: WorkspaceStore, identifier: string) {
+  const issue = await workspaces.getIssue(identifier)
+  if (!issue) throw new Error(`fixture issue ${identifier} missing`)
+  return issue
+}
+
+async function activityOfType(
+  workspaces: WorkspaceStore,
+  identifier: string,
+  type: string
+) {
+  const issue = await issueByKey(workspaces, identifier)
+  return (await workspaces.listActivity(issue.id)).filter(
+    (event) => event.type === type
+  )
+}
+
+async function linksFor(
+  github: GitHubStore,
+  workspaces: WorkspaceStore,
+  identifier: string
+) {
+  const issue = await issueByKey(workspaces, identifier)
+  return github.listExternalLinks(issue.id)
+}
+
+describe("github automatic linking", () => {
+  const linkingPullRequest: RemotePullRequest = {
+    ...openPullRequest,
+    sourceBranch: "feature/WEB-1-login",
+    title: "Fix WEB-2 too",
+  }
+
+  test("links a Pull Request from its branch and title", async () => {
+    const { github, deps, web, workspaces } = await setup({
+      pullRequests: { "acme/web": [linkingPullRequest] },
+    })
+
+    const outcome = await syncRepository(deps, web.id)
+    expect(outcome).toMatchObject({ status: "ok", linked: 2 })
+
+    expect(await linksFor(github, workspaces, "WEB-1")).toEqual([
+      {
+        id: expect.any(String),
+        issueId: (await issueByKey(workspaces, "WEB-1")).id,
+        provider: "github",
+        kind: "pr",
+        url: openPullRequest.url,
+        title: "Fix WEB-2 too",
+        state: "open",
+      },
+    ])
+    expect(await linksFor(github, workspaces, "WEB-2")).toHaveLength(1)
+
+    expect(await activityOfType(workspaces, "WEB-1", "github.linked")).toEqual([
+      expect.objectContaining({
+        actorType: "github",
+        actorId: null,
+        summary: "Linked automatically from WEB-1",
+        payload: {
+          kind: "pr",
+          number: 12,
+          url: openPullRequest.url,
+          repository: "acme/web",
+          identifier: "WEB-1",
+        },
+      }),
+    ])
+  })
+
+  test("links a GitHub Issue from its title", async () => {
+    const { github, deps, web, workspaces } = await setup({
+      issues: { "acme/web": [{ ...openIssue, title: "WEB-3 regression" }] },
+    })
+
+    const outcome = await syncRepository(deps, web.id)
+    expect(outcome).toMatchObject({ status: "ok", linked: 1 })
+
+    expect(await linksFor(github, workspaces, "WEB-3")).toEqual([
+      expect.objectContaining({
+        provider: "github",
+        kind: "issue",
+        url: openIssue.url,
+        title: "WEB-3 regression",
+        state: "open",
+      }),
+    ])
+    expect(await activityOfType(workspaces, "WEB-3", "github.linked")).toEqual([
+      expect.objectContaining({
+        summary: "Linked automatically from WEB-3",
+        payload: expect.objectContaining({
+          kind: "issue",
+          number: 5,
+          identifier: "WEB-3",
+        }),
+      }),
+    ])
+  })
+
+  test("dedupes repeated identifiers and ignores unknown or foreign ones", async () => {
+    const { github, deps, web, workspaces } = await setup({
+      pullRequests: {
+        "acme/web": [
+          {
+            ...openPullRequest,
+            sourceBranch: "feature/WEB-1-login",
+            title: "Follow-up to WEB-1, WEB-999, and MOB-1",
+          },
+        ],
+      },
+    })
+    const otherWorkspace = await workspaces.createWorkspace(
+      "user-other",
+      "Other"
+    )
+    await workspaces.createProject(otherWorkspace.id, {
+      name: "Mobile",
+      key: "MOB",
+    })
+    expect(await workspaces.getIssue("MOB-1")).not.toBeNull()
+
+    const outcome = await syncRepository(deps, web.id)
+    expect(outcome).toMatchObject({ status: "ok", linked: 1 })
+    expect(await linksFor(github, workspaces, "WEB-1")).toHaveLength(1)
+    expect(await linksFor(github, workspaces, "MOB-1")).toEqual([])
+  })
+
+  test("a repeated sync creates no duplicate links or github.linked events", async () => {
+    const { github, deps, web, workspaces } = await setup({
+      pullRequests: { "acme/web": [linkingPullRequest] },
+    })
+    await syncRepository(deps, web.id)
+    const again = await syncRepository(deps, web.id)
+
+    expect(again).toMatchObject({ status: "ok", linked: 0 })
+    expect(await linksFor(github, workspaces, "WEB-1")).toHaveLength(1)
+    expect(
+      await activityOfType(workspaces, "WEB-1", "github.linked")
+    ).toHaveLength(1)
+  })
+
+  test("overlapping syncs create one link and one github.linked event", async () => {
+    const { github, deps, connection, workspaces } = await setup({
+      pullRequests: { "acme/web": [linkingPullRequest] },
+    })
+
+    const outcomes = await Promise.all([
+      syncConnection(deps, connection.id),
+      syncConnection(deps, connection.id),
+    ])
+    const linked = outcomes.reduce(
+      (total, outcome) =>
+        total + (outcome.status === "ok" ? outcome.linked : 0),
+      0
+    )
+    expect(linked).toBe(2)
+    expect(await linksFor(github, workspaces, "WEB-1")).toHaveLength(1)
+    expect(await linksFor(github, workspaces, "WEB-2")).toHaveLength(1)
+    expect(
+      await activityOfType(workspaces, "WEB-1", "github.linked")
+    ).toHaveLength(1)
+  })
+
+  test("a link created by the manual link route is not linked or evented again", async () => {
+    const { github, deps, web, workspaces } = await setup({
+      pullRequests: { "acme/web": [linkingPullRequest] },
+    })
+    const target = await issueByKey(workspaces, "WEB-1")
+    await github.createExternalLink(target.id, {
+      provider: "github",
+      kind: "pr",
+      url: linkingPullRequest.url,
+      title: linkingPullRequest.title,
+      state: "open",
+    })
+    await workspaces.appendActivity(target.id, {
+      actor: { type: "user", id: owner.id },
+      type: "github.linked",
+      summary: "Linked from acme/web #12",
+      payload: { kind: "pr", number: 12, url: linkingPullRequest.url },
+    })
+
+    const outcome = await syncRepository(deps, web.id)
+    expect(outcome).toMatchObject({ status: "ok", linked: 1 })
+    expect(await linksFor(github, workspaces, "WEB-1")).toHaveLength(1)
+    const events = await activityOfType(workspaces, "WEB-1", "github.linked")
+    expect(events).toHaveLength(1)
+    expect(events[0]?.summary).toBe("Linked from acme/web #12")
+  })
+})
+
+describe("github transition activity", () => {
+  const linkingPullRequest: RemotePullRequest = {
+    ...openPullRequest,
+    sourceBranch: "feature/WEB-1-login",
+    title: "Fix WEB-1",
+  }
+
+  test("merging a Pull Request appends one event and refreshes its badge", async () => {
+    const { github, provider, deps, web, workspaces, clock } = await setup({
+      pullRequests: { "acme/web": [linkingPullRequest] },
+    })
+    await syncRepository(deps, web.id)
+
+    // A still-open update refreshes the snapshot, not the badge.
+    provider.pullRequests["acme/web"] = [
+      { ...linkingPullRequest, title: "Fix WEB-1 properly" },
+    ]
+    await syncRepository(deps, web.id)
+    expect((await linksFor(github, workspaces, "WEB-1"))[0]?.title).toBe(
+      "Fix WEB-1"
+    )
+
+    provider.pullRequests["acme/web"] = []
+    provider.closedPullRequests["acme/web"] = [
+      { number: 12, state: "merged", at: "2026-10-11T10:00:00.000Z" },
+    ]
+    clock.at = "2026-10-11T12:00:00.000Z"
+    await syncRepository(deps, web.id)
+
+    expect(await github.getPullRequest(web.id, 12)).toMatchObject({
+      state: "merged",
+    })
+    expect((await linksFor(github, workspaces, "WEB-1"))[0]).toMatchObject({
+      state: "merged",
+      title: "Fix WEB-1 properly",
+    })
+
+    const merged = await activityOfType(
+      workspaces,
+      "WEB-1",
+      "github.pull_request.merged"
+    )
+    expect(merged).toEqual([
+      expect.objectContaining({
+        actorType: "github",
+        actorId: null,
+        summary: "Merged pull request #12",
+        payload: {
+          kind: "pr",
+          number: 12,
+          url: linkingPullRequest.url,
+          repository: "acme/web",
+        },
+      }),
+    ])
+
+    // No Inbox rows come from a GitHub transition.
+    expect(
+      (await workspaces.listNotifications(owner.id, { filter: "all" }))
+        .notifications
+    ).toEqual([])
+
+    // A second sync of unchanged data observes no transition.
+    await syncRepository(deps, web.id)
+    expect(
+      await activityOfType(workspaces, "WEB-1", "github.pull_request.merged")
+    ).toHaveLength(1)
+  })
+
+  test("closing a Pull Request appends the closed event", async () => {
+    const { github, provider, deps, web, workspaces } = await setup({
+      pullRequests: { "acme/web": [linkingPullRequest] },
+    })
+    await syncRepository(deps, web.id)
+
+    provider.pullRequests["acme/web"] = []
+    provider.closedPullRequests["acme/web"] = [
+      { number: 12, state: "closed", at: "2026-10-11T10:00:00.000Z" },
+    ]
+    await syncRepository(deps, web.id)
+
+    expect((await linksFor(github, workspaces, "WEB-1"))[0]).toMatchObject({
+      state: "closed",
+    })
+    expect(
+      await activityOfType(workspaces, "WEB-1", "github.pull_request.closed")
+    ).toEqual([
+      expect.objectContaining({
+        summary: "Closed pull request #12",
+        payload: expect.objectContaining({ kind: "pr", number: 12 }),
+      }),
+    ])
+  })
+
+  test("closing a GitHub Issue appends the closed event", async () => {
+    const { github, provider, deps, web, workspaces } = await setup({
+      issues: { "acme/web": [{ ...openIssue, title: "WEB-3 regression" }] },
+    })
+    await syncRepository(deps, web.id)
+
+    provider.issues["acme/web"] = []
+    provider.closedIssues["acme/web"] = [
+      { number: 5, at: "2026-10-11T10:00:00.000Z" },
+    ]
+    await syncRepository(deps, web.id)
+
+    expect(await github.getGitHubIssue(web.id, 5)).toMatchObject({
+      state: "closed",
+    })
+    expect((await linksFor(github, workspaces, "WEB-3"))[0]).toMatchObject({
+      state: "closed",
+    })
+    expect(
+      await activityOfType(workspaces, "WEB-3", "github.issue.closed")
+    ).toEqual([
+      expect.objectContaining({
+        summary: "Closed GitHub issue #5",
+        payload: {
+          kind: "issue",
+          number: 5,
+          url: openIssue.url,
+          repository: "acme/web",
+        },
+      }),
+    ])
+  })
+
+  test("a reappearing Pull Request emits reopened and clears the badge", async () => {
+    const { github, provider, deps, web, workspaces } = await setup({
+      pullRequests: { "acme/web": [linkingPullRequest] },
+    })
+    await syncRepository(deps, web.id)
+    await github.setPullRequestState(
+      web.id,
+      12,
+      {
+        state: "merged",
+        mergedAt: "2026-10-09T08:00:00.000Z",
+        closedAt: null,
+        githubUpdatedAt: "2026-10-09T08:00:00.000Z",
+      },
+      "2026-10-09T08:00:00.000Z"
+    )
+    await github.updateExternalLink(
+      (await linksFor(github, workspaces, "WEB-1"))[0]?.id as string,
+      { state: "merged" }
+    )
+
+    provider.pullRequests["acme/web"] = [
+      { ...linkingPullRequest, title: "Fix WEB-1 again" },
+    ]
+    await syncRepository(deps, web.id)
+
+    expect(await github.getPullRequest(web.id, 12)).toMatchObject({
+      state: "open",
+    })
+    expect((await linksFor(github, workspaces, "WEB-1"))[0]).toMatchObject({
+      state: "open",
+      title: "Fix WEB-1 again",
+    })
+    expect(
+      await activityOfType(workspaces, "WEB-1", "github.pull_request.reopened")
+    ).toEqual([
+      expect.objectContaining({
+        summary: "Reopened pull request #12",
+        payload: {
+          kind: "pr",
+          number: 12,
+          url: linkingPullRequest.url,
+          repository: "acme/web",
+        },
+      }),
+    ])
+  })
+
+  test("a reappearing GitHub Issue emits reopened and clears the badge", async () => {
+    const { github, deps, web, workspaces } = await setup({
+      issues: { "acme/web": [{ ...openIssue, title: "WEB-3 regression" }] },
+    })
+    await syncRepository(deps, web.id)
+    await github.setGitHubIssueState(
+      web.id,
+      5,
+      {
+        state: "closed",
+        closedAt: "2026-10-09T09:00:00.000Z",
+        githubUpdatedAt: "2026-10-09T09:00:00.000Z",
+      },
+      "2026-10-09T09:00:00.000Z"
+    )
+    await github.updateExternalLink(
+      (await linksFor(github, workspaces, "WEB-3"))[0]?.id as string,
+      { state: "closed" }
+    )
+
+    await syncRepository(deps, web.id)
+
+    expect(await github.getGitHubIssue(web.id, 5)).toMatchObject({
+      state: "open",
+    })
+    expect((await linksFor(github, workspaces, "WEB-3"))[0]).toMatchObject({
+      state: "open",
+    })
+    expect(
+      await activityOfType(workspaces, "WEB-3", "github.issue.reopened")
+    ).toEqual([
+      expect.objectContaining({
+        summary: "Reopened GitHub issue #5",
+        payload: expect.objectContaining({ kind: "issue", number: 5 }),
+      }),
     ])
   })
 })
