@@ -394,6 +394,9 @@ export const createIssueFromGitHubItemInputSchema = z.object({
   kind: githubItemKindSchema,
   repositoryId: z.string(),
   number: z.number().int().positive(),
+  /** Dialog edits; omitted fields fall back to the snapshot values. */
+  title: z.string().optional(),
+  description: z.string().optional(),
 })
 
 export const commentSchema = z.object({

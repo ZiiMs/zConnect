@@ -1343,6 +1343,8 @@ describe("URL as the state store", () => {
         kind: "pr",
         repositoryId: "repo-1",
         number: 12,
+        title: "Add the GitHub View",
+        description: "https://github.com/acme/web/pull/12",
       })
     )
     await waitFor(() =>
