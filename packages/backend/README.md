@@ -78,6 +78,22 @@ the Connection allowlist. After upgrading, open Settings → Connections → Git
 GitHub, and re-select the repositories. The webhook endpoint is unchanged and accepts
 deliveries for repositories selected under the new model.
 
+### Sync freshness
+
+Opening the GitHub View serves the cached snapshot immediately and asks the backend for a sync
+when the newest snapshot is older than five minutes. A manual Refresh is accepted at most once
+per minute per workspace (`429` with a `retryAfter` hint otherwise). The worker sweeps every
+repository linked to at least one project every fifteen minutes, and a daily retention pass
+removes merged Pull Requests and closed GitHub Issues whose close is more than ninety days old.
+Open items never age out.
+
+A `401` from GitHub pauses the Connection (`reconnect_required`): sync stops for the workspace
+and the GitHub View shows a Reconnect banner (Owners/Admins start the OAuth flow; members are
+told to ask an admin). A `403`/`404` marks only that repository unavailable and keeps its last
+snapshot on screen. Renamed repositories are repaired on the next sync through GitHub's
+immutable repository id. Rate limits leave `lastSyncedAt` unchanged so the next sweep retries
+after GitHub's window instead of recording a fresh snapshot.
+
 ## Realtime
 
 Neon Realtime is the live transport: the backend seals one deterministic SQL

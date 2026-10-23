@@ -7,6 +7,8 @@ const badge =
   "inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium"
 const labelBadge =
   "inline-flex items-center gap-1 rounded-full border border-border bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
+const unavailableBadge =
+  "inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 font-medium text-[10px] text-amber-700 dark:text-amber-400"
 
 function StateIcon({ state }: { state: GitHubIssueRow["state"] }) {
   if (state === "closed") {
@@ -35,9 +37,12 @@ function StateIcon({ state }: { state: GitHubIssueRow["state"] }) {
 export function GitHubIssueTable({
   rows,
   showRepository,
+  unavailableRepositories,
 }: {
   rows: GitHubIssueRow[]
   showRepository: boolean
+  /** Full names of repositories whose last sync failed; rows stay visible. */
+  unavailableRepositories?: ReadonlySet<string>
 }) {
   return (
     <div className="overflow-x-auto rounded-md border">
@@ -83,19 +88,40 @@ export function GitHubIssueTable({
                 #{row.number}
               </td>
               <td className={`${cell} max-w-80`}>
-                <a
-                  href={row.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  onClick={(event) => event.stopPropagation()}
-                  className="block truncate font-medium hover:underline"
-                >
-                  {row.title}
-                </a>
+                <span className="flex items-center gap-1.5">
+                  <a
+                    href={row.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(event) => event.stopPropagation()}
+                    className="truncate font-medium hover:underline"
+                  >
+                    {row.title}
+                  </a>
+                  {!showRepository &&
+                    unavailableRepositories?.has(row.repository) && (
+                      <span
+                        className={unavailableBadge}
+                        title="GitHub is unavailable for this repository; showing the cached snapshot."
+                      >
+                        Unavailable
+                      </span>
+                    )}
+                </span>
               </td>
               {showRepository && (
                 <td className={`${cell} text-muted-foreground text-xs`}>
-                  {row.repository}
+                  <span className="flex items-center gap-1.5">
+                    {row.repository}
+                    {unavailableRepositories?.has(row.repository) && (
+                      <span
+                        className={unavailableBadge}
+                        title="GitHub is unavailable for this repository; showing the cached snapshot."
+                      >
+                        Unavailable
+                      </span>
+                    )}
+                  </span>
                 </td>
               )}
               <td className={`${cell} whitespace-nowrap text-xs`}>

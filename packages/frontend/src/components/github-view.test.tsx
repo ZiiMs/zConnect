@@ -8,13 +8,21 @@ import {
 import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
 import {
+  ApiError,
   api,
   type GitHubIssueListResponse,
   type GitHubIssueRow,
   type PullRequestListResponse,
   type PullRequestRow,
 } from "@/lib/api"
+import { authClient } from "@/lib/auth-client"
 import { GitHubView } from "./github-view.js"
+
+const authLink = vi.hoisted(() => ({ linkSocial: vi.fn() }))
+
+vi.mock("@/lib/auth-client", () => ({
+  authClient: authLink,
+}))
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>()
@@ -32,6 +40,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
 const listPullRequests = vi.mocked(api.listPullRequests)
 const listGitHubIssues = vi.mocked(api.listGitHubIssues)
 const refreshGitHub = vi.mocked(api.refreshGitHub)
+const linkSocial = vi.mocked(authClient.linkSocial)
 
 const workspace = { id: "ws-1", name: "Acme", role: "Owner" as const }
 const project = {
@@ -212,6 +221,11 @@ beforeEach(() => {
   window.history.replaceState(null, "", "/acme/WEB/github")
   listPullRequests.mockResolvedValue(response())
   listGitHubIssues.mockResolvedValue(issueResponse())
+  refreshGitHub.mockResolvedValue({
+    accepted: true,
+    enqueued: 1,
+    lastSyncedAt: "2026-10-10T12:00:00.000Z",
+  })
 })
 
 afterEach(() => {
@@ -556,5 +570,135 @@ describe("github view", () => {
     expect(
       await screen.findByText("No open GitHub issues.")
     ).toBeInTheDocument()
+  })
+
+  test("auto-refreshes a stale snapshot once per mount", async () => {
+    const user = userEvent.setup()
+    renderView()
+    await screen.findByRole("table", { name: "Pull requests" })
+
+    await waitFor(() => expect(refreshGitHub).toHaveBeenCalledTimes(1))
+    expect(refreshGitHub).toHaveBeenCalledWith("pr-1")
+
+    // A filter change reloads the list but never re-fires the refresh.
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Pull request state" }),
+      "merged"
+    )
+    await waitFor(() => expect(listPullRequests).toHaveBeenCalledTimes(2))
+    expect(refreshGitHub).toHaveBeenCalledTimes(1)
+  })
+
+  test("auto-refreshes a project that never synced", async () => {
+    listPullRequests.mockResolvedValue(response({ lastSyncedAt: null }))
+    renderView()
+    await screen.findByRole("table", { name: "Pull requests" })
+    await waitFor(() => expect(refreshGitHub).toHaveBeenCalledTimes(1))
+  })
+
+  test("does not auto-refresh a snapshot younger than five minutes", async () => {
+    listPullRequests.mockResolvedValue(
+      response({ lastSyncedAt: new Date().toISOString() })
+    )
+    renderView()
+    await screen.findByRole("table", { name: "Pull requests" })
+    expect(refreshGitHub).not.toHaveBeenCalled()
+  })
+
+  test("an admin gets a Reconnect action that starts the GitHub OAuth flow", async () => {
+    const user = userEvent.setup()
+    listPullRequests.mockResolvedValue(
+      response({
+        lastSyncedAt: new Date().toISOString(),
+        connection: { status: "reconnect_required", login: "octocat" },
+      })
+    )
+    renderView()
+
+    await user.click(await screen.findByRole("button", { name: "Reconnect" }))
+    expect(linkSocial).toHaveBeenCalledWith({
+      provider: "github",
+      scopes: ["repo"],
+      callbackURL: expect.stringContaining("/acme/settings/connections"),
+    })
+    expect(linkSocial.mock.calls[0]?.[0].callbackURL).toContain("linked=1")
+  })
+
+  test("a member sees the ask-an-admin message instead of a reconnect action", async () => {
+    listPullRequests.mockResolvedValue(
+      response({
+        lastSyncedAt: new Date().toISOString(),
+        connection: { status: "reconnect_required", login: "octocat" },
+      })
+    )
+    render(
+      <GitHubView
+        workspace={{ ...workspace, role: "Member" }}
+        project={project}
+        tab="pull-requests"
+        canWrite={true}
+        canAdmin={false}
+      />
+    )
+
+    expect(
+      await screen.findByText(/Ask a workspace admin to reconnect GitHub\./)
+    ).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Reconnect" })).toBeNull()
+    expect(linkSocial).not.toHaveBeenCalled()
+  })
+
+  test("an unavailable repository keeps its rows and marks them", async () => {
+    listPullRequests.mockResolvedValue(
+      response({
+        repositories: [
+          {
+            id: "repo-1",
+            fullName: "acme/web",
+            issuesEnabled: true,
+            unavailable: true,
+          },
+          {
+            id: "repo-2",
+            fullName: "acme/api",
+            issuesEnabled: true,
+            unavailable: false,
+          },
+        ],
+      })
+    )
+    renderView()
+
+    const row = await screen.findByTestId("pull-request-row-12")
+    expect(within(row).getByText("Unavailable")).toBeInTheDocument()
+    expect(within(row).getByText("Add the GitHub View")).toBeInTheDocument()
+    expect(
+      within(screen.getByTestId("pull-request-row-7")).queryByText(
+        "Unavailable"
+      )
+    ).toBeNull()
+  })
+
+  test("a throttled refresh reports a retry hint without dropping the rows", async () => {
+    const user = userEvent.setup()
+    listPullRequests.mockResolvedValue(
+      response({ lastSyncedAt: new Date().toISOString() })
+    )
+    refreshGitHub.mockRejectedValueOnce(
+      new ApiError(429, "Refresh throttled", 30)
+    )
+    renderView()
+
+    await screen.findByRole("table", { name: "Pull requests" })
+    await user.click(screen.getByRole("button", { name: "Refresh" }))
+
+    expect(
+      await screen.findByText(
+        "Refresh is limited to once a minute. Try again in 30 seconds."
+      )
+    ).toBeInTheDocument()
+    // The cached rows stay and the throttle is not an error state.
+    expect(screen.getByText("Add the GitHub View")).toBeInTheDocument()
+    expect(screen.queryByText("Refresh throttled")).toBeNull()
   })
 })

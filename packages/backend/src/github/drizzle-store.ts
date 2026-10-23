@@ -1,4 +1,4 @@
-import { and, desc, eq, ilike, inArray, lt, or, sql } from "drizzle-orm"
+import { and, desc, eq, ilike, inArray, lt, ne, or, sql } from "drizzle-orm"
 import type { getDb } from "../db/index.js"
 import {
   externalLink,
@@ -873,6 +873,40 @@ export function createDrizzleGitHubStore(resolveDb: () => Db): GitHubStore {
         .where(eq(externalLink.id, id))
         .returning({ id: externalLink.id })
       return rows.length > 0
+    },
+
+    async deleteExpiredPullRequests(olderThan) {
+      const db = resolveDb()
+      const rows = await db
+        .delete(githubPullRequest)
+        .where(
+          and(
+            ne(githubPullRequest.state, "open"),
+            lt(
+              sql`coalesce(${githubPullRequest.mergedAt}, ${githubPullRequest.closedAt}, ${githubPullRequest.githubUpdatedAt})`,
+              new Date(olderThan)
+            )
+          )
+        )
+        .returning({ id: githubPullRequest.id })
+      return rows.length
+    },
+
+    async deleteExpiredGitHubIssues(olderThan) {
+      const db = resolveDb()
+      const rows = await db
+        .delete(githubIssue)
+        .where(
+          and(
+            ne(githubIssue.state, "open"),
+            lt(
+              sql`coalesce(${githubIssue.closedAt}, ${githubIssue.githubUpdatedAt})`,
+              new Date(olderThan)
+            )
+          )
+        )
+        .returning({ id: githubIssue.id })
+      return rows.length
     },
   }
 }
