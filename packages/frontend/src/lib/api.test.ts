@@ -832,6 +832,48 @@ describe("github item api client", () => {
     expect(result.linkedIssues).toEqual([linkedIssue])
   })
 
+  test("createIssueFromGitHubItem posts the item and parses the created Issue", async () => {
+    const fetchMock = mockFetchOnce({
+      id: "issue-7",
+      projectId: "pr-1",
+      number: 7,
+      keyPrefix: "WEB",
+      identifier: "WEB-7",
+      title: "Add the GitHub View",
+      description: "https://github.com/acme/web/pull/12",
+      statusId: "status-todo",
+      priority: "Medium",
+      assigneeId: null,
+      dueDate: null,
+      archived: false,
+      labels: [],
+      createdBy: "user-1",
+      createdAt: "2026-10-10T12:00:00.000Z",
+      updatedAt: "2026-10-10T12:00:00.000Z",
+    })
+
+    const result = await api.createIssueFromGitHubItem("pr-1", {
+      kind: "pr",
+      repositoryId: "repo-1",
+      number: 12,
+    })
+
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/projects/pr-1/github/items/create-issue")
+    expect(options.method).toBe("POST")
+    expect(JSON.parse(options.body as string)).toEqual({
+      kind: "pr",
+      repositoryId: "repo-1",
+      number: 12,
+    })
+    expect(result).toMatchObject({
+      identifier: "WEB-7",
+      title: "Add the GitHub View",
+      statusId: "status-todo",
+      createdBy: "user-1",
+    })
+  })
+
   test("deleteExternalLink sends DELETE and resolves without a body", async () => {
     const fetchMock = mockFetchOnce({ deleted: true })
 
