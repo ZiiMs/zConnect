@@ -505,6 +505,12 @@ All new routes live on the existing Hono app, mounted from `index.ts`. Every res
 JSON. Auth: no session → `401`. Permission miss → `403`. Missing row → `404`. Validation →
 `400`. The access token never appears in any response or log.
 
+**Project path parameter.** Spec #46 writes `/api/projects/:key/...`, but every existing
+`/api/projects/...` route takes the project **row id** and `getProject` resolves ids only
+(only `/api/issues/:key` accepts a human identifier). The new routes therefore use
+`/api/projects/:id/...` with the project row id; the browser URL keeps `{PROJECTKEY}`. This
+is a deliberate, documented deviation from the spec's literal path spelling.
+
 Permission helpers (existing, `workspaces/permissions.ts`): `readableProject` (member or
 Viewer grant), `writableProject` (member+), `manageableProject` (Owner/Admin). Workspace
 admin check = `getMembership().role !== "Member"`.
@@ -566,8 +572,8 @@ scope `repo` is asked for by the frontend `linkSocial` call.
 ### #48 Project repositories (`github/project-routes.ts`)
 
 ```
-GET /api/projects/:key/repositories   project read (member or Viewer)
-PUT /api/projects/:key/repositories   Owner/Admin of the project's workspace
+GET /api/projects/:id/repositories   project read (member or Viewer)
+PUT /api/projects/:id/repositories   Owner/Admin of the project's workspace
 ```
 
 `GET` →
@@ -579,10 +585,10 @@ allowlist; unknown/foreign id → `400`), replaces the set, returns the same sha
 ### #49/#50/#51 GitHub View (`github/view-routes.ts`)
 
 ```
-GET  /api/projects/:key/github/pull-requests?state=&author=&q=&cursor=&limit=
-GET  /api/projects/:key/github/issues?state=&author=&label=&q=&cursor=&limit=
-POST /api/projects/:key/github/refresh
-GET  /api/projects/:key/github/status
+GET  /api/projects/:id/github/pull-requests?state=&author=&q=&cursor=&limit=
+GET  /api/projects/:id/github/issues?state=&author=&label=&q=&cursor=&limit=
+POST /api/projects/:id/github/refresh
+GET  /api/projects/:id/github/status
 ```
 
 All project read. Default `state=open`. Invalid `state` → `400`.
@@ -624,8 +630,8 @@ the list envelope's non-item fields, so the settings/inline banner can poll chea
 ### #52/#53 Items (`github/item-routes.ts`)
 
 ```
-POST   /api/projects/:key/github/items/link          project write (+ target project write)
-POST   /api/projects/:key/github/items/create-issue  project write
+POST   /api/projects/:id/github/items/link          project write (+ target project write)
+POST   /api/projects/:id/github/items/create-issue  project write
 DELETE /api/issues/:key/external-links/:id           issue write
 ```
 
@@ -702,21 +708,31 @@ connectGitHubConnection(workspaceId): Promise<GitHubConnectionResponse>
 disconnectGitHubConnection(workspaceId): Promise<void>
 searchGitHubRepositories(workspaceId, query): Promise<{ items: RemoteRepositoryOption[] }>
 setGitHubAllowlist(workspaceId, githubIds): Promise<...>
-getProjectRepositories(projectKey): Promise<ProjectRepositoriesResponse>
-setProjectRepositories(projectKey, repositoryIds): Promise<ProjectRepositoriesResponse>
-listPullRequests(projectKey, filters): Promise<GitHubListResponse<PullRequestRow>>
-listGitHubIssues(projectKey, filters): Promise<GitHubListResponse<GitHubIssueRow>>
-refreshGitHub(projectKey): Promise<{ accepted: boolean; enqueued: number }>
-linkGitHubItem(projectKey, input): Promise<{ link: ExternalLink; issue: ... }>
-createIssueFromGitHubItem(projectKey, input): Promise<Issue>
+getProjectRepositories(projectId): Promise<ProjectRepositoriesResponse>
+setProjectRepositories(projectId, repositoryIds): Promise<ProjectRepositoriesResponse>
+listPullRequests(projectId, filters): Promise<GitHubListResponse<PullRequestRow>>
+listGitHubIssues(projectId, filters): Promise<GitHubListResponse<GitHubIssueRow>>
+refreshGitHub(projectId): Promise<{ accepted: boolean; enqueued: number }>
+linkGitHubItem(projectId, input): Promise<{ link: ExternalLink; issue: ... }>
+createIssueFromGitHubItem(projectId, input): Promise<Issue>
 deleteExternalLink(issueKey, linkId): Promise<void>
 ```
 
 ### Surfaces
 
-- **Project nav** (#49): beside the List/Table/Kanban switcher, a `GitHub` entry.
-  `/{ws}/{KEY}` keeps the issue views; `/{ws}/{KEY}/github` renders the GitHub View with
-  two tabs (Pull Requests, GitHub Issues). Both tabs render `GitHubItemTable`.
+- **Settings registration** (four places): `SettingsTab`/`SETTINGS_TABS`/
+  `parseSettingsTab` in `lib/routes.ts`, `SETTINGS_CATEGORIES` in
+  `components/workspace-settings.tsx`, and the `WorkspaceSettings` panel switch. #47 adds the
+  `connections` page and nav item; #48 adds the `repositories` page and nav item.
+- **App shell**: `App.tsx` canonicalizes unknown paths. Every new section needs its branch
+  there (settings tabs flow through `buildSettingsPath`; the project GitHub view needs its
+  own canonical path). `App.test.tsx` mocks `lib/api` with a **whitelist** of methods — any
+  new `api.*` call rendered by the shell must be added to that mock or jsdom will hit real
+  `fetch`. Add the GitHub View's calls to the mock.
+- **Project nav** (#49): a tab row in `project-issues.tsx` near `IssueFilterPresetTabs`
+  with `Issues` and `GitHub`. `Issues` is `/{ws}/{KEY}` (the existing List/Table/Kanban
+  views); `GitHub` is `/{ws}/{KEY}/github` and renders the GitHub View. The GitHub entry is
+  a peer of the issue views, not a fourth view inside their switcher.
 - **GitHub View** (#49/#50): header shows "Updated <relative>" + Refresh button (project
   read), filters bar, table, empty states (`no connection`, `no repositories linked`, `no
   open pull requests`/`no open GitHub issues`, `issues disabled`, `repository unavailable`,
