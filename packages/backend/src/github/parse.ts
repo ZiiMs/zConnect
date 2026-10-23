@@ -36,10 +36,10 @@ export function extractIssueRefs(text: string): string[] {
 }
 
 const GITHUB_URL_PATTERN =
-  /^https?:\/\/(?:www\.)?github\.com\/([^/]+)\/([^/]+)\/(pull|commit|tree)\/([^/]+?)(?:\/|\?|#|$)/i
+  /^https?:\/\/(?:www\.)?github\.com\/([^/]+)\/([^/]+)\/(pull|issues|commit|tree)\/([^/]+?)(?:\/|\?|#|$)/i
 
 /**
- * Classifies a pasted GitHub PR/branch/commit URL. Returns null for
+ * Classifies a pasted GitHub issue/PR/branch/commit URL. Returns null for
  * non-GitHub or unrecognized URLs.
  */
 export function parseExternalUrl(raw: string): ParsedExternalUrl | null {
@@ -49,8 +49,10 @@ export function parseExternalUrl(raw: string): ParsedExternalUrl | null {
   const kind: ExternalLinkKind =
     segment.toLowerCase() === "pull"
       ? "pr"
-      : segment.toLowerCase() === "commit"
-        ? "commit"
-        : "branch"
+      : segment.toLowerCase() === "issues"
+        ? "issue"
+        : segment.toLowerCase() === "commit"
+          ? "commit"
+          : "branch"
   return { provider: "github", kind, owner, repo, ref, url: raw.trim() }
 }

@@ -717,3 +717,64 @@ describe("github view api client", () => {
     })
   })
 })
+
+describe("github item api client", () => {
+  const link = {
+    id: "link-1",
+    issueId: "issue-1",
+    provider: "github",
+    kind: "pr",
+    url: "https://github.com/acme/web/pull/12",
+    title: "Add the GitHub View",
+    state: "open",
+  }
+  const linkedIssue = {
+    linkId: "link-1",
+    issueId: "issue-1",
+    identifier: "WEB-2",
+    title: "Invite your teammates to this workspace",
+  }
+
+  test("linkGitHubItem posts the item and target identifier, then parses the chips", async () => {
+    const fetchMock = mockFetchOnce({
+      link,
+      issue: {
+        id: "issue-1",
+        identifier: "WEB-2",
+        title: "Invite your teammates to this workspace",
+      },
+      linkedIssues: [linkedIssue],
+    })
+
+    const result = await api.linkGitHubItem("pr-1", {
+      kind: "pr",
+      repositoryId: "repo-1",
+      number: 12,
+      issue: "WEB-2",
+    })
+
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/projects/pr-1/github/items/link")
+    expect(options.method).toBe("POST")
+    expect(JSON.parse(options.body as string)).toEqual({
+      kind: "pr",
+      repositoryId: "repo-1",
+      number: 12,
+      issue: "WEB-2",
+    })
+    expect(result.link).toMatchObject({ id: "link-1", kind: "pr" })
+    expect(result.linkedIssues).toEqual([linkedIssue])
+  })
+
+  test("deleteExternalLink sends DELETE and resolves without a body", async () => {
+    const fetchMock = mockFetchOnce({ deleted: true })
+
+    await expect(
+      api.deleteExternalLink("WEB-1", "link-1")
+    ).resolves.toBeUndefined()
+
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/issues/WEB-1/external-links/link-1")
+    expect(options.method).toBe("DELETE")
+  })
+})

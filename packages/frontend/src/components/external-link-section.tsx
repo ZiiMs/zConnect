@@ -2,6 +2,7 @@ import { Plus } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 import { ExternalLinkBadge } from "@/components/external-link-badge"
 import { ExternalLinkForm } from "@/components/external-link-form"
+import { api } from "@/lib/api"
 import { type ExternalLink, externalLinksApi } from "@/lib/external-links"
 
 /**
@@ -20,6 +21,7 @@ export function ExternalLinkSection({
   const [links, setLinks] = useState<ExternalLink[]>([])
   const [error, setError] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
+  const [unlinkingId, setUnlinkingId] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     try {
@@ -57,6 +59,21 @@ export function ExternalLinkSection({
     return created
   }
 
+  async function handleUnlink(link: ExternalLink) {
+    if (unlinkingId) return
+    setUnlinkingId(link.id)
+    setError(null)
+    try {
+      await api.deleteExternalLink(issueIdentifier, link.id)
+      setLinks((current) => current.filter((row) => row.id !== link.id))
+      await refresh()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unlinking failed")
+    } finally {
+      setUnlinkingId(null)
+    }
+  }
+
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-1">
@@ -79,8 +96,19 @@ export function ExternalLinkSection({
       ) : (
         <ul className="flex flex-wrap gap-2">
           {links.map((link) => (
-            <li key={link.id}>
+            <li key={link.id} className="flex items-center gap-1">
               <ExternalLinkBadge link={link} />
+              {canWrite && (
+                <button
+                  type="button"
+                  onClick={() => void handleUnlink(link)}
+                  disabled={unlinkingId === link.id}
+                  aria-label={`Unlink ${link.title ?? link.url}`}
+                  className="rounded-md px-1 py-0.5 text-muted-foreground text-xs hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
+                >
+                  Unlink
+                </button>
+              )}
             </li>
           ))}
         </ul>

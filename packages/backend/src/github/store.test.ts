@@ -84,6 +84,26 @@ describe("external links", () => {
     expect(updated.state).toBe("merged")
   })
 
+  test("finds links by URL, reads one, and deletes it idempotently", async () => {
+    const store = createMemoryGitHubStore()
+    const link = await store.createExternalLink("issue-1", {
+      provider: "github",
+      kind: "issue",
+      url: "https://github.com/acme/web/issues/42",
+      title: "Parser crash",
+      state: "open",
+    })
+
+    expect(await store.findExternalLinksByUrl(link.url)).toEqual([link])
+    expect(await store.findExternalLinksByUrl(`${link.url}/nope`)).toEqual([])
+    expect(await store.getExternalLink(link.id)).toEqual(link)
+    expect(await store.getExternalLink("missing")).toBeNull()
+
+    expect(await store.deleteExternalLink(link.id)).toBe(true)
+    expect(await store.getExternalLink(link.id)).toBeNull()
+    expect(await store.deleteExternalLink(link.id)).toBe(false)
+  })
+
   test("delivery ids are processed once (webhook redelivery)", async () => {
     const store = createMemoryGitHubStore()
     expect(await store.hasProcessedDelivery("d-1")).toBe(false)

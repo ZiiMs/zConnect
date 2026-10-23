@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest"
 import {
   api,
   type InvitationDetails,
+  type Issue,
   type Member,
   type Project,
   type Workspace,
@@ -63,6 +64,8 @@ vi.mock("@/lib/api", async (importOriginal) => {
       setProjectRepositories: vi.fn(),
       listPullRequests: vi.fn(),
       refreshGitHub: vi.fn(),
+      linkGitHubItem: vi.fn(),
+      deleteExternalLink: vi.fn(),
     },
   }
 })
@@ -77,6 +80,7 @@ const getGitHubConnection = vi.mocked(api.getGitHubConnection)
 const getProjectRepositories = vi.mocked(api.getProjectRepositories)
 const listPullRequests = vi.mocked(api.listPullRequests)
 const refreshGitHub = vi.mocked(api.refreshGitHub)
+const linkGitHubItem = vi.mocked(api.linkGitHubItem)
 
 const githubViewResponse = {
   items: [
@@ -198,6 +202,19 @@ beforeEach(() => {
     accepted: true,
     enqueued: 1,
     lastSyncedAt: "2026-10-10T12:00:00.000Z",
+  })
+  linkGitHubItem.mockResolvedValue({
+    link: {
+      id: "link-1",
+      issueId: "issue-1",
+      provider: "github",
+      kind: "pr",
+      url: "https://github.com/acme/web/pull/12",
+      title: "Add the GitHub View",
+      state: "open",
+    },
+    issue: { id: "issue-1", identifier: "WEB-2", title: "Target issue" },
+    linkedIssues: [],
   })
 })
 
@@ -1067,6 +1084,86 @@ describe("URL as the state store", () => {
     open.mockRestore()
   })
 
+  test("a writer links a Pull Request to an Issue and sees the chip", async () => {
+    const user = userEvent.setup()
+    const target: Issue = {
+      id: "issue-2",
+      projectId: "pr-1",
+      number: 2,
+      keyPrefix: "WEB",
+      identifier: "WEB-2",
+      title: "Invite your teammates to this workspace",
+      description: null,
+      statusId: "status-1",
+      priority: "None",
+      assigneeId: null,
+      dueDate: null,
+      archived: false,
+      labels: [],
+    }
+    vi.mocked(api.listIssues).mockResolvedValue([target])
+    linkGitHubItem.mockResolvedValue({
+      link: {
+        id: "link-1",
+        issueId: target.id,
+        provider: "github",
+        kind: "pr",
+        url: "https://github.com/acme/web/pull/12",
+        title: "Add the GitHub View",
+        state: "open",
+      },
+      issue: {
+        id: target.id,
+        identifier: target.identifier,
+        title: target.title,
+      },
+      linkedIssues: [
+        {
+          linkId: "link-1",
+          issueId: target.id,
+          identifier: target.identifier,
+          title: target.title,
+        },
+      ],
+    })
+    window.history.replaceState(null, "", "/acme/WEB/github")
+    renderShell()
+
+    const row = await screen.findByTestId("pull-request-row-12")
+    await user.click(
+      within(row).getByRole("button", { name: "GitHub item actions" })
+    )
+    expect(
+      screen.getByRole("menuitem", { name: "Open on GitHub" })
+    ).toHaveAttribute("href", "https://github.com/acme/web/pull/12")
+    await user.click(screen.getByRole("menuitem", { name: "Link to Issue" }))
+
+    const dialog = await screen.findByRole("dialog")
+    await user.type(
+      within(dialog).getByRole("searchbox", { name: "Search issues" }),
+      "WEB-2"
+    )
+    await waitFor(() =>
+      expect(api.listIssues).toHaveBeenLastCalledWith("pr-1", {
+        text: "WEB-2",
+      })
+    )
+    await user.click(
+      await within(dialog).findByRole("button", { name: /WEB-2/ })
+    )
+    await user.click(within(dialog).getByRole("button", { name: "Link" }))
+
+    await waitFor(() =>
+      expect(linkGitHubItem).toHaveBeenCalledWith("pr-1", {
+        kind: "pr",
+        repositoryId: "repo-1",
+        number: 12,
+        issue: "WEB-2",
+      })
+    )
+    expect(await within(row).findByText("WEB-2")).toBeInTheDocument()
+  })
+
   test("a Viewer reads the GitHub View without write affordances", async () => {
     listWorkspaces.mockResolvedValue([
       { id: "ws-1", name: "Acme", role: "Viewer" },
@@ -1080,6 +1177,9 @@ describe("URL as the state store", () => {
       "false"
     )
     expect(screen.queryByRole("button", { name: "New issue" })).toBeNull()
+    expect(
+      screen.queryByRole("button", { name: "GitHub item actions" })
+    ).toBeNull()
     expect(
       await screen.findByRole("table", { name: "Pull requests" })
     ).toBeInTheDocument()

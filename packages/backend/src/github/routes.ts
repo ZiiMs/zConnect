@@ -98,7 +98,10 @@ export function createGitHubApp({
     if (!parsed.success) return c.json({ error: "Invalid URL" }, 400)
     const classified = parseExternalUrl(parsed.data.url)
     if (!classified)
-      return c.json({ error: "Not a GitHub PR, branch, or commit URL" }, 400)
+      return c.json(
+        { error: "Not a GitHub issue, PR, branch, or commit URL" },
+        400
+      )
     const existing = (await github.listExternalLinks(found.issue.id)).find(
       (link) => link.url === classified.url
     )
