@@ -20,5 +20,19 @@ export const auth = betterAuth({
       clientId: process.env.GOOGLE_CLIENT_ID as string,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET as string,
     },
+    github: {
+      clientId: process.env.GITHUB_CLIENT_ID as string,
+      clientSecret: process.env.GITHUB_CLIENT_SECRET as string,
+    },
+  },
+  /**
+   * The GitHub Connection is authorized by an Owner/Admin whose GitHub email
+   * may differ from their zConnect email (ADR-0005). Linking stays manual;
+   * only explicit `linkSocial` calls attach the account.
+   */
+  account: {
+    accountLinking: {
+      allowDifferentEmails: true,
+    },
   },
 })
