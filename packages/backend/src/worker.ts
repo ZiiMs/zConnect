@@ -5,10 +5,10 @@ import { createDrizzleGitHubStore } from "./github/drizzle-store.js"
 import { createGitHubProvider } from "./github/github-provider.js"
 import { handlePullRequestEvent, handlePushEvent } from "./github/handler.js"
 import type { GitHubWebhookPayload } from "./github/job.js"
+import { runSweepJob } from "./github/jobs.js"
 import {
   applyRetention,
   type GitHubSyncDeps,
-  selectSweepRepositories,
   syncRepository,
 } from "./github/sync.js"
 import { createIntegrationCipher } from "./lib/cipher.js"
@@ -106,19 +106,29 @@ function createGitHubSyncDeps(): GitHubSyncDeps | null {
 }
 
 async function runGitHubSyncSweep(): Promise<
-  { skipped: true } | { repositories: number }
+  { skipped: true } | { status: string; repositories: number; retryAt?: string }
 > {
   const deps = createGitHubSyncDeps()
   if (!deps) return { skipped: true }
-  const repositoryIds = await selectSweepRepositories(
-    deps,
-    GITHUB_SWEEP_INTERVAL_MS
-  )
-  for (const repositoryId of repositoryIds) {
-    const outcome = await syncRepository(deps, repositoryId)
-    console.log(`[worker] github-sync-sweep ${repositoryId}: ${outcome.status}`)
+  const result = await runSweepJob({
+    ...deps,
+    maxAgeMs: GITHUB_SWEEP_INTERVAL_MS,
+    scheduleSweep: async ({ delayMs, jobId }) => {
+      // Sweep jobs carry no repository; the worker branches on the job name.
+      // The stable id keeps concurrent sweeps from stacking retries.
+      await queues[QUEUES.githubSync].add(
+        "github-sync-sweep",
+        {},
+        { delay: delayMs, jobId }
+      )
+    },
+  })
+  if (result.status === "rate_limited") {
+    console.warn(
+      `[worker] github-sync-sweep rate limited until ${result.retryAt}; deferred with a delayed job`
+    )
   }
-  return { repositories: repositoryIds.length }
+  return result
 }
 
 async function runGitHubRetention(): Promise<
