@@ -49,6 +49,12 @@ describe("routes", () => {
       "/acme/settings/workflow"
     )
     expect(buildSettingsPath("Acme", "labels")).toBe("/acme/settings/labels")
+    expect(buildSettingsPath("Acme", "connections")).toBe(
+      "/acme/settings/connections"
+    )
+    expect(buildSettingsPath("Acme", "repositories")).toBe(
+      "/acme/settings/repositories"
+    )
     expect(buildMyIssuesPath("Acme")).toBe("/acme/my-issues")
     expect(buildMyIssuesPath("Acme", "watched")).toBe("/acme/my-issues/watched")
     expect(buildInboxPath("Acme")).toBe("/acme/inbox")
@@ -122,6 +128,16 @@ describe("routes", () => {
       section: "settings",
       settingsTab: "labels",
     })
+    expect(parseAppPath("/acme/settings/connections")).toMatchObject({
+      workspaceSlug: "acme",
+      section: "settings",
+      settingsTab: "connections",
+    })
+    expect(parseAppPath("/acme/settings/repositories")).toMatchObject({
+      workspaceSlug: "acme",
+      section: "settings",
+      settingsTab: "repositories",
+    })
     expect(parseAppPath("/acme/my-issues")).toMatchObject({
       workspaceSlug: "acme",
       section: "my-issues",
@@ -151,6 +167,8 @@ describe("routes", () => {
   test("parses tab aliases and defaults", () => {
     expect(parseSettingsTab(null)).toBe("index")
     expect(parseSettingsTab("general")).toBe("general")
+    expect(parseSettingsTab("connections")).toBe("connections")
+    expect(parseSettingsTab("Repositories")).toBe("repositories")
     expect(parseSettingsTab("workflows")).toBe("workflow")
     expect(parseSettingsTab("statuses")).toBe("workflow")
     expect(parseSettingsTab("nope")).toBe("index")

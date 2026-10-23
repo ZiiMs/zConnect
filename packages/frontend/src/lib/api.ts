@@ -166,6 +166,77 @@ export const labelSchema = z.object({
   createdAt: z.string().optional(),
 })
 
+export const githubConnectionStatusSchema = z.enum([
+  "active",
+  "reconnect_required",
+])
+
+/** Safe Connection view: the server never serializes the token. */
+export const githubConnectionSchema = z.object({
+  id: z.string(),
+  workspaceId: z.string(),
+  connectorUserId: z.string(),
+  connectorAccountId: z.string(),
+  login: z.string(),
+  scopes: z.array(z.string()),
+  status: githubConnectionStatusSchema,
+  lastSyncedAt: z.string().nullable(),
+  lastManualRefreshAt: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  /** Display name of the connector, resolved from the workspace roster. */
+  connectorName: z.string().nullable(),
+  repositoryCount: z.number(),
+})
+
+export const githubRepositorySchema = z.object({
+  id: z.string(),
+  connectionId: z.string(),
+  githubId: z.string(),
+  fullName: z.string(),
+  owner: z.string(),
+  name: z.string(),
+  private: z.boolean(),
+  archived: z.boolean(),
+  issuesEnabled: z.boolean(),
+  defaultBranch: z.string().nullable(),
+  pushedAt: z.string().nullable(),
+  selectedAt: z.string(),
+  lastSyncedAt: z.string().nullable(),
+  syncError: z.string().nullable(),
+})
+
+export const githubRepositoryViewSchema = githubRepositorySchema.extend({
+  unavailable: z.boolean(),
+})
+
+export const githubConnectionResponseSchema = z.object({
+  connection: githubConnectionSchema.nullable(),
+  repositories: z.array(githubRepositoryViewSchema),
+})
+
+/** Remote repository option shown by the allowlist picker. */
+export const remoteRepositorySchema = z.object({
+  githubId: z.string(),
+  fullName: z.string(),
+  owner: z.string(),
+  name: z.string(),
+  private: z.boolean(),
+  archived: z.boolean(),
+  issuesEnabled: z.boolean(),
+  defaultBranch: z.string().nullable(),
+  pushedAt: z.string().nullable(),
+})
+
+export const remoteRepositoryOptionSchema = remoteRepositorySchema.extend({
+  selected: z.boolean(),
+})
+
+export const githubAllowlistResponseSchema = z.object({
+  repositories: z.array(githubRepositoryViewSchema),
+  removed: z.number(),
+})
+
 export const commentSchema = z.object({
   id: z.string(),
   issueId: z.string(),
@@ -305,6 +376,22 @@ export type NotificationSettings = z.infer<typeof notificationSettingsSchema>
 export type InvitationDetails = z.infer<typeof invitationDetailsSchema>
 export type InvitationInbox = z.infer<typeof invitationInboxSchema>
 export type MyIssue = z.infer<typeof myIssueSchema>
+export type GitHubConnectionStatus = z.infer<
+  typeof githubConnectionStatusSchema
+>
+export type GitHubConnection = z.infer<typeof githubConnectionSchema>
+export type GitHubRepository = z.infer<typeof githubRepositorySchema>
+export type GitHubRepositoryView = z.infer<typeof githubRepositoryViewSchema>
+export type GitHubConnectionResponse = z.infer<
+  typeof githubConnectionResponseSchema
+>
+export type RemoteRepository = z.infer<typeof remoteRepositorySchema>
+export type RemoteRepositoryOption = z.infer<
+  typeof remoteRepositoryOptionSchema
+>
+export type GitHubAllowlistResponse = z.infer<
+  typeof githubAllowlistResponseSchema
+>
 
 /**
  * The subset of a Member that assignee surfaces read. Views accept this
@@ -772,6 +859,55 @@ export const api = {
       `/api/workspaces/${workspaceId}/labels/${labelId}`,
       z.void(),
       { method: "DELETE" }
+    )
+  },
+
+  getGitHubConnection(workspaceId: string): Promise<GitHubConnectionResponse> {
+    return request(
+      `/api/workspaces/${workspaceId}/github-connection`,
+      githubConnectionResponseSchema
+    )
+  },
+
+  connectGitHubConnection(
+    workspaceId: string
+  ): Promise<GitHubConnectionResponse> {
+    return request(
+      `/api/workspaces/${workspaceId}/github-connection`,
+      githubConnectionResponseSchema,
+      { method: "POST", body: {} }
+    )
+  },
+
+  async disconnectGitHubConnection(workspaceId: string): Promise<void> {
+    await request(
+      `/api/workspaces/${workspaceId}/github-connection`,
+      z.object({ disconnected: z.boolean() }),
+      { method: "DELETE" }
+    )
+  },
+
+  searchGitHubRepositories(
+    workspaceId: string,
+    query: string
+  ): Promise<{ items: RemoteRepositoryOption[] }> {
+    const params = new URLSearchParams()
+    if (query.trim() !== "") params.append("query", query.trim())
+    const suffix = params.toString() ? `?${params.toString()}` : ""
+    return request(
+      `/api/workspaces/${workspaceId}/github-connection/repositories${suffix}`,
+      z.object({ items: z.array(remoteRepositoryOptionSchema) })
+    )
+  },
+
+  setGitHubAllowlist(
+    workspaceId: string,
+    githubIds: string[]
+  ): Promise<GitHubAllowlistResponse> {
+    return request(
+      `/api/workspaces/${workspaceId}/github-connection/repositories`,
+      githubAllowlistResponseSchema,
+      { method: "PUT", body: { githubIds } }
     )
   },
 }

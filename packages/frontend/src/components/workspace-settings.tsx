@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { ConnectionsSettings } from "@/components/connections-settings"
 import { CreateWorkspaceForm } from "@/components/create-workspace-form"
 import { InviteMemberForm } from "@/components/invite-member-form"
 import { LabelsSettings } from "@/components/labels-settings"
@@ -53,6 +54,16 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
         id: "labels",
         label: "Labels",
         description: "Organize issues with labels",
+      },
+    ],
+  },
+  {
+    label: "Connections",
+    items: [
+      {
+        id: "connections",
+        label: "GitHub",
+        description: "Connect GitHub and choose repositories",
       },
     ],
   },
@@ -254,6 +265,12 @@ export function WorkspaceSettings({
           />
         )}
         {tab === "notifications" && <NotificationSettings />}
+        {tab === "connections" && (
+          <ConnectionsSettings
+            workspaceId={workspace.id}
+            canManage={canManage}
+          />
+        )}
       </div>
     </div>
   )

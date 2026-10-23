@@ -28,6 +28,8 @@ export type SettingsTab =
   | "members"
   | "workflow"
   | "labels"
+  | "connections"
+  | "repositories"
   | "notifications"
 
 /** Settings location: a detail tab, or the `index` homepage (`/settings`). */
@@ -54,6 +56,8 @@ export const SETTINGS_TABS: SettingsTab[] = [
   "members",
   "workflow",
   "labels",
+  "connections",
+  "repositories",
   "notifications",
 ]
 
@@ -79,6 +83,8 @@ export function parseSettingsTab(raw: string | null | undefined): SettingsView {
   )
     return "workflow"
   if (lower === "labels") return "labels"
+  if (lower === "connections" || lower === "connection") return "connections"
+  if (lower === "repositories" || lower === "repository") return "repositories"
   if (lower === "notifications") return "notifications"
   return "index"
 }

@@ -25,6 +25,7 @@ vi.mock("@/lib/auth-client", () => ({
     isPending: false,
   }),
   signOut: vi.fn(),
+  authClient: { linkSocial: vi.fn() },
 }))
 
 // Mock only the network seam; keep the pure helpers (schema/merge/filter)
@@ -53,6 +54,11 @@ vi.mock("@/lib/api", async (importOriginal) => {
       listMyIssues: vi.fn(),
       getInvitation: vi.fn(),
       acceptInvitation: vi.fn(),
+      getGitHubConnection: vi.fn(),
+      connectGitHubConnection: vi.fn(),
+      disconnectGitHubConnection: vi.fn(),
+      searchGitHubRepositories: vi.fn(),
+      setGitHubAllowlist: vi.fn(),
     },
   }
 })
@@ -63,6 +69,7 @@ const createProject = vi.mocked(api.createProject)
 const listProjects = vi.mocked(api.listProjects)
 const getInvitation = vi.mocked(api.getInvitation)
 const acceptInvitation = vi.mocked(api.acceptInvitation)
+const getGitHubConnection = vi.mocked(api.getGitHubConnection)
 
 const workspaces: Workspace[] = [
   { id: "ws-1", name: "Acme", role: "Owner" },
@@ -130,6 +137,10 @@ beforeEach(() => {
     unreadCount: 0,
   })
   vi.mocked(api.listMyIssues).mockResolvedValue([])
+  vi.mocked(api.getGitHubConnection).mockResolvedValue({
+    connection: null,
+    repositories: [],
+  })
 })
 
 describe("rail IA", () => {
@@ -585,6 +596,124 @@ describe("URL as the state store", () => {
 
     await user.click(rail().getByRole("button", { name: /^general$/i }))
     expect(window.location.pathname).toBe("/acme/settings/general")
+  })
+
+  test("settings connections renders the GitHub surface", async () => {
+    const user = userEvent.setup()
+    const { rail } = renderShell()
+    await rail().findByRole("button", { name: /web/i })
+
+    await user.click(rail().getByRole("button", { name: /settings/i }))
+    await user.click(rail().getByRole("button", { name: /^github$/i }))
+
+    expect(window.location.pathname).toBe("/acme/settings/connections")
+    expect(
+      await screen.findByRole("region", { name: "GitHub connection" })
+    ).toBeInTheDocument()
+    expect(
+      await screen.findByText(/GitHub is not connected/i)
+    ).toBeInTheDocument()
+    expect(getGitHubConnection).toHaveBeenCalledWith("ws-1")
+  })
+
+  test("settings connections shows the active connection and picker", async () => {
+    vi.mocked(api.getGitHubConnection).mockResolvedValue({
+      connection: {
+        id: "gc-1",
+        workspaceId: "ws-1",
+        connectorUserId: "user-1",
+        connectorAccountId: "ba-1",
+        login: "octocat",
+        scopes: ["repo"],
+        status: "active",
+        lastSyncedAt: new Date(Date.now() - 60_000).toISOString(),
+        lastManualRefreshAt: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+        updatedAt: "2026-10-01T00:00:00.000Z",
+        connectorName: "Ada",
+        repositoryCount: 1,
+      },
+      repositories: [],
+    })
+    vi.mocked(api.searchGitHubRepositories).mockResolvedValue({
+      items: [
+        {
+          githubId: "101",
+          fullName: "acme/web",
+          owner: "acme",
+          name: "web",
+          private: true,
+          archived: false,
+          issuesEnabled: true,
+          defaultBranch: "main",
+          pushedAt: null,
+          selected: false,
+        },
+      ],
+    })
+    window.history.replaceState(null, "", "/acme/settings/connections")
+    renderShell()
+
+    expect(await screen.findByText("octocat")).toBeInTheDocument()
+    expect(screen.getByText(/active/i)).toBeInTheDocument()
+    expect(
+      await screen.findByRole("checkbox", { name: "acme/web" })
+    ).toBeInTheDocument()
+    expect(screen.getByText("Private")).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: /disconnect GitHub/i })
+    ).toBeInTheDocument()
+  })
+
+  test("a member sees the settings state without controls", async () => {
+    vi.mocked(api.getGitHubConnection).mockResolvedValue({
+      connection: {
+        id: "gc-2",
+        workspaceId: "ws-2",
+        connectorUserId: "user-owner",
+        connectorAccountId: "ba-1",
+        login: "octocat",
+        scopes: ["repo"],
+        status: "reconnect_required",
+        lastSyncedAt: null,
+        lastManualRefreshAt: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+        updatedAt: "2026-10-01T00:00:00.000Z",
+        connectorName: "Ada",
+        repositoryCount: 1,
+      },
+      repositories: [
+        {
+          id: "repo-1",
+          connectionId: "gc-2",
+          githubId: "101",
+          fullName: "beta/app",
+          owner: "beta",
+          name: "app",
+          private: false,
+          archived: false,
+          issuesEnabled: true,
+          defaultBranch: "main",
+          pushedAt: null,
+          selectedAt: "2026-10-01T00:00:00.000Z",
+          lastSyncedAt: null,
+          syncError: null,
+          unavailable: false,
+        },
+      ],
+    })
+    window.history.replaceState(null, "", "/beta/settings/connections")
+    renderShell()
+
+    expect(await screen.findByText("octocat")).toBeInTheDocument()
+    expect(screen.getByText(/reconnect required/i)).toBeInTheDocument()
+    expect(screen.getByText("beta/app")).toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: /connect GitHub/i })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: /disconnect GitHub/i })
+    ).not.toBeInTheDocument()
   })
 
   test("settings detail pages link back to the index", async () => {

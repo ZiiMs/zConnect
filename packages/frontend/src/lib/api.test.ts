@@ -483,3 +483,94 @@ describe("subtask and archive api client", () => {
     expect(options.method).toBe("DELETE")
   })
 })
+
+describe("github connection api client", () => {
+  test("getGitHubConnection parses the safe connection view", async () => {
+    const fetchMock = mockFetchOnce({
+      connection: {
+        id: "gc-1",
+        workspaceId: "ws-1",
+        connectorUserId: "user-1",
+        connectorAccountId: "ba-1",
+        login: "octocat",
+        scopes: ["repo"],
+        status: "active",
+        lastSyncedAt: null,
+        lastManualRefreshAt: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+        updatedAt: "2026-10-01T00:00:00.000Z",
+        connectorName: "Ada",
+        repositoryCount: 0,
+      },
+      repositories: [],
+    })
+
+    const result = await api.getGitHubConnection("ws-1")
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/workspaces/ws-1/github-connection")
+    expect(result.connection?.login).toBe("octocat")
+    expect(result.connection?.connectorName).toBe("Ada")
+  })
+
+  test("connect posts an empty finalize body", async () => {
+    const fetchMock = mockFetchOnce({ connection: null, repositories: [] })
+
+    await api.connectGitHubConnection("ws-1")
+
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/workspaces/ws-1/github-connection")
+    expect(options.method).toBe("POST")
+    expect(JSON.parse(options.body as string)).toEqual({})
+  })
+
+  test("disconnect sends DELETE and resolves void", async () => {
+    const fetchMock = mockFetchOnce({ disconnected: true })
+
+    await expect(api.disconnectGitHubConnection("ws-1")).resolves.toBe(
+      undefined
+    )
+
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/workspaces/ws-1/github-connection")
+    expect(options.method).toBe("DELETE")
+  })
+
+  test("repository search encodes the query and the allowlist saves ids", async () => {
+    const fetchMock = mockFetchOnce({
+      items: [
+        {
+          githubId: "101",
+          fullName: "acme/web",
+          owner: "acme",
+          name: "web",
+          private: false,
+          archived: false,
+          issuesEnabled: true,
+          defaultBranch: "main",
+          pushedAt: null,
+          selected: true,
+        },
+      ],
+    })
+
+    const search = await api.searchGitHubRepositories("ws-1", "acme web")
+    expect(fetchMock.mock.calls[0][0]).toContain("query=acme+web")
+    expect(search.items[0].selected).toBe(true)
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ repositories: [], removed: 2 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    )
+    const saved = await api.setGitHubAllowlist("ws-1", ["101", "102"])
+    const [url, options] = fetchMock.mock.calls[1] as [string, RequestInit]
+    expect(url).toContain("/api/workspaces/ws-1/github-connection/repositories")
+    expect(options.method).toBe("PUT")
+    expect(JSON.parse(options.body as string)).toEqual({
+      githubIds: ["101", "102"],
+    })
+    expect(saved.removed).toBe(2)
+  })
+})
