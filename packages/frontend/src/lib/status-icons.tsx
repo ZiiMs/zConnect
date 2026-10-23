@@ -1,9 +1,9 @@
 import {
+  Ban,
   Circle,
   CircleCheck,
   CircleDashed,
   CircleX,
-  Copy,
   LoaderCircle,
   type LucideIcon,
 } from "lucide-react"
@@ -16,7 +16,7 @@ import {
 /**
  * Linear-style workflow marks, one per Status Category: dashed backlog,
  * empty unstarted, loader in-progress, checked completed, crossed canceled,
- * copied duplicate. Tinted with the status color, so the card shows the
+ * slashed duplicate. Tinted with the status color, so the card shows the
  * mark instead of spelling the status name out.
  */
 const CATEGORY_ICONS: Record<StatusCategory, LucideIcon> = {
@@ -25,7 +25,7 @@ const CATEGORY_ICONS: Record<StatusCategory, LucideIcon> = {
   "In Progress": LoaderCircle,
   Completed: CircleCheck,
   Canceled: CircleX,
-  Duplicate: Copy,
+  Duplicate: Ban,
 }
 
 /** Status mark: the category icon in the status color. */

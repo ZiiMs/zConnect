@@ -401,7 +401,7 @@ describe("rail IA", () => {
 
     await user.click(rail().getByRole("button", { name: /settings/i }))
     await user.click(
-      await screen.findByRole("tab", { name: /^notifications$/i })
+      await rail().findByRole("button", { name: /^notifications$/i })
     )
 
     expect(await screen.findByRole("radio", { name: /digest/i })).toBeChecked()
@@ -496,8 +496,160 @@ describe("invite route", () => {
 
     await user.click(screen.getByRole("button", { name: /join workspace/i }))
 
-    await waitFor(() => expect(window.location.pathname).toBe("/acme"))
+    // The workspace home canonicalizes to its open project once loaded.
+    await waitFor(() => expect(window.location.pathname).toBe("/acme/WEB"))
     expect(acceptInvitation).toHaveBeenCalledWith("inv-1")
     expect(listWorkspaces.mock.calls.length).toBeGreaterThan(1)
+  })
+})
+
+describe("URL as the state store", () => {
+  test("rail navigation pushes workspace-scoped URLs", async () => {
+    const user = userEvent.setup()
+    const { rail } = renderShell()
+    await rail().findByRole("button", { name: /web/i })
+    // Landing canonicalizes from `/` to the open project.
+    await waitFor(() => expect(window.location.pathname).toBe("/acme/WEB"))
+
+    await user.click(rail().getByRole("button", { name: /my issues/i }))
+    expect(
+      await screen.findByRole("heading", { name: "My Issues" })
+    ).toBeInTheDocument()
+    expect(window.location.pathname).toBe("/acme/my-issues")
+
+    await user.click(rail().getByRole("button", { name: /^inbox$/i }))
+    expect(
+      await screen.findByRole("heading", { name: "Inbox" })
+    ).toBeInTheDocument()
+    expect(window.location.pathname).toBe("/acme/inbox")
+
+    await user.click(rail().getByRole("button", { name: /settings/i }))
+    expect(
+      await screen.findByRole("region", { name: "Workspace" })
+    ).toBeInTheDocument()
+    expect(window.location.pathname).toBe("/acme/settings")
+    expect(
+      rail().getByRole("button", { name: /back to app/i })
+    ).toBeInTheDocument()
+    expect(
+      rail().queryByRole("button", { name: /new project/i })
+    ).not.toBeInTheDocument()
+
+    await user.click(rail().getByRole("button", { name: /back to app/i }))
+    await user.click(rail().getByRole("button", { name: /new project/i }))
+    expect(
+      screen.getByRole("region", { name: "New project" })
+    ).toBeInTheDocument()
+    expect(window.location.pathname).toBe("/acme/new-project")
+  })
+
+  test("switching projects pushes the project URL", async () => {
+    const user = userEvent.setup()
+    const { rail } = renderShell()
+    await rail().findByRole("button", { name: /mobile/i })
+    await waitFor(() => expect(window.location.pathname).toBe("/acme/WEB"))
+
+    await user.click(rail().getByRole("button", { name: /mobile/i }))
+    await user.click(rail().getByRole("button", { name: /^issues$/i }))
+    expect(
+      await screen.findByRole("heading", { name: /mobile/i })
+    ).toBeInTheDocument()
+    expect(window.location.pathname).toBe("/acme/MOB")
+  })
+
+  test("settings tabs push their URLs", async () => {
+    const user = userEvent.setup()
+    const { rail } = renderShell()
+    await rail().findByRole("button", { name: /web/i })
+
+    await user.click(rail().getByRole("button", { name: /settings/i }))
+    expect(
+      await screen.findByRole("region", { name: "Workspace" })
+    ).toBeInTheDocument()
+    expect(window.location.pathname).toBe("/acme/settings")
+    // The bare URL is the index homepage, organized by category.
+    expect(screen.getByRole("region", { name: "Issues" })).toBeInTheDocument()
+
+    // The index list navigates like the sidebar.
+    await user.click(screen.getByRole("button", { name: /manage members/i }))
+    expect(window.location.pathname).toBe("/acme/settings/members")
+
+    await user.click(rail().getByRole("button", { name: /^workflow$/i }))
+    expect(window.location.pathname).toBe("/acme/settings/workflow")
+
+    await user.click(rail().getByRole("button", { name: /^labels$/i }))
+    expect(window.location.pathname).toBe("/acme/settings/labels")
+    expect(
+      await screen.findByRole("region", { name: "Labels" })
+    ).toBeInTheDocument()
+
+    await user.click(rail().getByRole("button", { name: /^general$/i }))
+    expect(window.location.pathname).toBe("/acme/settings/general")
+  })
+
+  test("settings detail pages link back to the index", async () => {
+    const user = userEvent.setup()
+    const { rail } = renderShell()
+    await rail().findByRole("button", { name: /web/i })
+
+    await user.click(rail().getByRole("button", { name: /settings/i }))
+    await user.click(rail().getByRole("button", { name: /^members$/i }))
+    expect(window.location.pathname).toBe("/acme/settings/members")
+
+    await user.click(
+      await screen.findByRole("button", { name: /all settings/i })
+    )
+    expect(window.location.pathname).toBe("/acme/settings")
+    expect(
+      screen.getByRole("region", { name: "Workspace" })
+    ).toBeInTheDocument()
+  })
+
+  test("my-issues and inbox filters push their URLs", async () => {
+    const user = userEvent.setup()
+    const { rail } = renderShell()
+    await rail().findByRole("button", { name: /web/i })
+
+    await user.click(rail().getByRole("button", { name: /my issues/i }))
+    expect(
+      await screen.findByRole("heading", { name: "My Issues" })
+    ).toBeInTheDocument()
+    await user.click(await screen.findByRole("tab", { name: /^created$/i }))
+    expect(window.location.pathname).toBe("/acme/my-issues/created")
+
+    await user.click(rail().getByRole("button", { name: /^inbox$/i }))
+    expect(
+      await screen.findByRole("heading", { name: "Inbox" })
+    ).toBeInTheDocument()
+    await user.click(await screen.findByRole("tab", { name: /^unread$/i }))
+    expect(window.location.pathname).toBe("/acme/inbox/unread")
+  })
+
+  test("deep links restore their page on reload", async () => {
+    window.history.replaceState(null, "", "/acme/settings/labels")
+    const { rail } = renderShell()
+    expect(
+      await screen.findByRole("region", { name: "Labels" })
+    ).toBeInTheDocument()
+    expect(rail().getByRole("button", { name: /^labels$/i })).toHaveAttribute(
+      "aria-current",
+      "page"
+    )
+  })
+
+  test("a project deep link selects that project", async () => {
+    window.history.replaceState(null, "", "/acme/MOB")
+    renderShell()
+    expect(
+      await screen.findByRole("heading", { name: /mobile/i })
+    ).toBeInTheDocument()
+    expect(window.location.pathname).toBe("/acme/MOB")
+  })
+
+  test("an unknown project key falls back to the open project", async () => {
+    window.history.replaceState(null, "", "/acme/NOPE")
+    renderShell()
+    await screen.findByTestId("rail-workspace-trigger")
+    await waitFor(() => expect(window.location.pathname).toBe("/acme/WEB"))
   })
 })

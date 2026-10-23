@@ -13,6 +13,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
       ...actual.api,
       listStatuses: vi.fn(),
       createStatus: vi.fn(),
+      updateStatus: vi.fn(),
       deleteStatus: vi.fn(),
     },
   }
@@ -20,6 +21,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
 
 const listStatuses = vi.mocked(api.listStatuses)
 const createStatus = vi.mocked(api.createStatus)
+const updateStatus = vi.mocked(api.updateStatus)
 const deleteStatus = vi.mocked(api.deleteStatus)
 
 const project: Project = {
@@ -157,6 +159,123 @@ describe("workflow settings", () => {
     expect(await screen.findByText("Refined")).toBeInTheDocument()
   })
 
+  function dragEvent(
+    type: string,
+    target: Element,
+    dataTransfer: object,
+    extra?: Record<string, unknown>
+  ) {
+    const event = new Event(type, { bubbles: true, cancelable: true })
+    Object.assign(event, { dataTransfer, ...extra })
+    target.dispatchEvent(event)
+    return event
+  }
+
+  function makeDataTransfer() {
+    const store = new Map<string, string>()
+    return {
+      effectAllowed: "",
+      dropEffect: "",
+      setData: vi.fn((format: string, data: string) => {
+        store.set(format, data)
+      }),
+      getData: vi.fn((format: string) => store.get(format) ?? ""),
+    }
+  }
+
+  test("drag and drop swaps with the next sibling and re-reads the order", async () => {
+    const pair: Status[] = [
+      {
+        id: "st-todo",
+        projectId: "pr-1",
+        name: "Todo",
+        category: "Unstarted",
+        color: "#eab308",
+        position: 0,
+      },
+      {
+        id: "st-refined",
+        projectId: "pr-1",
+        name: "Refined",
+        category: "Unstarted",
+        color: "#94a3b8",
+        position: 1,
+      },
+      {
+        id: "st-doing",
+        projectId: "pr-1",
+        name: "Doing",
+        category: "In Progress",
+        color: "#3b82f6",
+        position: 2,
+      },
+    ]
+    const swapped: Status[] = [pair[1], pair[0], pair[2]].map(
+      (status, position) => ({ ...status, position })
+    )
+    listStatuses
+      .mockResolvedValueOnce(pair)
+      .mockResolvedValueOnce(swapped as Status[])
+    updateStatus.mockResolvedValue({ ...pair[0], position: 1 })
+    render(<WorkflowSettings project={project} canManage />)
+    await screen.findByText("Todo")
+
+    const todoRow = screen.getByText("Todo").closest("li") as HTMLElement
+    const refinedRow = screen.getByText("Refined").closest("li") as HTMLElement
+    const dataTransfer = makeDataTransfer()
+    dragEvent("dragstart", todoRow, dataTransfer)
+    // Lower half of the target row (jsdom rects are zero) drops after it.
+    dragEvent("dragover", refinedRow, dataTransfer, { clientY: 10 })
+    dragEvent("drop", refinedRow, dataTransfer)
+
+    await waitFor(() =>
+      expect(updateStatus).toHaveBeenCalledWith("pr-1", "st-todo", {
+        position: 1,
+      })
+    )
+    await waitFor(() =>
+      expect(
+        screen
+          .getByText("Refined")
+          .compareDocumentPosition(screen.getByText("Todo"))
+      ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    )
+  })
+
+  test("dropping onto another category is ignored", async () => {
+    const pair: Status[] = [
+      {
+        id: "st-todo",
+        projectId: "pr-1",
+        name: "Todo",
+        category: "Unstarted",
+        color: "#eab308",
+        position: 0,
+      },
+      {
+        id: "st-doing",
+        projectId: "pr-1",
+        name: "Doing",
+        category: "In Progress",
+        color: "#3b82f6",
+        position: 1,
+      },
+    ]
+    listStatuses.mockResolvedValueOnce(pair)
+    render(<WorkflowSettings project={project} canManage />)
+    await screen.findByText("Todo")
+
+    const todoRow = screen.getByText("Todo").closest("li") as HTMLElement
+    const doingRow = screen.getByText("Doing").closest("li") as HTMLElement
+    const dataTransfer = makeDataTransfer()
+    dragEvent("dragstart", todoRow, dataTransfer)
+    dragEvent("dragover", doingRow, dataTransfer, { clientY: 10 })
+    dragEvent("drop", doingRow, dataTransfer)
+
+    await waitFor(() => expect(screen.getByText("Doing")).toBeInTheDocument())
+    expect(updateStatus).not.toHaveBeenCalled()
+  })
+
   test("delete calls deleteStatus and removes the row", async () => {
     const user = userEvent.setup()
     listStatuses
@@ -175,7 +294,7 @@ describe("workflow settings", () => {
     )
   })
 
-  test("canManage=false hides add and delete controls", async () => {
+  test("canManage=false hides add and delete controls and disables drag", async () => {
     render(<WorkflowSettings project={project} canManage={false} />)
     await screen.findByText("Todo")
 
@@ -185,6 +304,10 @@ describe("workflow settings", () => {
     expect(
       screen.queryByRole("button", { name: "Delete Todo" })
     ).not.toBeInTheDocument()
+    expect(screen.getByText("Todo").closest("li")).toHaveAttribute(
+      "draggable",
+      "false"
+    )
   })
 
   test("shows an empty message when the project has no statuses", async () => {

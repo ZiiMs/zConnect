@@ -1,11 +1,6 @@
 {
   "mcp": {
     "servers": {
-      "supabase": {
-        "type": "remote",
-        "url": "https://mcp.supabase.com/mcp?project_ref=vrgvqhryqbriflzkjfyb&features=docs%2Caccount%2Cdatabase%2Cdebugging%2Cdevelopment%2Cfunctions%2Cbranching",
-        "disabled": false
-      },
       "better-auth": {
         "type": "remote",
         "url": "https://mcp.better-auth.com/mcp",

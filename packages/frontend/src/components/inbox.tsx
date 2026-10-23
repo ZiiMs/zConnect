@@ -8,8 +8,9 @@ import { formatUnreadCount } from "@/hooks/use-unread-count"
 import { api, type InvitationInbox, type Notification } from "@/lib/api"
 import { realtimeEnabled } from "@/lib/realtime"
 import { formatRelativeTime } from "@/lib/relative-time"
+import type { InboxFilter } from "@/lib/routes"
 
-type NotificationFilter = "all" | "unread"
+type NotificationFilter = InboxFilter
 
 const FILTERS: { id: NotificationFilter; label: string }[] = [
   { id: "all", label: "All" },
@@ -77,14 +78,25 @@ export function Inbox({
   onOpenIssue,
   onUnreadCountChange,
   onInvitationAccepted,
+  activeFilter,
+  onFilterChange,
 }: {
   onOpenIssue: (target: NotificationIssueTarget) => void
   /** Keeps the rail badge in step with the list's server `unreadCount`. */
   onUnreadCountChange?: (count: number) => void
   /** Refresh the workspace list after the user joins a workspace. */
   onInvitationAccepted?: () => void
+  /** URL-controlled filter; when omitted the component owns its filter. */
+  activeFilter?: NotificationFilter
+  onFilterChange?: (filter: NotificationFilter) => void
 }) {
-  const [filter, setFilter] = useState<NotificationFilter>("all")
+  const [internalFilter, setInternalFilter] =
+    useState<NotificationFilter>("all")
+  const filter = activeFilter ?? internalFilter
+  function changeFilter(next: NotificationFilter) {
+    if (activeFilter !== undefined) onFilterChange?.(next)
+    else setInternalFilter(next)
+  }
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [unreadCount, setUnreadCount] = useState(0)
@@ -350,7 +362,7 @@ export function Inbox({
             type="button"
             role="tab"
             aria-selected={filter === option.id}
-            onClick={() => setFilter(option.id)}
+            onClick={() => changeFilter(option.id)}
             className={`flex items-center gap-1.5 rounded-md border px-3 py-1 text-sm ${
               filter === option.id ? "bg-accent font-medium" : ""
             }`}

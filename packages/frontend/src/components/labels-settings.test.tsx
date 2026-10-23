@@ -193,6 +193,48 @@ describe("labels settings", () => {
     expect(rows[1].textContent).toContain("cherry")
   })
 
+  test("header shows Labels with New group and New label actions", async () => {
+    listLabels.mockResolvedValue([])
+    render(<LabelsSettings workspaceId="ws-1" canEdit={true} />)
+
+    expect(
+      await screen.findByRole("heading", { name: "Labels" })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText("Groups and labels for this workspace.")
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: /new group/i })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: /new label/i })
+    ).toBeInTheDocument()
+  })
+
+  test("new group creates the label and opens its child row", async () => {
+    const user = userEvent.setup()
+    listLabels.mockResolvedValue([
+      label({ id: "old", name: "banana", color: "#22c55e" }),
+    ])
+    createLabel.mockImplementation(async (_workspaceId, input) =>
+      label({ id: "new-1", name: input.name, color: "#5e6ad2" })
+    )
+    render(<LabelsSettings workspaceId="ws-1" canEdit={true} />)
+
+    expect(await screen.findByText("banana")).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: /new group/i }))
+
+    const input = screen.getByLabelText("New group name")
+    await user.type(input, "platform")
+    await user.click(screen.getByRole("button", { name: /add group/i }))
+
+    await waitFor(() =>
+      expect(createLabel).toHaveBeenCalledWith("ws-1", { name: "platform" })
+    )
+    // The group's child row opens so labels can be added into it.
+    expect(await screen.findByLabelText("Child label name")).toBeInTheDocument()
+  })
+
   test("escape closes the new label row without creating", async () => {
     const user = userEvent.setup()
     listLabels.mockResolvedValue([label()])
@@ -240,7 +282,7 @@ describe("labels settings", () => {
     expect(await screen.findByText("ui")).toBeInTheDocument()
   })
 
-  test("edits a label through the inline form", async () => {
+  test("clicking the name renames inline with only the name patched", async () => {
     const user = userEvent.setup()
     listLabels.mockResolvedValue([
       label({
@@ -255,34 +297,141 @@ describe("labels settings", () => {
         id: "t1",
         name: input.name ?? "apple",
         color: input.color ?? "#333333",
+        description:
+          "description" in input ? (input.description ?? null) : "Old",
+      })
+    )
+    render(<LabelsSettings workspaceId="ws-1" canEdit={true} />)
+
+    expect(await screen.findByText("apple")).toBeInTheDocument()
+    // No separate Edit button: the name itself is the rename control.
+    expect(
+      screen.queryByRole("menuitem", { name: /^edit$/i })
+    ).not.toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Rename apple" }))
+
+    const nameInput = screen.getByLabelText("Label name")
+    await user.clear(nameInput)
+    await user.type(nameInput, "apricot{Enter}")
+
+    await waitFor(() =>
+      expect(updateLabel).toHaveBeenCalledWith("ws-1", "t1", {
+        name: "apricot",
+      })
+    )
+    expect(await screen.findByText("apricot")).toBeInTheDocument()
+    // Description is untouched by a rename.
+    expect(screen.getByText("Old")).toBeInTheDocument()
+  })
+
+  test("clicking the description edits it inline", async () => {
+    const user = userEvent.setup()
+    listLabels.mockResolvedValue([
+      label({
+        id: "t1",
+        name: "apple",
+        color: "#333333",
+        description: "Old",
+      }),
+    ])
+    updateLabel.mockImplementation(async (_workspaceId, _labelId, input) =>
+      label({
+        id: "t1",
+        name: "apple",
+        color: "#333333",
         description: input.description ?? null,
+      })
+    )
+    render(<LabelsSettings workspaceId="ws-1" canEdit={true} />)
+
+    expect(await screen.findByText("Old")).toBeInTheDocument()
+    await user.click(
+      screen.getByRole("button", { name: "Edit description for apple" })
+    )
+
+    const descriptionInput = screen.getByLabelText("Label description")
+    await user.clear(descriptionInput)
+    await user.type(descriptionInput, "Fresh{Enter}")
+
+    await waitFor(() =>
+      expect(updateLabel).toHaveBeenCalledWith("ws-1", "t1", {
+        description: "Fresh",
+      })
+    )
+    expect(await screen.findByText("Fresh")).toBeInTheDocument()
+  })
+
+  test("menu Rename opens the inline name input", async () => {
+    const user = userEvent.setup()
+    listLabels.mockResolvedValue([
+      label({
+        id: "t1",
+        name: "apple",
+        color: "#333333",
+        description: "Old",
+      }),
+    ])
+    updateLabel.mockImplementation(async (_workspaceId, _labelId, input) =>
+      label({
+        id: "t1",
+        name: input.name ?? "apple",
+        color: "#333333",
+        description: "Old",
       })
     )
     render(<LabelsSettings workspaceId="ws-1" canEdit={true} />)
 
     expect(await screen.findByText("apple")).toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: "Actions for apple" }))
-    await user.click(screen.getByRole("menuitem", { name: /^edit$/i }))
+    await user.click(screen.getByRole("menuitem", { name: /^rename$/i }))
 
     const nameInput = screen.getByLabelText("Label name")
-    const descriptionInput = screen.getByLabelText("Label description")
-    const colorInput = screen.getByLabelText("Label color")
+    expect(nameInput).toHaveValue("apple")
     await user.clear(nameInput)
-    await user.type(nameInput, "apricot")
-    await user.clear(descriptionInput)
-    await user.type(descriptionInput, "Fresh")
-    fireEvent.change(colorInput, { target: { value: "#123456" } })
-    await user.click(screen.getByRole("button", { name: /^save$/i }))
+    await user.type(nameInput, "apricot{Enter}")
 
     await waitFor(() =>
       expect(updateLabel).toHaveBeenCalledWith("ws-1", "t1", {
         name: "apricot",
-        description: "Fresh",
-        color: "#123456",
       })
     )
     expect(await screen.findByText("apricot")).toBeInTheDocument()
-    expect(screen.getByText("Fresh")).toBeInTheDocument()
+  })
+
+  test("clicking the color dot edits the color inline", async () => {
+    const user = userEvent.setup()
+    listLabels.mockResolvedValue([
+      label({
+        id: "t1",
+        name: "apple",
+        color: "#333333",
+        description: "Old",
+      }),
+    ])
+    updateLabel.mockImplementation(async (_workspaceId, _labelId, input) =>
+      label({
+        id: "t1",
+        name: "apple",
+        color: input.color ?? "#333333",
+        description: "Old",
+      })
+    )
+    render(<LabelsSettings workspaceId="ws-1" canEdit={true} />)
+
+    expect(await screen.findByText("apple")).toBeInTheDocument()
+    await user.click(
+      screen.getByRole("button", { name: "Change color for apple" })
+    )
+
+    const colorInput = screen.getByLabelText("Label color for apple")
+    fireEvent.change(colorInput, { target: { value: "#123456" } })
+    fireEvent.blur(colorInput)
+
+    await waitFor(() =>
+      expect(updateLabel).toHaveBeenCalledWith("ws-1", "t1", {
+        color: "#123456",
+      })
+    )
   })
 
   test("deletes a label and refreshes so children are promoted", async () => {

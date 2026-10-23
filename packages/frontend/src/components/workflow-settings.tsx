@@ -1,5 +1,5 @@
-import { Plus, Trash2 } from "lucide-react"
-import { useEffect, useState } from "react"
+import { GripVertical, Plus, Trash2 } from "lucide-react"
+import { useEffect, useRef, useState } from "react"
 import type { Project, Status, StatusCategory } from "@/lib/api"
 import { api, STATUS_CATEGORIES } from "@/lib/api"
 import { StatusIcon } from "@/lib/status-icons"
@@ -10,9 +10,12 @@ function issueCountText(status: Status): string {
 }
 
 /**
- * Standalone project workflow editor (Linear-style): one card divided into
- * the six Status Category sections in roster order. The coordinator wires it
- * into settings later; it fetches and mutates statuses on its own.
+ * Project workflow editor (Linear-style): a single card of Status Category
+ * sections in roster order. Each section opens with a muted pill header row
+ * (category name plus the add button); statuses render beneath it as
+ * icon-tile rows with the name, an inline "· Default" marker, and a
+ * "{n} issues · description" meta line. Row actions reveal on hover so the
+ * resting card reads like the reference: headers, tiles, and counts.
  */
 export function WorkflowSettings({
   project,
@@ -30,6 +33,14 @@ export function WorkflowSettings({
   const [newName, setNewName] = useState("")
   const [newColor, setNewColor] = useState("#94a3b8")
   const [saving, setSaving] = useState(false)
+  const [moving, setMoving] = useState(false)
+  const [dragId, setDragId] = useState<string | null>(null)
+  const [dropTarget, setDropTarget] = useState<{
+    id: string
+    before: boolean
+  } | null>(null)
+  /** Drag source id, readable during dragover (dataTransfer isn't). */
+  const dragIdRef = useRef<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -54,6 +65,9 @@ export function WorkflowSettings({
       cancelled = true
     }
   }, [project.id])
+
+  /** Global position order, used for drag-and-drop index math. */
+  const orderedStatuses = [...statuses].sort((a, b) => a.position - b.position)
 
   function openCreate(category: StatusCategory) {
     setCreatingCategory(category)
@@ -101,6 +115,107 @@ export function WorkflowSettings({
     }
   }
 
+  /**
+   * Drag-and-drop reorder within a category section: the backend splices
+   * the status into the project's global position order at the given
+   * index. Display groups by category, so drops stay inside the dragged
+   * row's section — the same order every layout (board, filters, detail)
+   * renders.
+   */
+  async function moveStatusTo(statusId: string, at: number) {
+    const ordered = [...statuses].sort((a, b) => a.position - b.position)
+    const from = ordered.findIndex((s) => s.id === statusId)
+    if (from === -1 || from === at || moving) return
+    setMoving(true)
+    setActionError(null)
+    try {
+      await api.updateStatus(project.id, statusId, { position: at })
+      const loaded = await api.listStatuses(project.id)
+      setStatuses([...loaded].sort((a, b) => a.position - b.position))
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Move failed")
+    } finally {
+      setMoving(false)
+    }
+  }
+
+  function clearDrag() {
+    dragIdRef.current = null
+    setDragId(null)
+    setDropTarget(null)
+  }
+
+  function handleDragStart(event: React.DragEvent, status: { id: string }) {
+    if (!canManage) {
+      event.preventDefault()
+      return
+    }
+    dragIdRef.current = status.id
+    setDragId(status.id)
+    setDropTarget(null)
+    event.dataTransfer.effectAllowed = "move"
+    try {
+      event.dataTransfer.setData("text/plain", status.id)
+    } catch {
+      // Some test environments lack setData; the ref carries the id.
+    }
+  }
+
+  function handleDragOverRow(
+    event: React.DragEvent,
+    status: { id: string; category: StatusCategory }
+  ) {
+    const sourceId = dragIdRef.current
+    if (!sourceId || sourceId === status.id) return
+    const dragged = orderedStatuses.find((s) => s.id === sourceId)
+    if (!dragged || dragged.category !== status.category) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = "move"
+    const rect = event.currentTarget.getBoundingClientRect()
+    const before = event.clientY < rect.top + rect.height / 2
+    setDropTarget((prev) =>
+      prev && prev.id === status.id && prev.before === before
+        ? prev
+        : { id: status.id, before }
+    )
+  }
+
+  function handleDropRow(
+    event: React.DragEvent,
+    status: { id: string; category: StatusCategory }
+  ) {
+    event.preventDefault()
+    let sourceId = dragIdRef.current
+    if (!sourceId) {
+      try {
+        sourceId = event.dataTransfer.getData("text/plain") || null
+      } catch {
+        sourceId = null
+      }
+    }
+    clearDrag()
+    if (!sourceId || sourceId === status.id) return
+    const dragged = orderedStatuses.find((s) => s.id === sourceId)
+    if (!dragged || dragged.category !== status.category) return
+    const ordered = orderedStatuses
+    const from = ordered.findIndex((s) => s.id === sourceId)
+    const atTarget = ordered.findIndex((s) => s.id === status.id)
+    if (from === -1 || atTarget === -1) return
+    // Read the half from the event itself: the dragover indicator state
+    // hasn't re-rendered yet when drop fires in the same tick.
+    const rect = event.currentTarget.getBoundingClientRect()
+    const before = event.clientY < rect.top + rect.height / 2
+    const at =
+      before === true
+        ? atTarget > from
+          ? atTarget - 1
+          : atTarget
+        : atTarget > from
+          ? atTarget
+          : atTarget + 1
+    void moveStatusTo(sourceId, Math.max(0, at))
+  }
+
   if (loading) {
     return <p className="text-muted-foreground text-sm">Loading statuses…</p>
   }
@@ -115,72 +230,109 @@ export function WorkflowSettings({
       {statuses.length === 0 && (
         <p className="text-muted-foreground text-sm">No statuses yet.</p>
       )}
-      <div className="rounded-md border bg-card">
+      <div className="rounded-xl border bg-card p-2">
         {STATUS_CATEGORIES.map((category) => {
           const rows = statuses.filter((s) => s.category === category)
           return (
-            <section
-              key={category}
-              aria-label={category}
-              className="border-b p-3 last:border-b-0"
-            >
-              <div className="flex items-center justify-between">
-                <h3 className="text-muted-foreground text-sm">{category}</h3>
+            <section key={category} aria-label={category} className="px-1 py-1">
+              <div className="flex items-center justify-between rounded-md bg-muted px-3 py-1.5">
+                <h3 className="text-[13px] text-muted-foreground">
+                  {category}
+                </h3>
                 {canManage && creatingCategory !== category && (
                   <button
                     type="button"
                     aria-label={`Add status to ${category}`}
                     onClick={() => openCreate(category)}
-                    className="rounded-md p-1 text-muted-foreground hover:opacity-80"
+                    className="rounded p-0.5 text-muted-foreground hover:text-foreground"
                   >
-                    <Plus size={16} aria-hidden="true" />
+                    <Plus size={14} aria-hidden="true" />
                   </button>
                 )}
               </div>
-              <ul className="mt-2 flex flex-col gap-2">
-                {rows.map((status) => (
-                  <li key={status.id} className="flex items-center gap-3">
-                    <span
-                      aria-hidden="true"
-                      className="flex size-8 shrink-0 items-center justify-center rounded-md"
-                      style={{ backgroundColor: `${status.color}1a` }}
+              <ul className="flex flex-col divide-y divide-border/50">
+                {rows.map((status) => {
+                  const isDragging = dragId === status.id
+                  const isDropTarget = dropTarget?.id === status.id
+                  return (
+                    <li
+                      key={status.id}
+                      draggable={canManage}
+                      onDragStart={(event) => handleDragStart(event, status)}
+                      onDragOver={(event) => handleDragOverRow(event, status)}
+                      onDragLeave={() =>
+                        setDropTarget((prev) =>
+                          prev?.id === status.id ? null : prev
+                        )
+                      }
+                      onDrop={(event) => handleDropRow(event, status)}
+                      onDragEnd={clearDrag}
+                      className={`group flex items-center gap-2 rounded-md px-2 py-2.5 hover:bg-muted/40 ${
+                        canManage ? "cursor-grab active:cursor-grabbing" : ""
+                      } ${isDragging ? "opacity-50" : ""} ${
+                        isDropTarget
+                          ? dropTarget.before
+                            ? "border-t-2 border-t-primary"
+                            : "border-b-2 border-b-primary"
+                          : ""
+                      }`}
                     >
-                      <StatusIcon status={status} size={16} />
-                    </span>
-                    <div className="flex min-w-0 flex-1 flex-col">
-                      <p className="flex items-center gap-2 font-medium text-sm">
-                        {status.name}
-                        {status.isDefault && (
-                          <span className="rounded-md border px-1.5 py-0.5 text-muted-foreground text-xs">
-                            Default
-                          </span>
-                        )}
-                      </p>
-                      {status.description && (
-                        <p className="text-muted-foreground text-sm">
-                          {status.description}
-                        </p>
+                      {canManage && (
+                        <GripVertical
+                          size={14}
+                          aria-hidden="true"
+                          className="shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100"
+                        />
                       )}
-                      <p className="text-muted-foreground text-xs">
-                        {issueCountText(status)}
-                      </p>
-                    </div>
-                    {canManage && (
-                      <button
-                        type="button"
-                        aria-label={`Delete ${status.name}`}
-                        onClick={() => void handleDelete(status.id)}
-                        className="rounded-md p-1 text-muted-foreground hover:opacity-80"
+                      <span
+                        aria-hidden="true"
+                        className="flex size-8 shrink-0 items-center justify-center rounded-md"
+                        style={{ backgroundColor: `${status.color}1a` }}
                       >
-                        <Trash2 size={14} aria-hidden="true" />
-                      </button>
-                    )}
-                  </li>
-                ))}
+                        <StatusIcon status={status} size={16} />
+                      </span>
+                      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                        <p className="truncate font-medium text-sm">
+                          <span>{status.name}</span>
+                          {status.isDefault && (
+                            <>
+                              <span className="font-normal text-muted-foreground">
+                                {" "}
+                                ·{" "}
+                              </span>
+                              <span className="font-normal text-muted-foreground">
+                                Default
+                              </span>
+                            </>
+                          )}
+                        </p>
+                        <p className="truncate text-muted-foreground text-xs">
+                          <span>{issueCountText(status)}</span>
+                          {status.description && (
+                            <>
+                              <span aria-hidden="true"> · </span>
+                              <span>{status.description}</span>
+                            </>
+                          )}
+                        </p>
+                      </div>
+                      {canManage && (
+                        <button
+                          type="button"
+                          aria-label={`Delete ${status.name}`}
+                          onClick={() => void handleDelete(status.id)}
+                          className="rounded-md p-1 text-muted-foreground opacity-0 hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+                        >
+                          <Trash2 size={14} aria-hidden="true" />
+                        </button>
+                      )}
+                    </li>
+                  )
+                })}
               </ul>
               {canManage && creatingCategory === category && (
                 <form
-                  className="mt-2 flex items-center gap-2"
+                  className="flex items-center gap-2 px-2 pt-1 pb-2"
                   onSubmit={(e) => void handleCreate(e, category)}
                 >
                   <input

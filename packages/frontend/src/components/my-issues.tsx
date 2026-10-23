@@ -3,12 +3,13 @@ import { api, type MyIssue } from "@/lib/api"
 import { PriorityMark } from "@/lib/priority-icons"
 import { ProjectIcon } from "@/lib/project-icons"
 import { formatRelativeTime } from "@/lib/relative-time"
+import type { MyIssuesTab } from "@/lib/routes"
 import { StatusIcon } from "@/lib/status-icons"
 
-type MyIssuesTab = "assigned" | "created" | "watched"
+type MyIssuesTabOption = MyIssuesTab
 
 const TABS: {
-  id: MyIssuesTab
+  id: MyIssuesTabOption
   label: string
   empty: string
 }[] = [
@@ -28,14 +29,20 @@ const TABS: {
 /**
  * Cross-workspace My Issues: Assigned / Created / Watched, newest update
  * first. Rows carry the project and status context the API joins in, so the
- * list needs no extra workspace fetch before it can render.
+ * list needs no extra workspace fetch before it can render. When
+ * `activeTab`/`onTabChange` are provided the tab is URL-controlled.
  */
 export function MyIssues({
   onOpenIssue,
+  activeTab,
+  onTabChange,
 }: {
   onOpenIssue: (issue: MyIssue) => void
+  activeTab?: MyIssuesTab
+  onTabChange?: (tab: MyIssuesTab) => void
 }) {
-  const [tab, setTab] = useState<MyIssuesTab>("assigned")
+  const [internalTab, setInternalTab] = useState<MyIssuesTabOption>("assigned")
+  const tab = activeTab ?? internalTab
   const [issues, setIssues] = useState<MyIssue[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -82,7 +89,9 @@ export function MyIssues({
             type="button"
             role="tab"
             aria-selected={tab === option.id}
-            onClick={() => setTab(option.id)}
+            onClick={() =>
+              onTabChange ? onTabChange(option.id) : setInternalTab(option.id)
+            }
             className={`rounded-md border px-3 py-1 text-sm ${
               tab === option.id ? "bg-accent font-medium" : ""
             }`}
