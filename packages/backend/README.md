@@ -73,7 +73,7 @@ Disconnecting deletes the Connection, its repositories, project repository links
 cached Pull Requests and GitHub Issues. External Links on Issues survive with their last
 known state.
 
-**Upgrade note**: the old manual `github_install` repository list is retired in favor of
+**Upgrade note**: the previous manual repository list is retired in favor of
 the Connection allowlist. After upgrading, open Settings → Connections → GitHub, connect
 GitHub, and re-select the repositories. The webhook endpoint is unchanged and accepts
 deliveries for repositories selected under the new model.

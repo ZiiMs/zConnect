@@ -3,7 +3,6 @@ import type { getDb } from "../db/index.js"
 import {
   externalLink,
   githubConnection,
-  githubInstall,
   githubRepository,
   webhookDelivery,
 } from "../db/schema.js"
@@ -15,7 +14,6 @@ import type {
   GitHubConnection,
   GitHubConnectionSecret,
   GitHubConnectionStatus,
-  GitHubInstall,
   GitHubRepository,
   GitHubStore,
   RemoteRepository,
@@ -30,34 +28,6 @@ type Db = ReturnType<typeof getDb>
  */
 export function createDrizzleGitHubStore(resolveDb: () => Db): GitHubStore {
   return {
-    async createInstall(workspaceId, repos) {
-      const db = resolveDb()
-      const [row] = await db
-        .insert(githubInstall)
-        .values({ workspaceId, repos: [...repos] })
-        .returning()
-      return toInstall(row)
-    },
-
-    async listInstalls(workspaceId) {
-      const db = resolveDb()
-      const rows = await db
-        .select()
-        .from(githubInstall)
-        .where(eq(githubInstall.workspaceId, workspaceId))
-      return rows.map(toInstall)
-    },
-
-    async findInstallByRepo(fullName) {
-      const db = resolveDb()
-      const rows = await db.select().from(githubInstall)
-      const lower = fullName.toLowerCase()
-      const match = rows.find((row) =>
-        (row.repos ?? []).some((r) => r.toLowerCase() === lower)
-      )
-      return match ? toInstall(match) : null
-    },
-
     async createExternalLink(issueId, input: CreateExternalLinkInput) {
       const db = resolveDb()
       const existing = await db
@@ -369,14 +339,6 @@ export function createDrizzleGitHubStore(resolveDb: () => Db): GitHubStore {
         .where(eq(githubRepository.id, id))
       return row ? toRepository(row) : null
     },
-  }
-}
-
-function toInstall(row: typeof githubInstall.$inferSelect): GitHubInstall {
-  return {
-    id: row.id,
-    workspaceId: row.workspaceId,
-    repos: [...(row.repos ?? [])],
   }
 }
 
