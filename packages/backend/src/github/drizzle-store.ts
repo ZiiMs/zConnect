@@ -692,6 +692,33 @@ export function createDrizzleGitHubStore(resolveDb: () => Db): GitHubStore {
       }
       return byUrl
     },
+
+    async findExternalLinksByUrl(url) {
+      const db = resolveDb()
+      const rows = await db
+        .select()
+        .from(externalLink)
+        .where(eq(externalLink.url, url))
+      return rows.map(toLink)
+    },
+
+    async getExternalLink(id) {
+      const db = resolveDb()
+      const [row] = await db
+        .select()
+        .from(externalLink)
+        .where(eq(externalLink.id, id))
+      return row ? toLink(row) : null
+    },
+
+    async deleteExternalLink(id) {
+      const db = resolveDb()
+      const rows = await db
+        .delete(externalLink)
+        .where(eq(externalLink.id, id))
+        .returning({ id: externalLink.id })
+      return rows.length > 0
+    },
   }
 }
 

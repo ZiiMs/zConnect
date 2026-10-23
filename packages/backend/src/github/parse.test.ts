@@ -19,7 +19,7 @@ describe("extractIssueRefs", () => {
 })
 
 describe("parseExternalUrl", () => {
-  test("classifies PR, commit, and branch URLs", () => {
+  test("classifies PR, issue, commit, and branch URLs", () => {
     expect(
       parseExternalUrl("https://github.com/acme/web/pull/7")
     ).toMatchObject({
@@ -28,6 +28,15 @@ describe("parseExternalUrl", () => {
       owner: "acme",
       repo: "web",
       ref: "7",
+    })
+    expect(
+      parseExternalUrl("https://github.com/acme/web/issues/42")
+    ).toMatchObject({
+      provider: "github",
+      kind: "issue",
+      owner: "acme",
+      repo: "web",
+      ref: "42",
     })
     expect(
       parseExternalUrl("https://github.com/acme/web/commit/abc1234")

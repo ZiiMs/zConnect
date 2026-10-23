@@ -1,7 +1,7 @@
 import { useState } from "react"
 import type { ExternalLink } from "@/lib/external-links"
 
-/** Ghost paste line for a PR, branch, or commit URL. Enter submits. */
+/** Ghost paste line for an issue, PR, branch, or commit URL. Enter submits. */
 export function ExternalLinkForm({
   onAdd,
   onClose,
@@ -34,7 +34,7 @@ export function ExternalLinkForm({
     <form onSubmit={handleSubmit}>
       <input
         className="w-full bg-transparent px-1 py-1 text-sm outline-none placeholder:text-muted-foreground"
-        aria-label="Paste a PR, branch, or commit URL"
+        aria-label="Paste an issue, PR, branch, or commit URL"
         placeholder="https://github.com/acme/web/pull/7"
         value={url}
         // biome-ignore lint/a11y/noAutofocus: field appears from the user's own "+" press

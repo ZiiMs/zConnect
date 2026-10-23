@@ -5,6 +5,7 @@ import { getDb } from "./db/index.js"
 import { createGitHubConnectionApp } from "./github/connection-routes.js"
 import { createDrizzleGitHubStore } from "./github/drizzle-store.js"
 import { createGitHubProvider } from "./github/github-provider.js"
+import { createGitHubItemApp } from "./github/item-routes.js"
 import type { GitHubWebhookPayload } from "./github/job.js"
 import { createGitHubProjectApp } from "./github/project-routes.js"
 import { createGitHubApp } from "./github/routes.js"
@@ -137,6 +138,17 @@ app.route(
         { jobId: repositoryId }
       )
     },
+  })
+)
+
+// GitHub Item links (#52): link/unlink an item to an Issue. Mounted
+// additively beside the view routes.
+app.route(
+  "/",
+  createGitHubItemApp({
+    workspaces: createDrizzleWorkspaceStore(() => getDb()),
+    github: createDrizzleGitHubStore(() => getDb()),
+    getSession,
   })
 )
 

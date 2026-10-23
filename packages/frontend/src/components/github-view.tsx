@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from "react"
+import { GitHubLinkDialog } from "@/components/github-link-dialog"
 import { ProjectNavTabs } from "@/components/project-nav-tabs"
 import { PullRequestTable } from "@/components/pull-request-rows"
 import { Button } from "@/components/ui/button"
 import { navigate } from "@/hooks/use-pathname"
 import {
   api,
+  type LinkedIssueRef,
   type Project,
   type PullRequestListResponse,
   type PullRequestRow,
@@ -56,6 +58,7 @@ export function GitHubView({
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
+  const [linkTarget, setLinkTarget] = useState<PullRequestRow | null>(null)
 
   useEffect(() => {
     if (tab !== "pull-requests") return
@@ -151,6 +154,16 @@ export function GitHubView({
     } finally {
       setRefreshing(false)
     }
+  }
+
+  function handleLinked(linkedIssues: LinkedIssueRef[]) {
+    const target = linkTarget
+    if (!target) return
+    setItems((current) =>
+      current.map((row) =>
+        row.id === target.id ? { ...row, linkedIssues } : row
+      )
+    )
   }
 
   const lastSyncedAt = data?.lastSyncedAt ?? null
@@ -390,6 +403,8 @@ export function GitHubView({
                     <PullRequestTable
                       rows={items}
                       showRepository={showRepository}
+                      canWrite={canWrite}
+                      onLink={setLinkTarget}
                     />
                   )}
 
@@ -410,6 +425,20 @@ export function GitHubView({
             </>
           )}
         </>
+      )}
+
+      {linkTarget && (
+        <GitHubLinkDialog
+          open={true}
+          onOpenChange={(next) => {
+            if (!next) setLinkTarget(null)
+          }}
+          projectId={project.id}
+          kind="pr"
+          repositoryId={linkTarget.repositoryId}
+          number={linkTarget.number}
+          onLinked={handleLinked}
+        />
       )}
     </div>
   )
