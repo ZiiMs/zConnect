@@ -108,6 +108,7 @@ export function PullRequestTable({
   showRepository,
   canWrite = false,
   onLink,
+  onCreate,
   unavailableRepositories,
 }: {
   rows: PullRequestRow[]
@@ -115,6 +116,7 @@ export function PullRequestTable({
   /** Writers get the trailing actions menu; Viewers do not. */
   canWrite?: boolean
   onLink?: (row: PullRequestRow) => void
+  onCreate?: (row: PullRequestRow) => void
   /** Full names of repositories whose last sync failed; rows stay visible. */
   unavailableRepositories?: ReadonlySet<string>
 }) {
@@ -255,6 +257,7 @@ export function PullRequestTable({
                   <GitHubRowActions
                     url={row.url}
                     onLink={() => onLink?.(row)}
+                    onCreate={() => onCreate?.(row)}
                   />
                 </td>
               )}

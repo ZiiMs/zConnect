@@ -35,6 +35,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
       listGitHubIssues: vi.fn(),
       listIssues: vi.fn(),
       linkGitHubItem: vi.fn(),
+      createIssueFromGitHubItem: vi.fn(),
       refreshGitHub: vi.fn(),
     },
   }
@@ -44,6 +45,7 @@ const listPullRequests = vi.mocked(api.listPullRequests)
 const listGitHubIssues = vi.mocked(api.listGitHubIssues)
 const listIssues = vi.mocked(api.listIssues)
 const linkGitHubItem = vi.mocked(api.linkGitHubItem)
+const createIssueFromGitHubItem = vi.mocked(api.createIssueFromGitHubItem)
 const refreshGitHub = vi.mocked(api.refreshGitHub)
 const linkSocial = vi.mocked(authClient.linkSocial)
 
@@ -595,6 +597,120 @@ describe("github view", () => {
     await waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
     )
+  })
+
+  test("a writer creates an Issue from a Pull Request row and lands on it", async () => {
+    const user = userEvent.setup()
+    const created: Issue = {
+      ...targetIssue,
+      id: "issue-7",
+      number: 7,
+      identifier: "WEB-7",
+      title: "Add the GitHub View",
+    }
+    createIssueFromGitHubItem.mockResolvedValue(created)
+    const chip = {
+      linkId: "link-7",
+      issueId: created.id,
+      identifier: created.identifier,
+      title: created.title,
+    }
+    listPullRequests.mockResolvedValueOnce(response()).mockResolvedValueOnce(
+      response({
+        items: [{ ...openRow, linkedIssues: [chip] }, secondRow],
+      })
+    )
+    renderView()
+
+    const row = await screen.findByTestId("pull-request-row-12")
+    await user.click(
+      within(row).getByRole("button", { name: "GitHub item actions" })
+    )
+    await user.click(screen.getByRole("menuitem", { name: "Create Issue" }))
+
+    const dialog = await screen.findByRole("dialog")
+    expect(
+      within(dialog).getByRole("textbox", { name: "Issue title" })
+    ).toHaveValue("Add the GitHub View")
+    expect(
+      within(dialog).getByRole("textbox", { name: "Issue description" })
+    ).toHaveValue("https://github.com/acme/web/pull/12")
+
+    await user.click(
+      within(dialog).getByRole("button", { name: "Create Issue" })
+    )
+
+    await waitFor(() =>
+      expect(createIssueFromGitHubItem).toHaveBeenCalledWith("pr-1", {
+        kind: "pr",
+        repositoryId: "repo-1",
+        number: 12,
+      })
+    )
+    await waitFor(() => expect(listPullRequests).toHaveBeenCalledTimes(2))
+    expect(window.location.pathname).toBe(
+      "/acme/issue/WEB-7/add-the-github-view"
+    )
+    expect(
+      within(screen.getByTestId("pull-request-row-12")).getByText("WEB-7")
+    ).toBeInTheDocument()
+  })
+
+  test("a writer creates an Issue from a GitHub Issue row and lands on it", async () => {
+    const user = userEvent.setup()
+    const created: Issue = {
+      ...targetIssue,
+      id: "issue-8",
+      number: 8,
+      identifier: "WEB-8",
+      title: "Login redirect loops",
+    }
+    createIssueFromGitHubItem.mockResolvedValue(created)
+    const chip = {
+      linkId: "link-8",
+      issueId: created.id,
+      identifier: created.identifier,
+      title: created.title,
+    }
+    listGitHubIssues
+      .mockResolvedValueOnce(issueResponse())
+      .mockResolvedValueOnce(
+        issueResponse({
+          items: [{ ...openIssue, linkedIssues: [chip] }, apiIssue],
+        })
+      )
+    window.history.replaceState(null, "", "/acme/WEB/github/issues")
+    renderView("issues")
+
+    const row = await screen.findByTestId("github-issue-row-5")
+    await user.click(
+      within(row).getByRole("button", { name: "GitHub item actions" })
+    )
+    await user.click(screen.getByRole("menuitem", { name: "Create Issue" }))
+
+    const dialog = await screen.findByRole("dialog")
+    expect(
+      within(dialog).getByRole("textbox", { name: "Issue title" })
+    ).toHaveValue("Login redirect loops")
+
+    await user.click(
+      within(dialog).getByRole("button", { name: "Create Issue" })
+    )
+
+    await waitFor(() =>
+      expect(createIssueFromGitHubItem).toHaveBeenCalledWith("pr-1", {
+        kind: "issue",
+        repositoryId: "repo-1",
+        number: 5,
+      })
+    )
+    await waitFor(() => expect(listGitHubIssues).toHaveBeenCalledTimes(2))
+    expect(window.location.pathname).toBe(
+      "/acme/issue/WEB-8/login-redirect-loops"
+    )
+    expect(
+      within(screen.getByTestId("github-issue-row-5")).getByText("WEB-8")
+    ).toBeInTheDocument()
   })
 
   test("a Viewer sees no actions menu on GitHub Issue rows", async () => {

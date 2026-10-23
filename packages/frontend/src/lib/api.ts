@@ -389,6 +389,13 @@ export const githubItemLinkResponseSchema = z.object({
   linkedIssues: z.array(linkedIssueRefSchema),
 })
 
+/** Creates an Issue from one cached GitHub Item (#53). */
+export const createIssueFromGitHubItemInputSchema = z.object({
+  kind: githubItemKindSchema,
+  repositoryId: z.string(),
+  number: z.number().int().positive(),
+})
+
 export const commentSchema = z.object({
   id: z.string(),
   issueId: z.string(),
@@ -568,6 +575,9 @@ export type GitHubIssueListResponse = z.infer<
 export type GitHubStatusResponse = z.infer<typeof githubStatusResponseSchema>
 export type GitHubItemKind = z.infer<typeof githubItemKindSchema>
 export type LinkGitHubItemInput = z.infer<typeof linkGitHubItemInputSchema>
+export type CreateIssueFromGitHubItemInput = z.infer<
+  typeof createIssueFromGitHubItemInputSchema
+>
 export type GitHubItemLinkResponse = z.infer<
   typeof githubItemLinkResponseSchema
 >
@@ -1191,6 +1201,17 @@ export const api = {
     return request(
       `/api/projects/${projectId}/github/items/link`,
       githubItemLinkResponseSchema,
+      { method: "POST", body: input }
+    )
+  },
+
+  createIssueFromGitHubItem(
+    projectId: string,
+    input: CreateIssueFromGitHubItemInput
+  ): Promise<Issue> {
+    return request(
+      `/api/projects/${projectId}/github/items/create-issue`,
+      issueSchema,
       { method: "POST", body: input }
     )
   },

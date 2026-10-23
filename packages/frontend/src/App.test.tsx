@@ -67,6 +67,8 @@ vi.mock("@/lib/api", async (importOriginal) => {
       refreshGitHub: vi.fn(),
       getGitHubStatus: vi.fn(),
       linkGitHubItem: vi.fn(),
+      createIssueFromGitHubItem: vi.fn(),
+      getIssue: vi.fn(),
       deleteExternalLink: vi.fn(),
     },
   }
@@ -84,6 +86,8 @@ const listPullRequests = vi.mocked(api.listPullRequests)
 const listGitHubIssues = vi.mocked(api.listGitHubIssues)
 const refreshGitHub = vi.mocked(api.refreshGitHub)
 const linkGitHubItem = vi.mocked(api.linkGitHubItem)
+const createIssueFromGitHubItem = vi.mocked(api.createIssueFromGitHubItem)
+const getIssue = vi.mocked(api.getIssue)
 
 const githubViewResponse = {
   items: [
@@ -1291,6 +1295,62 @@ describe("URL as the state store", () => {
       })
     )
     expect(await within(row).findByText("WEB-2")).toBeInTheDocument()
+  })
+
+  test("a writer creates an Issue from a GitHub item and lands on it", async () => {
+    const user = userEvent.setup()
+    const created: Issue = {
+      id: "issue-7",
+      projectId: "pr-1",
+      number: 7,
+      keyPrefix: "WEB",
+      identifier: "WEB-7",
+      title: "Add the GitHub View",
+      description: "https://github.com/acme/web/pull/12",
+      statusId: "status-1",
+      priority: "Medium",
+      assigneeId: null,
+      dueDate: null,
+      archived: false,
+      labels: [],
+      createdBy: "user-1",
+    }
+    createIssueFromGitHubItem.mockResolvedValue(created)
+    getIssue.mockResolvedValue(created)
+    window.history.replaceState(null, "", "/acme/WEB/github")
+    renderShell()
+
+    const row = await screen.findByTestId("pull-request-row-12")
+    await user.click(
+      within(row).getByRole("button", { name: "GitHub item actions" })
+    )
+    await user.click(screen.getByRole("menuitem", { name: "Create Issue" }))
+
+    const dialog = await screen.findByRole("dialog")
+    expect(
+      within(dialog).getByRole("textbox", { name: "Issue title" })
+    ).toHaveValue("Add the GitHub View")
+    expect(
+      within(dialog).getByRole("textbox", { name: "Issue description" })
+    ).toHaveValue("https://github.com/acme/web/pull/12")
+
+    await user.click(
+      within(dialog).getByRole("button", { name: "Create Issue" })
+    )
+
+    await waitFor(() =>
+      expect(createIssueFromGitHubItem).toHaveBeenCalledWith("pr-1", {
+        kind: "pr",
+        repositoryId: "repo-1",
+        number: 12,
+      })
+    )
+    await waitFor(() =>
+      expect(window.location.pathname).toBe(
+        "/acme/issue/WEB-7/add-the-github-view"
+      )
+    )
+    expect(await screen.findByText("Add the GitHub View")).toBeInTheDocument()
   })
 
   test("a Viewer reads the GitHub View without write affordances", async () => {

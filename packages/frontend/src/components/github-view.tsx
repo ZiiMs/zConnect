@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
+import { GitHubCreateDialog } from "@/components/github-create-dialog"
 import { GitHubIssueTable } from "@/components/github-issue-rows"
 import { GitHubLinkDialog } from "@/components/github-link-dialog"
 import { ProjectNavTabs } from "@/components/project-nav-tabs"
@@ -11,6 +12,7 @@ import {
   type GitHubIssueListResponse,
   type GitHubIssueRow,
   type GitHubItemKind,
+  type Issue,
   type LinkedIssueRef,
   type Project,
   type PullRequestListResponse,
@@ -24,7 +26,11 @@ import {
   parseGitHubFilters,
 } from "@/lib/github-view"
 import { formatRelativeTime } from "@/lib/relative-time"
-import { buildGitHubPath, buildSettingsPath } from "@/lib/routes"
+import {
+  buildGitHubPath,
+  buildIssuePath,
+  buildSettingsPath,
+} from "@/lib/routes"
 
 const STALE_AFTER_MS = 5 * 60 * 1000
 
@@ -38,6 +44,18 @@ interface GitHubLinkTarget {
   rowId: string
   repositoryId: string
   number: number
+}
+
+/** The GitHub Item the create dialog is prefilled from, for either tab. */
+interface GitHubCreateTarget {
+  kind: GitHubItemKind
+  repositoryId: string
+  number: number
+  title: string
+  url: string
+  bodyExcerpt: string | null
+  /** Repository full name (`owner/name`). */
+  repository: string
 }
 
 /**
@@ -86,6 +104,9 @@ export function GitHubView({
       : "open"
   const [linkTarget, setLinkTarget] = useState<GitHubLinkTarget | null>(null)
   const autoRefreshed = useRef(false)
+  const [createTarget, setCreateTarget] = useState<GitHubCreateTarget | null>(
+    null
+  )
 
   useEffect(() => {
     if (tab !== "pull-requests") return
@@ -311,6 +332,14 @@ export function GitHubView({
         row.id === target.rowId ? { ...row, linkedIssues } : row
       )
     )
+  }
+
+  function handleCreated(created: Issue) {
+    setCreateTarget(null)
+    // Refetch so the source row shows the new External Link chip, then land
+    // on the Issue that now carries it.
+    setReloadKey((key) => key + 1)
+    navigate(buildIssuePath(workspace.name, created.identifier, created.title))
   }
 
   const stale =
@@ -636,6 +665,17 @@ export function GitHubView({
                           number: row.number,
                         })
                       }
+                      onCreate={(row) =>
+                        setCreateTarget({
+                          kind: "issue",
+                          repositoryId: row.repositoryId,
+                          number: row.number,
+                          title: row.title,
+                          url: row.url,
+                          bodyExcerpt: row.bodyExcerpt,
+                          repository: row.repository,
+                        })
+                      }
                     />
                   ) : (
                     <PullRequestTable
@@ -651,6 +691,17 @@ export function GitHubView({
                         })
                       }
                       unavailableRepositories={unavailableRepositories}
+                      onCreate={(row) =>
+                        setCreateTarget({
+                          kind: "pr",
+                          repositoryId: row.repositoryId,
+                          number: row.number,
+                          title: row.title,
+                          url: row.url,
+                          bodyExcerpt: row.bodyExcerpt,
+                          repository: row.repository,
+                        })
+                      }
                     />
                   )}
 
@@ -684,6 +735,24 @@ export function GitHubView({
           repositoryId={linkTarget.repositoryId}
           number={linkTarget.number}
           onLinked={handleLinked}
+        />
+      )}
+
+      {createTarget && (
+        <GitHubCreateDialog
+          open={true}
+          onOpenChange={(next) => {
+            if (!next) setCreateTarget(null)
+          }}
+          projectId={project.id}
+          kind={createTarget.kind}
+          repositoryId={createTarget.repositoryId}
+          number={createTarget.number}
+          title={createTarget.title}
+          url={createTarget.url}
+          bodyExcerpt={createTarget.bodyExcerpt}
+          repository={createTarget.repository}
+          onCreated={handleCreated}
         />
       )}
     </div>

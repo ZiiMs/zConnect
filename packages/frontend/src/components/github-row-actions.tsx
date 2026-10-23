@@ -2,16 +2,18 @@ import { MoreHorizontal } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 
 /**
- * Trailing row menu shared by Pull Request and GitHub Issue rows (#52).
+ * Trailing row menu shared by Pull Request and GitHub Issue rows (#52/#53).
  * Rendered only for project writers; Viewers never see the trigger, so no
- * link affordance reaches a read-only surface.
+ * write affordance reaches a read-only surface.
  */
 export function GitHubRowActions({
   url,
   onLink,
+  onCreate,
 }: {
   url: string
   onLink: () => void
+  onCreate: () => void
 }) {
   const [open, setOpen] = useState(false)
   const container = useRef<HTMLDivElement>(null)
@@ -57,6 +59,18 @@ export function GitHubRowActions({
             className="block w-full rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"
           >
             Link to Issue
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={(event) => {
+              event.stopPropagation()
+              setOpen(false)
+              onCreate()
+            }}
+            className="block w-full rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"
+          >
+            Create Issue
           </button>
           <a
             role="menuitem"
