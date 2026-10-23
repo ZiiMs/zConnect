@@ -5,6 +5,7 @@ import { getDb } from "./db/index.js"
 import { createGitHubConnectionApp } from "./github/connection-routes.js"
 import { createDrizzleGitHubStore } from "./github/drizzle-store.js"
 import type { GitHubWebhookPayload } from "./github/job.js"
+import { createGitHubProjectApp } from "./github/project-routes.js"
 import { createGitHubRepositoryRemote } from "./github/repository-source.js"
 import { createGitHubApp } from "./github/routes.js"
 import { createBetterAuthGitHubAccountSource } from "./github/token-source.js"
@@ -100,6 +101,17 @@ app.route(
       async () => (await import("./lib/auth.js")).auth
     ),
     remote: createGitHubRepositoryRemote(),
+  })
+)
+
+// Project-scoped repository links (#48): read for every member/Viewer, manage
+// for Owner/Admin. Mounted additively beside the Connection routes.
+app.route(
+  "/",
+  createGitHubProjectApp({
+    workspaces: createDrizzleWorkspaceStore(() => getDb()),
+    github: createDrizzleGitHubStore(() => getDb()),
+    getSession,
   })
 )
 

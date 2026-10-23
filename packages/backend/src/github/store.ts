@@ -78,6 +78,19 @@ export interface GitHubRepository {
   syncError: string | null
 }
 
+/** A repository plus the project link's metadata. */
+export interface ProjectRepository extends GitHubRepository {
+  linkedAt: string
+  linkedBy: string
+}
+
+export interface ProjectRepositoryLink {
+  projectId: string
+  repositoryId: string
+  linkedBy: string
+  linkedAt: string
+}
+
 /** Provider-agnostic repository listing shape shared with the GitProvider seam. */
 export interface RemoteRepository {
   githubId: string
@@ -176,14 +189,50 @@ export interface GitHubStore {
     >
   ): Promise<GitHubRepository>
   getRepository(id: string): Promise<GitHubRepository | null>
+
+  /** #48 — project links. */
+  listProjectRepositories(projectId: string): Promise<ProjectRepository[]>
+  replaceProjectRepositories(
+    projectId: string,
+    repositoryIds: string[],
+    linkedBy: string,
+    at: string
+  ): Promise<ProjectRepository[]>
+  listRepositoryProjectIds(repositoryId: string): Promise<string[]>
+  /** Repositories linked to at least one project; the sweep's candidate pool. */
+  listLinkedRepositories(): Promise<GitHubRepository[]>
+  /**
+   * Removes a repository and its project links. Drizzle cascades the cached
+   * snapshots; the memory store drops them in `removeRepository` once #49/#50
+   * add those maps.
+   */
+  deleteRepository(repositoryId: string): Promise<void>
 }
 
-export function createMemoryGitHubStore(): GitHubStore {
+export interface MemoryGitHubStoreOptions {
+  /**
+   * Resolves the Project's workspace so project links stay inside the
+   * workspace allowlist. Production enforces the same relation in SQL;
+   * fixtures that exercise project links pass the workspace store here.
+   */
+  projectWorkspaceId?: (projectId: string) => Promise<string | null>
+}
+
+function invalid(message: string): Error {
+  const error = new Error(message)
+  ;(error as { code?: string }).code = "invalid"
+  return error
+}
+
+export function createMemoryGitHubStore(
+  options: MemoryGitHubStoreOptions = {}
+): GitHubStore {
   const installs = new Map<string, GitHubInstall>()
   const links = new Map<string, ExternalLink>()
   const deliveries = new Set<string>()
   const connections = new Map<string, GitHubConnectionSecret>()
   const repositories = new Map<string, GitHubRepository>()
+  const projectLinks = new Map<string, ProjectRepositoryLink>()
 
   function cloneConnection(
     connection: GitHubConnectionSecret
@@ -198,8 +247,39 @@ export function createMemoryGitHubStore(): GitHubStore {
     return { ...safe, scopes: [...safe.scopes] }
   }
 
+  function linkKey(projectId: string, repositoryId: string): string {
+    return `${projectId}:${repositoryId}`
+  }
+
+  function removeLinksForRepository(repositoryId: string) {
+    for (const [key, link] of projectLinks) {
+      if (link.repositoryId === repositoryId) projectLinks.delete(key)
+    }
+  }
+
   function removeRepository(id: string) {
+    // Project links cascade with the repository. #49/#50 must also drop the
+    // cached pull request and issue snapshots for `id` here — the memory store
+    // has no foreign keys.
+    removeLinksForRepository(id)
     repositories.delete(id)
+  }
+
+  function projectRepositories(projectId: string): ProjectRepository[] {
+    const found: ProjectRepository[] = []
+    for (const link of projectLinks.values()) {
+      if (link.projectId !== projectId) continue
+      const repository = repositories.get(link.repositoryId)
+      if (!repository) continue
+      found.push({
+        ...repository,
+        linkedBy: link.linkedBy,
+        linkedAt: link.linkedAt,
+      })
+    }
+    return found.sort((a, b) =>
+      a.fullName.toLowerCase().localeCompare(b.fullName.toLowerCase())
+    )
   }
 
   function connectionRepositories(connectionId: string): GitHubRepository[] {
@@ -445,6 +525,74 @@ export function createMemoryGitHubStore(): GitHubStore {
     async getRepository(id) {
       const repository = repositories.get(id)
       return repository ? { ...repository } : null
+    },
+
+    async listProjectRepositories(projectId) {
+      return projectRepositories(projectId)
+    },
+
+    async replaceProjectRepositories(projectId, repositoryIds, linkedBy, at) {
+      const wanted = [...new Set(repositoryIds)]
+      if (wanted.length > MAX_ALLOWLIST) {
+        throw invalid(
+          `At most ${MAX_ALLOWLIST} repositories can be linked to a project`
+        )
+      }
+      const workspaceId = options.projectWorkspaceId
+        ? await options.projectWorkspaceId(projectId)
+        : null
+      for (const repositoryId of wanted) {
+        const repository = repositories.get(repositoryId)
+        if (!repository) throw invalid("Unknown repository")
+        if (!workspaceId) continue
+        const connection = [...connections.values()].find(
+          (candidate) => candidate.id === repository.connectionId
+        )
+        if (!connection || connection.workspaceId !== workspaceId) {
+          throw invalid("Repository is outside the workspace allowlist")
+        }
+      }
+      const wantedIds = new Set(wanted)
+      for (const [key, link] of projectLinks) {
+        if (link.projectId !== projectId) continue
+        if (!wantedIds.has(link.repositoryId)) projectLinks.delete(key)
+      }
+      for (const repositoryId of wanted) {
+        const key = linkKey(projectId, repositoryId)
+        if (projectLinks.has(key)) continue
+        projectLinks.set(key, {
+          projectId,
+          repositoryId,
+          linkedBy,
+          linkedAt: at,
+        })
+      }
+      return projectRepositories(projectId)
+    },
+
+    async listRepositoryProjectIds(repositoryId) {
+      return [...projectLinks.values()]
+        .filter((link) => link.repositoryId === repositoryId)
+        .map((link) => link.projectId)
+    },
+
+    async listLinkedRepositories() {
+      const ids = new Set(
+        [...projectLinks.values()].map((link) => link.repositoryId)
+      )
+      return [...ids]
+        .map((id) => repositories.get(id))
+        .filter((repository): repository is GitHubRepository =>
+          Boolean(repository)
+        )
+        .sort((a, b) =>
+          a.fullName.toLowerCase().localeCompare(b.fullName.toLowerCase())
+        )
+        .map((repository) => ({ ...repository }))
+    },
+
+    async deleteRepository(repositoryId) {
+      removeRepository(repositoryId)
     },
   }
 }
