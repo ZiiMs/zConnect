@@ -3,6 +3,7 @@ import { z } from "zod"
 import type { IntegrationCipher } from "../lib/cipher.js"
 import type { GetSession } from "../workspaces/session.js"
 import type { WorkspaceStore } from "../workspaces/store.js"
+import type { GitHubRemote } from "./provider.js"
 import {
   type GitHubConnection,
   type GitHubConnectionSecret,
@@ -12,19 +13,6 @@ import {
   type RemoteRepository,
 } from "./store.js"
 import type { GitHubAccountSource } from "./token-source.js"
-
-/**
- * Remote repository access the Connection routes need before the full
- * GitProvider seam exists (#49): list repositories reachable by the token
- * and resolve the connector's login for display.
- */
-export interface GitHubRemote {
-  listRepositories(
-    accessToken: string,
-    query?: string
-  ): Promise<RemoteRepository[]>
-  getViewerLogin(accessToken: string): Promise<string>
-}
 
 export interface GitHubConnectionDeps {
   workspaces: WorkspaceStore

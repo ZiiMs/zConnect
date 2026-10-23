@@ -10,6 +10,7 @@ import type { Issue, Project } from "@/lib/api"
  */
 export function ProjectPage({
   project,
+  workspaceName,
   canManage,
   canWriteIssues,
   userId,
@@ -19,6 +20,7 @@ export function ProjectPage({
   onCloseIssue,
 }: {
   project: Project
+  workspaceName?: string
   canManage: boolean
   canWriteIssues: boolean
   userId: string
@@ -32,6 +34,7 @@ export function ProjectPage({
       <h2 className="sr-only">{project.name}</h2>
       <ProjectIssues
         project={project}
+        workspaceName={workspaceName}
         userId={userId}
         canWrite={canWriteIssues}
         canAdmin={canManage}

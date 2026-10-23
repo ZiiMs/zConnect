@@ -61,6 +61,8 @@ vi.mock("@/lib/api", async (importOriginal) => {
       setGitHubAllowlist: vi.fn(),
       getProjectRepositories: vi.fn(),
       setProjectRepositories: vi.fn(),
+      listPullRequests: vi.fn(),
+      refreshGitHub: vi.fn(),
     },
   }
 })
@@ -73,6 +75,49 @@ const getInvitation = vi.mocked(api.getInvitation)
 const acceptInvitation = vi.mocked(api.acceptInvitation)
 const getGitHubConnection = vi.mocked(api.getGitHubConnection)
 const getProjectRepositories = vi.mocked(api.getProjectRepositories)
+const listPullRequests = vi.mocked(api.listPullRequests)
+const refreshGitHub = vi.mocked(api.refreshGitHub)
+
+const githubViewResponse = {
+  items: [
+    {
+      id: "pr-row-12",
+      repositoryId: "repo-1",
+      number: 12,
+      title: "Add the GitHub View",
+      state: "open" as const,
+      draft: false,
+      authorLogin: "octocat",
+      authorAvatarUrl: null,
+      url: "https://github.com/acme/web/pull/12",
+      sourceBranch: "feature/github-view",
+      targetBranch: "main",
+      checksState: "success",
+      reviewDecision: "approved",
+      commentCount: 2,
+      bodyExcerpt: null,
+      githubCreatedAt: "2026-10-01T10:00:00.000Z",
+      githubUpdatedAt: "2026-10-02T11:00:00.000Z",
+      mergedAt: null,
+      closedAt: null,
+      syncedAt: "2026-10-10T12:00:00.000Z",
+      repository: "acme/web",
+      linkedIssues: [],
+    },
+  ],
+  nextCursor: null,
+  lastSyncedAt: "2026-10-10T12:00:00.000Z",
+  connection: { status: "active" as const, login: "octocat" },
+  repositories: [
+    {
+      id: "repo-1",
+      fullName: "acme/web",
+      issuesEnabled: true,
+      unavailable: false,
+    },
+  ],
+  filters: { authors: ["octocat"], labels: [] },
+}
 
 const workspaces: Workspace[] = [
   { id: "ws-1", name: "Acme", role: "Owner" },
@@ -147,6 +192,12 @@ beforeEach(() => {
   getProjectRepositories.mockResolvedValue({
     items: [],
     connection: null,
+  })
+  listPullRequests.mockResolvedValue(githubViewResponse)
+  refreshGitHub.mockResolvedValue({
+    accepted: true,
+    enqueued: 1,
+    lastSyncedAt: "2026-10-10T12:00:00.000Z",
   })
 })
 
@@ -918,5 +969,119 @@ describe("URL as the state store", () => {
     renderShell()
     await screen.findByTestId("rail-workspace-trigger")
     await waitFor(() => expect(window.location.pathname).toBe("/acme/WEB"))
+  })
+
+  test("a GitHub deep link renders the Pull Requests tab and keeps its URL", async () => {
+    window.history.replaceState(null, "", "/acme/WEB/github")
+    renderShell()
+
+    expect(
+      await screen.findByRole("heading", { name: /web github view/i })
+    ).toBeInTheDocument()
+    expect(
+      await screen.findByRole("tab", { name: "Pull Requests" })
+    ).toHaveAttribute("aria-selected", "true")
+    expect(await screen.findByText("Add the GitHub View")).toBeInTheDocument()
+    expect(window.location.pathname).toBe("/acme/WEB/github")
+    expect(listPullRequests).toHaveBeenCalledWith("pr-1", {
+      state: "open",
+      author: "",
+      label: "",
+      q: "",
+    })
+  })
+
+  test("the Issues | GitHub nav switches between the project surfaces", async () => {
+    const user = userEvent.setup()
+    window.history.replaceState(null, "", "/acme/WEB")
+    renderShell()
+    await screen.findByRole("heading", { name: "Web" })
+
+    await user.click(screen.getByRole("tab", { name: "GitHub" }))
+    await waitFor(() =>
+      expect(window.location.pathname).toBe("/acme/WEB/github")
+    )
+    expect(
+      await screen.findByRole("heading", { name: /web github view/i })
+    ).toBeInTheDocument()
+
+    await user.click(screen.getByRole("tab", { name: "Issues" }))
+    await waitFor(() => expect(window.location.pathname).toBe("/acme/WEB"))
+  })
+
+  test("GitHub View filters update the query string", async () => {
+    const user = userEvent.setup()
+    window.history.replaceState(null, "", "/acme/WEB/github")
+    renderShell()
+    await screen.findByRole("table", { name: "Pull requests" })
+
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Pull request state" }),
+      "merged"
+    )
+    await waitFor(() =>
+      expect(window.location.search).toContain("state=merged")
+    )
+    expect(window.location.pathname).toBe("/acme/WEB/github")
+    expect(listPullRequests).toHaveBeenLastCalledWith(
+      "pr-1",
+      expect.objectContaining({ state: "merged" })
+    )
+  })
+
+  test("GitHub View empty states explain missing repositories and pull requests", async () => {
+    listPullRequests.mockResolvedValueOnce({
+      ...githubViewResponse,
+      items: [],
+      repositories: [],
+    })
+    window.history.replaceState(null, "", "/acme/WEB/github")
+    const first = renderShell()
+    expect(
+      await screen.findByText("No repositories are linked to this project.")
+    ).toBeInTheDocument()
+    first.unmount()
+
+    listPullRequests.mockResolvedValueOnce({
+      ...githubViewResponse,
+      items: [],
+    })
+    renderShell()
+    expect(
+      await screen.findByText("No open pull requests.")
+    ).toBeInTheDocument()
+  })
+
+  test("clicking a GitHub View row opens the Pull Request URL", async () => {
+    const user = userEvent.setup()
+    const open = vi.spyOn(window, "open").mockImplementation(() => null)
+    window.history.replaceState(null, "", "/acme/WEB/github")
+    renderShell()
+
+    await user.click(await screen.findByTestId("pull-request-row-12"))
+    expect(open).toHaveBeenCalledWith(
+      "https://github.com/acme/web/pull/12",
+      "_blank",
+      "noopener,noreferrer"
+    )
+    open.mockRestore()
+  })
+
+  test("a Viewer reads the GitHub View without write affordances", async () => {
+    listWorkspaces.mockResolvedValue([
+      { id: "ws-1", name: "Acme", role: "Viewer" },
+      { id: "ws-2", name: "Beta", role: "Member" },
+    ])
+    window.history.replaceState(null, "", "/acme/WEB/github")
+    renderShell()
+
+    expect(await screen.findByTestId("github-view")).toHaveAttribute(
+      "data-can-write",
+      "false"
+    )
+    expect(screen.queryByRole("button", { name: "New issue" })).toBeNull()
+    expect(
+      await screen.findByRole("table", { name: "Pull requests" })
+    ).toBeInTheDocument()
   })
 })

@@ -8,11 +8,9 @@ import {
   type Project,
   type WorkspaceStore,
 } from "../workspaces/store.js"
-import {
-  createGitHubConnectionApp,
-  type GitHubRemote,
-} from "./connection-routes.js"
+import { createGitHubConnectionApp } from "./connection-routes.js"
 import { createGitHubProjectApp } from "./project-routes.js"
+import type { GitHubRemote } from "./provider.js"
 import { createGitHubApp } from "./routes.js"
 import {
   createMemoryGitHubStore,

@@ -254,6 +254,69 @@ export const projectRepositoriesResponseSchema = z.object({
   connection: projectConnectionSchema.nullable(),
 })
 
+/** Chip shown on a GitHub Item row: one per External Link. */
+export const linkedIssueRefSchema = z.object({
+  linkId: z.string(),
+  issueId: z.string(),
+  identifier: z.string(),
+  title: z.string(),
+})
+
+export const pullRequestStateSchema = z.enum(["open", "merged", "closed"])
+
+/** Cached Pull Request plus its repository name and linked Issue chips. */
+export const pullRequestRowSchema = z.object({
+  id: z.string(),
+  repositoryId: z.string(),
+  number: z.number(),
+  title: z.string(),
+  state: pullRequestStateSchema,
+  draft: z.boolean(),
+  authorLogin: z.string(),
+  authorAvatarUrl: z.string().nullable(),
+  url: z.string(),
+  sourceBranch: z.string(),
+  targetBranch: z.string(),
+  checksState: z.string().nullable(),
+  reviewDecision: z.string().nullable(),
+  commentCount: z.number(),
+  bodyExcerpt: z.string().nullable(),
+  githubCreatedAt: z.string(),
+  githubUpdatedAt: z.string(),
+  mergedAt: z.string().nullable(),
+  closedAt: z.string().nullable(),
+  syncedAt: z.string(),
+  repository: z.string(),
+  linkedIssues: z.array(linkedIssueRefSchema),
+})
+
+export const githubViewRepositorySchema = z.object({
+  id: z.string(),
+  fullName: z.string(),
+  issuesEnabled: z.boolean(),
+  unavailable: z.boolean(),
+})
+
+export const githubViewFiltersSchema = z.object({
+  authors: z.array(z.string()),
+  labels: z.array(z.object({ name: z.string(), color: z.string() })),
+})
+
+export const pullRequestListResponseSchema = z.object({
+  items: z.array(pullRequestRowSchema),
+  nextCursor: z.string().nullable(),
+  lastSyncedAt: z.string().nullable(),
+  connection: projectConnectionSchema.nullable(),
+  repositories: z.array(githubViewRepositorySchema),
+  filters: githubViewFiltersSchema,
+})
+
+export const githubRefreshResponseSchema = z.object({
+  accepted: z.boolean(),
+  enqueued: z.number(),
+  lastSyncedAt: z.string().nullable(),
+})
+
 export const commentSchema = z.object({
   id: z.string(),
   issueId: z.string(),
@@ -414,6 +477,25 @@ export type ProjectConnection = z.infer<typeof projectConnectionSchema>
 export type ProjectRepositoriesResponse = z.infer<
   typeof projectRepositoriesResponseSchema
 >
+export type LinkedIssueRef = z.infer<typeof linkedIssueRefSchema>
+export type PullRequestState = z.infer<typeof pullRequestStateSchema>
+export type PullRequestRow = z.infer<typeof pullRequestRowSchema>
+export type GitHubViewRepository = z.infer<typeof githubViewRepositorySchema>
+export type GitHubViewFilters = z.infer<typeof githubViewFiltersSchema>
+export type PullRequestListResponse = z.infer<
+  typeof pullRequestListResponseSchema
+>
+export type GitHubRefreshResponse = z.infer<typeof githubRefreshResponseSchema>
+
+/** Query accepted by the Pull Request list; empty values are skipped. */
+export interface ListPullRequestsFilters {
+  state?: string
+  author?: string
+  label?: string
+  q?: string
+  cursor?: string | null
+  limit?: number
+}
 
 /**
  * The subset of a Member that assignee surfaces read. Views accept this
@@ -950,6 +1032,32 @@ export const api = {
       `/api/projects/${projectId}/repositories`,
       projectRepositoriesResponseSchema,
       { method: "PUT", body: { repositoryIds } }
+    )
+  },
+
+  listPullRequests(
+    projectId: string,
+    filters: ListPullRequestsFilters = {}
+  ): Promise<PullRequestListResponse> {
+    const params = new URLSearchParams()
+    if (filters.state?.trim()) params.set("state", filters.state.trim())
+    if (filters.author?.trim()) params.set("author", filters.author.trim())
+    if (filters.label?.trim()) params.set("label", filters.label.trim())
+    if (filters.q?.trim()) params.set("q", filters.q.trim())
+    if (filters.cursor) params.set("cursor", filters.cursor)
+    if (filters.limit !== undefined) params.set("limit", String(filters.limit))
+    const suffix = params.toString() ? `?${params.toString()}` : ""
+    return request(
+      `/api/projects/${projectId}/github/pull-requests${suffix}`,
+      pullRequestListResponseSchema
+    )
+  },
+
+  refreshGitHub(projectId: string): Promise<GitHubRefreshResponse> {
+    return request(
+      `/api/projects/${projectId}/github/refresh`,
+      githubRefreshResponseSchema,
+      { method: "POST", body: {} }
     )
   },
 }
