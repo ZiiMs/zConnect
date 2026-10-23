@@ -25,8 +25,28 @@ A presentation of the same issue query as a List, Table, or Kanban board.
 _Avoid_: Page, Layout
 
 **External Link**:
-An issue reference to a GitHub PR, branch, or commit, created manually or auto-created from webhooks.
-_Avoid_: Integration, Sync
+An issue's reference to a GitHub PR, branch, or commit, created manually or auto-created from webhooks.
+_Avoid_: Integration, Sync, Attachment
+
+**GitHub Connection**:
+A workspace's authorized GitHub account plus the repositories an admin has admitted to the workspace.
+_Avoid_: Integration, Sync, App install
+
+**GitHub View**:
+A project-scoped, read-only presentation of pull requests and issues fetched from that project's GitHub repositories.
+_Avoid_: GitHub tab, GitHub board, Mirror
+
+**GitHub Item**:
+A Pull Request or GitHub Issue fetched from a repository linked to a project.
+_Avoid_: GitHub entity, Remote issue
+
+**Pull Request**:
+A GitHub pull request shown read-only in a GitHub View and linkable to an Issue through an External Link.
+_Avoid_: PR attachment, Merge request
+
+**GitHub Issue**:
+An issue in a linked GitHub repository, shown read-only in a GitHub View. Distinct from an Issue and never imported as one.
+_Avoid_: External issue, Imported issue
 
 **Status**:
 A named step in a project's workflow (e.g. In Review), ordered for Kanban display, with a display color, optional description, and an issue count. Exactly one status per project is the Default new issues start in.
