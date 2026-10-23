@@ -885,9 +885,12 @@ export function createDrizzleGitHubStore(resolveDb: () => Db): GitHubStore {
         .where(
           and(
             ne(githubPullRequest.state, "open"),
+            // Bind the ISO string, not a Date: postgres.js cannot encode a
+            // Date nested inside a raw `sql` fragment (retention crashed the
+            // worker with ERR_INVALID_ARG_TYPE before this).
             lt(
               sql`coalesce(${githubPullRequest.mergedAt}, ${githubPullRequest.closedAt}, ${githubPullRequest.githubUpdatedAt})`,
-              new Date(olderThan)
+              olderThan
             )
           )
         )
@@ -902,9 +905,10 @@ export function createDrizzleGitHubStore(resolveDb: () => Db): GitHubStore {
         .where(
           and(
             ne(githubIssue.state, "open"),
+            // See deleteExpiredPullRequests: bind the ISO string, not a Date.
             lt(
               sql`coalesce(${githubIssue.closedAt}, ${githubIssue.githubUpdatedAt})`,
-              new Date(olderThan)
+              olderThan
             )
           )
         )

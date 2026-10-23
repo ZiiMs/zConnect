@@ -127,6 +127,8 @@ const remoteRepositories = [
 
 beforeEach(() => {
   vi.clearAllMocks()
+  linkSocial.mockReset()
+  linkSocial.mockResolvedValue(undefined)
   window.history.replaceState(null, "", "/acme/settings/connections")
   getGitHubConnection.mockResolvedValue(response())
   searchGitHubRepositories.mockResolvedValue({ items: remoteRepositories })
@@ -212,6 +214,36 @@ describe("connections settings", () => {
     expect(connectGitHubConnection).toHaveBeenCalledTimes(1)
     expect(connectGitHubConnection).toHaveBeenCalledWith("ws-1")
     expect(window.location.search).toBe("")
+  })
+
+  test("a failed finalize keeps ?linked=1 and explains the failure", async () => {
+    window.history.replaceState(null, "", "/acme/settings/connections?linked=1")
+    connectGitHubConnection.mockRejectedValue(
+      new ApiError(400, "GitHub account not linked")
+    )
+    render(<ConnectionsSettings workspaceId="ws-1" canManage={true} />)
+
+    expect(
+      await screen.findByText(/GitHub account not linked/i)
+    ).toBeInTheDocument()
+    expect(window.location.search).toBe("?linked=1")
+  })
+
+  test("a failed OAuth start surfaces instead of looking like a no-op", async () => {
+    const user = userEvent.setup()
+    getGitHubConnection.mockResolvedValue({
+      connection: null,
+      repositories: [],
+    })
+    linkSocial.mockRejectedValue(new Error("Provider not configured"))
+    render(<ConnectionsSettings workspaceId="ws-1" canManage={true} />)
+
+    await screen.findByText(/GitHub is not connected/i)
+    await user.click(screen.getByRole("button", { name: /connect GitHub/i }))
+
+    expect(
+      await screen.findByText(/Provider not configured/i)
+    ).toBeInTheDocument()
   })
 
   test("members see status and repositories but no controls", async () => {

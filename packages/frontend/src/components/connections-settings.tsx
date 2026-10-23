@@ -57,17 +57,22 @@ export function ConnectionsSettings({
       setLoading(true)
       setError(null)
       const url = new URL(window.location.href)
-      const linked = url.searchParams.get("linked") === "1"
-      if (linked) {
-        url.searchParams.delete("linked")
-        window.history.replaceState(null, "", url.toString())
-      }
+      // Keep `linked=1` until the finalize succeeds: React StrictMode runs this
+      // effect twice, and a failure should survive a reload so it can retry
+      // instead of silently rendering "not connected".
+      const linked =
+        url.searchParams.get("linked") === "1" && canManage
       try {
-        const data =
-          linked && canManage
-            ? await api.connectGitHubConnection(workspaceId)
-            : await api.getGitHubConnection(workspaceId)
-        if (!cancelled) setState(data)
+        const data = linked
+          ? await api.connectGitHubConnection(workspaceId)
+          : await api.getGitHubConnection(workspaceId)
+        if (!cancelled) {
+          if (linked) {
+            url.searchParams.delete("linked")
+            window.history.replaceState(null, "", url.toString())
+          }
+          setState(data)
+        }
       } catch (failure) {
         if (!cancelled) {
           setError(
@@ -149,11 +154,20 @@ export function ConnectionsSettings({
   function connect() {
     const url = new URL(window.location.href)
     url.searchParams.set("linked", "1")
-    void authClient.linkSocial({
-      provider: "github",
-      scopes: ["repo"],
-      callbackURL: url.toString(),
-    })
+    // A missing or misconfigured GitHub OAuth App surfaces here; without this
+    // catch the click looks like a no-op.
+    setActionError(null)
+    void authClient
+      .linkSocial({
+        provider: "github",
+        scopes: ["repo"],
+        callbackURL: url.toString(),
+      })
+      .catch((failure: unknown) => {
+        setActionError(
+          errorMessage(failure, "Could not start GitHub authorization")
+        )
+      })
   }
 
   function toggleRepository(githubId: string) {
