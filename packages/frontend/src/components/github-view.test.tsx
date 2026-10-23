@@ -9,6 +9,8 @@ import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
 import {
   api,
+  type GitHubIssueListResponse,
+  type GitHubIssueRow,
   type PullRequestListResponse,
   type PullRequestRow,
 } from "@/lib/api"
@@ -21,12 +23,14 @@ vi.mock("@/lib/api", async (importOriginal) => {
     api: {
       ...actual.api,
       listPullRequests: vi.fn(),
+      listGitHubIssues: vi.fn(),
       refreshGitHub: vi.fn(),
     },
   }
 })
 
 const listPullRequests = vi.mocked(api.listPullRequests)
+const listGitHubIssues = vi.mocked(api.listGitHubIssues)
 const refreshGitHub = vi.mocked(api.refreshGitHub)
 
 const workspace = { id: "ws-1", name: "Acme", role: "Owner" as const }
@@ -124,10 +128,90 @@ function renderView(tab: "pull-requests" | "issues" = "pull-requests") {
   )
 }
 
+const openIssue: GitHubIssueRow = {
+  id: "issue-row-5",
+  repositoryId: "repo-1",
+  number: 5,
+  title: "Login redirect loops",
+  state: "open",
+  authorLogin: "hubot",
+  authorAvatarUrl: null,
+  url: "https://github.com/acme/web/issues/5",
+  labels: [
+    { name: "bug", color: "d73a4a" },
+    { name: "enhancement", color: "a2eeef" },
+  ],
+  assignees: [{ login: "octocat", avatarUrl: null }],
+  commentCount: 3,
+  bodyExcerpt: null,
+  githubCreatedAt: "2026-10-01T09:00:00.000Z",
+  githubUpdatedAt: "2026-10-05T11:00:00.000Z",
+  closedAt: null,
+  syncedAt: "2026-10-10T12:00:00.000Z",
+  repository: "acme/web",
+  linkedIssues: [
+    {
+      linkId: "link-1",
+      issueId: "issue-1",
+      identifier: "WEB-1",
+      title: "Fix login",
+    },
+  ],
+}
+
+const apiIssue: GitHubIssueRow = {
+  ...openIssue,
+  id: "issue-row-8",
+  repositoryId: "repo-2",
+  number: 8,
+  title: "API 500 on refresh",
+  authorLogin: "octocat",
+  url: "https://github.com/acme/api/issues/8",
+  labels: [{ name: "bug", color: "d73a4a" }],
+  assignees: [],
+  commentCount: 2,
+  repository: "acme/api",
+  linkedIssues: [],
+}
+
+function issueResponse(
+  overrides: Partial<GitHubIssueListResponse> = {}
+): GitHubIssueListResponse {
+  return {
+    items: [apiIssue, openIssue],
+    nextCursor: null,
+    lastSyncedAt: "2026-10-10T12:00:00.000Z",
+    connection: { status: "active", login: "octocat" },
+    repositories: [
+      {
+        id: "repo-1",
+        fullName: "acme/web",
+        issuesEnabled: true,
+        unavailable: false,
+      },
+      {
+        id: "repo-2",
+        fullName: "acme/api",
+        issuesEnabled: true,
+        unavailable: false,
+      },
+    ],
+    filters: {
+      authors: ["hubot", "octocat"],
+      labels: [
+        { name: "bug", color: "d73a4a" },
+        { name: "enhancement", color: "a2eeef" },
+      ],
+    },
+    ...overrides,
+  }
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   window.history.replaceState(null, "", "/acme/WEB/github")
   listPullRequests.mockResolvedValue(response())
+  listGitHubIssues.mockResolvedValue(issueResponse())
 })
 
 afterEach(() => {
@@ -305,15 +389,172 @@ describe("github view", () => {
     expect(screen.getByRole("button", { name: "Refresh" })).toBeInTheDocument()
   })
 
-  test("the GitHub Issues tab is a labelled placeholder", async () => {
+  test("the GitHub Issues tab lists issues with labels, assignees, and chips", async () => {
+    window.history.replaceState(null, "", "/acme/WEB/github/issues")
     renderView("issues")
-    expect(
-      screen.getByText(/GitHub Issues arrive with the Issues slice/)
-    ).toBeInTheDocument()
-    expect(listPullRequests).not.toHaveBeenCalled()
+
+    const table = await screen.findByRole("table", { name: "GitHub issues" })
     expect(screen.getByRole("tab", { name: "GitHub Issues" })).toHaveAttribute(
       "aria-selected",
       "true"
     )
+    expect(within(table).getByText("Login redirect loops")).toBeInTheDocument()
+    expect(within(table).getByText("#5")).toBeInTheDocument()
+
+    const row = screen.getByTestId("github-issue-row-5")
+    expect(within(row).getByText("bug")).toBeInTheDocument()
+    expect(within(row).getByText("enhancement")).toBeInTheDocument()
+    expect(within(row).getByText("hubot")).toBeInTheDocument()
+    expect(within(row).getByText("octocat")).toBeInTheDocument()
+    expect(within(row).getByText("3")).toBeInTheDocument()
+    expect(within(row).getByText("WEB-1")).toBeInTheDocument()
+    // Two linked repositories: the repository column is shown.
+    expect(within(table).getByText("acme/api")).toBeInTheDocument()
+
+    expect(listGitHubIssues).toHaveBeenCalledWith("pr-1", {
+      state: "open",
+      author: "",
+      label: "",
+      q: "",
+    })
+    expect(listPullRequests).not.toHaveBeenCalled()
+  })
+
+  test("state, author, label, and text filters update the Issues query string", async () => {
+    const user = userEvent.setup()
+    window.history.replaceState(null, "", "/acme/WEB/github/issues")
+    renderView("issues")
+    await screen.findByRole("table", { name: "GitHub issues" })
+
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "GitHub issue state" }),
+      "closed"
+    )
+    await waitFor(() =>
+      expect(window.location.search).toContain("state=closed")
+    )
+    expect(window.location.pathname).toBe("/acme/WEB/github/issues")
+
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "GitHub issue author" }),
+      "hubot"
+    )
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "GitHub issue label" }),
+      "bug"
+    )
+    fireEvent.change(
+      screen.getByRole("searchbox", { name: "Filter GitHub issues" }),
+      { target: { value: "login" } }
+    )
+    await waitFor(() =>
+      expect(listGitHubIssues).toHaveBeenLastCalledWith(
+        "pr-1",
+        expect.objectContaining({
+          state: "closed",
+          author: "hubot",
+          label: "bug",
+          q: "login",
+        })
+      )
+    )
+    expect(window.location.search).toContain("author=hubot")
+    expect(window.location.search).toContain("label=bug")
+    expect(window.location.search).toContain("q=login")
+  })
+
+  test("Load more appends the next GitHub Issue page", async () => {
+    const user = userEvent.setup()
+    window.history.replaceState(null, "", "/acme/WEB/github/issues")
+    listGitHubIssues
+      .mockResolvedValueOnce(issueResponse({ nextCursor: "cursor-2" }))
+      .mockResolvedValueOnce(
+        issueResponse({
+          items: [
+            { ...openIssue, id: "issue-row-3", number: 3, title: "Older" },
+          ],
+          nextCursor: null,
+        })
+      )
+    renderView("issues")
+
+    await user.click(await screen.findByRole("button", { name: "Load more" }))
+    expect(listGitHubIssues).toHaveBeenLastCalledWith("pr-1", {
+      state: "open",
+      author: "",
+      label: "",
+      q: "",
+      cursor: "cursor-2",
+    })
+    expect(await screen.findByText("Older")).toBeInTheDocument()
+  })
+
+  test("clicking a GitHub Issue row opens the GitHub URL in a new tab", async () => {
+    const user = userEvent.setup()
+    const open = vi.spyOn(window, "open").mockImplementation(() => null)
+    window.history.replaceState(null, "", "/acme/WEB/github/issues")
+    renderView("issues")
+
+    await user.click(await screen.findByTestId("github-issue-row-5"))
+    expect(open).toHaveBeenCalledWith(
+      "https://github.com/acme/web/issues/5",
+      "_blank",
+      "noopener,noreferrer"
+    )
+  })
+
+  test("an Issues-disabled repository explains the empty tab", async () => {
+    window.history.replaceState(null, "", "/acme/WEB/github/issues")
+    listGitHubIssues.mockResolvedValueOnce(
+      issueResponse({
+        items: [],
+        repositories: [
+          {
+            id: "repo-1",
+            fullName: "acme/web",
+            issuesEnabled: false,
+            unavailable: false,
+          },
+        ],
+        filters: { authors: [], labels: [] },
+      })
+    )
+    renderView("issues")
+
+    expect(
+      await screen.findByText("GitHub Issues are disabled on this repository.")
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole("combobox", { name: "GitHub issue state" })
+    ).toBeNull()
+  })
+
+  test("Issues empty states: no connection, no repositories, no open issues", async () => {
+    window.history.replaceState(null, "", "/acme/WEB/github/issues")
+    listGitHubIssues.mockResolvedValueOnce(
+      issueResponse({ items: [], connection: null, repositories: [] })
+    )
+    const first = renderView("issues")
+    expect(
+      await screen.findByText("GitHub is not connected for this workspace.")
+    ).toBeInTheDocument()
+    first.unmount()
+
+    listGitHubIssues.mockResolvedValueOnce(
+      issueResponse({ items: [], repositories: [] })
+    )
+    const second = renderView("issues")
+    expect(
+      await screen.findByText("No repositories are linked to this project.")
+    ).toBeInTheDocument()
+    second.unmount()
+
+    listGitHubIssues.mockResolvedValueOnce(
+      issueResponse({ items: [], filters: { authors: [], labels: [] } })
+    )
+    renderView("issues")
+    expect(
+      await screen.findByText("No open GitHub issues.")
+    ).toBeInTheDocument()
   })
 })

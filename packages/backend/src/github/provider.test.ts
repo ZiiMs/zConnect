@@ -34,6 +34,25 @@ function pullRequestNode(overrides: Record<string, unknown> = {}) {
   }
 }
 
+function issueNode(overrides: Record<string, unknown> = {}) {
+  return {
+    __typename: "Issue",
+    number: 5,
+    title: "Login redirect loops",
+    author: { login: "hubot", avatarUrl: null },
+    url: "https://github.com/acme/web/issues/5",
+    labels: { nodes: [{ name: "bug", color: "d73a4a" }] },
+    assignees: {
+      nodes: [{ login: "octocat", avatarUrl: "https://avatars/x.png" }],
+    },
+    comments: { totalCount: 3 },
+    bodyText: "  Steps\n\n to reproduce  ",
+    createdAt: "2026-10-01T09:00:00Z",
+    updatedAt: "2026-10-03T09:00:00Z",
+    ...overrides,
+  }
+}
+
 describe("github provider", () => {
   test("maps an open Pull Request GraphQL page, paginating by end cursor", async () => {
     const requests: string[] = []
@@ -135,6 +154,92 @@ describe("github provider", () => {
     expect(items[0]?.bodyExcerpt).toHaveLength(400)
     expect(items[0]?.bodyExcerpt).not.toContain("\n")
     expect(items[1]?.bodyExcerpt).toBeNull()
+  })
+
+  test("maps an open GitHub Issue GraphQL page, skipping Pull Request nodes", async () => {
+    const requests: Array<{
+      query: string
+      variables: Record<string, unknown>
+    }> = []
+    const provider = createGitHubProvider((async (
+      _input: RequestInfo | URL,
+      init?: RequestInit
+    ) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as {
+        query: string
+        variables: Record<string, unknown>
+      }
+      requests.push(body)
+      if (body.variables.cursor === null) {
+        return jsonResponse(
+          graphqlBody({
+            repository: {
+              issues: {
+                pageInfo: { hasNextPage: true, endCursor: "cursor-2" },
+                nodes: [
+                  issueNode(),
+                  issueNode({
+                    __typename: "PullRequest",
+                    number: 6,
+                    title: "A pull request in the issues connection",
+                  }),
+                ],
+              },
+            },
+          })
+        )
+      }
+      expect(body.variables.cursor).toBe("cursor-2")
+      return jsonResponse(
+        graphqlBody({
+          repository: {
+            issues: {
+              pageInfo: { hasNextPage: false, endCursor: null },
+              nodes: [
+                issueNode({
+                  number: 8,
+                  title: "API 500 on refresh",
+                  author: null,
+                  labels: { nodes: [] },
+                  assignees: { nodes: [] },
+                }),
+              ],
+            },
+          },
+        })
+      )
+    }) as unknown as typeof fetch)
+
+    const items = await provider.listOpenIssues("token-1", {
+      owner: "acme",
+      name: "web",
+    })
+
+    expect(requests.every((request) => request.query.includes("issues("))).toBe(
+      true
+    )
+    expect(requests[0]?.variables).toMatchObject({ owner: "acme", name: "web" })
+    expect(items).toHaveLength(2)
+    expect(items[0]).toEqual({
+      number: 5,
+      title: "Login redirect loops",
+      authorLogin: "hubot",
+      authorAvatarUrl: null,
+      url: "https://github.com/acme/web/issues/5",
+      labels: [{ name: "bug", color: "d73a4a" }],
+      assignees: [{ login: "octocat", avatarUrl: "https://avatars/x.png" }],
+      commentCount: 3,
+      bodyExcerpt: "Steps to reproduce",
+      createdAt: "2026-10-01T09:00:00Z",
+      updatedAt: "2026-10-03T09:00:00Z",
+    })
+    expect(items[1]).toMatchObject({
+      number: 8,
+      authorLogin: "ghost",
+      authorAvatarUrl: null,
+      labels: [],
+      assignees: [],
+    })
   })
 
   test("maps the REST repository listing and follows the Link rel=next header", async () => {

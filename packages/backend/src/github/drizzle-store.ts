@@ -3,6 +3,7 @@ import type { getDb } from "../db/index.js"
 import {
   externalLink,
   githubConnection,
+  githubIssue,
   githubPullRequest,
   githubRepository,
   issue,
@@ -11,7 +12,7 @@ import {
   webhookDelivery,
 } from "../db/schema.js"
 import type { ExternalLinkKind } from "./parse.js"
-import type { RemotePullRequest } from "./provider.js"
+import type { RemoteGitHubIssue, RemotePullRequest } from "./provider.js"
 import {
   type CreateExternalLinkInput,
   decodeGitHubItemCursor,
@@ -21,6 +22,7 @@ import {
   type GitHubConnection,
   type GitHubConnectionSecret,
   type GitHubConnectionStatus,
+  type GitHubIssueSnapshot,
   type GitHubItemFilters,
   type GitHubRepository,
   type GitHubStore,
@@ -693,6 +695,159 @@ export function createDrizzleGitHubStore(resolveDb: () => Db): GitHubStore {
       return byUrl
     },
 
+    async upsertGitHubIssues(repositoryId, items: RemoteGitHubIssue[], at) {
+      const db = resolveDb()
+      const syncedAt = new Date(at)
+      for (const item of items) {
+        const values = {
+          repositoryId,
+          number: item.number,
+          title: item.title,
+          state: "open" as const,
+          authorLogin: item.authorLogin,
+          authorAvatarUrl: item.authorAvatarUrl,
+          url: item.url,
+          labels: item.labels.map((label) => ({ ...label })),
+          assignees: item.assignees.map((assignee) => ({ ...assignee })),
+          commentCount: item.commentCount,
+          bodyExcerpt: item.bodyExcerpt,
+          githubCreatedAt: new Date(item.createdAt),
+          githubUpdatedAt: new Date(item.updatedAt),
+          closedAt: null,
+          syncedAt,
+        }
+        await db
+          .insert(githubIssue)
+          .values(values)
+          .onConflictDoUpdate({
+            target: [githubIssue.repositoryId, githubIssue.number],
+            set: {
+              title: values.title,
+              state: "open",
+              authorLogin: values.authorLogin,
+              authorAvatarUrl: values.authorAvatarUrl,
+              url: values.url,
+              labels: values.labels,
+              assignees: values.assignees,
+              commentCount: values.commentCount,
+              bodyExcerpt: values.bodyExcerpt,
+              githubCreatedAt: values.githubCreatedAt,
+              githubUpdatedAt: values.githubUpdatedAt,
+              closedAt: null,
+              syncedAt,
+            },
+          })
+      }
+    },
+
+    async listGitHubIssuesForProject(projectId, filters: GitHubItemFilters) {
+      const db = resolveDb()
+      const limit = Math.min(
+        MAX_GITHUB_ITEM_LIMIT,
+        Math.max(1, Math.floor(filters.limit ?? 30))
+      )
+      const cursor = decodeGitHubItemCursor(filters.cursor)
+      const conditions = [eq(projectRepository.projectId, projectId)]
+      if (filters.state !== "all") {
+        conditions.push(sql`${githubIssue.state} = ${filters.state}`)
+      }
+      if (filters.author) {
+        conditions.push(
+          sql`lower(${githubIssue.authorLogin}) = ${filters.author.toLowerCase()}`
+        )
+      }
+      if (filters.label?.trim()) {
+        const label = filters.label.trim().toLowerCase()
+        conditions.push(
+          sql`exists (select 1 from jsonb_array_elements(${githubIssue.labels}) as elem where lower(elem->>'name') = ${label})`
+        )
+      }
+      if (filters.query?.trim()) {
+        conditions.push(ilike(githubIssue.title, `%${filters.query.trim()}%`))
+      }
+      if (cursor) {
+        const cursorCondition = or(
+          lt(githubIssue.githubUpdatedAt, new Date(cursor.githubUpdatedAt)),
+          and(
+            eq(githubIssue.githubUpdatedAt, new Date(cursor.githubUpdatedAt)),
+            lt(githubIssue.id, cursor.id)
+          )
+        )
+        if (cursorCondition) conditions.push(cursorCondition)
+      }
+      const rows = await db
+        .select({ snapshot: githubIssue })
+        .from(githubIssue)
+        .innerJoin(
+          projectRepository,
+          eq(projectRepository.repositoryId, githubIssue.repositoryId)
+        )
+        .where(and(...conditions))
+        .orderBy(desc(githubIssue.githubUpdatedAt), desc(githubIssue.id))
+        .limit(limit + 1)
+      const page = rows
+        .slice(0, limit)
+        .map((row) => toGitHubIssue(row.snapshot))
+      const last = page.at(-1)
+      return {
+        items: page,
+        nextCursor:
+          rows.length > limit && last
+            ? encodeGitHubItemCursor({
+                githubUpdatedAt: last.githubUpdatedAt,
+                id: last.id,
+              })
+            : null,
+      }
+    },
+
+    async listOpenGitHubIssues(repositoryId) {
+      const db = resolveDb()
+      const rows = await db
+        .select()
+        .from(githubIssue)
+        .where(
+          and(
+            eq(githubIssue.repositoryId, repositoryId),
+            eq(githubIssue.state, "open")
+          )
+        )
+        .orderBy(desc(githubIssue.githubUpdatedAt), desc(githubIssue.id))
+      return rows.map(toGitHubIssue)
+    },
+
+    async getGitHubIssue(repositoryId, number) {
+      const db = resolveDb()
+      const [row] = await db
+        .select()
+        .from(githubIssue)
+        .where(
+          and(
+            eq(githubIssue.repositoryId, repositoryId),
+            eq(githubIssue.number, number)
+          )
+        )
+      return row ? toGitHubIssue(row) : null
+    },
+
+    async setGitHubIssueState(repositoryId, number, patch, at) {
+      const db = resolveDb()
+      await db
+        .update(githubIssue)
+        .set({
+          state: patch.state,
+          closedAt: patch.closedAt ? new Date(patch.closedAt) : null,
+          githubUpdatedAt: new Date(patch.githubUpdatedAt),
+          syncedAt: new Date(at),
+        })
+        .where(
+          and(
+            eq(githubIssue.repositoryId, repositoryId),
+            eq(githubIssue.number, number)
+          )
+        )
+    },
+
     async findExternalLinksByUrl(url) {
       const db = resolveDb()
       const rows = await db
@@ -801,6 +956,29 @@ function toPullRequest(
     githubCreatedAt: row.githubCreatedAt.toISOString(),
     githubUpdatedAt: row.githubUpdatedAt.toISOString(),
     mergedAt: iso(row.mergedAt),
+    closedAt: iso(row.closedAt),
+    syncedAt: row.syncedAt.toISOString(),
+  }
+}
+
+function toGitHubIssue(
+  row: typeof githubIssue.$inferSelect
+): GitHubIssueSnapshot {
+  return {
+    id: row.id,
+    repositoryId: row.repositoryId,
+    number: row.number,
+    title: row.title,
+    state: row.state,
+    authorLogin: row.authorLogin,
+    authorAvatarUrl: row.authorAvatarUrl,
+    url: row.url,
+    labels: (row.labels ?? []).map((label) => ({ ...label })),
+    assignees: (row.assignees ?? []).map((assignee) => ({ ...assignee })),
+    commentCount: row.commentCount,
+    bodyExcerpt: row.bodyExcerpt,
+    githubCreatedAt: row.githubCreatedAt.toISOString(),
+    githubUpdatedAt: row.githubUpdatedAt.toISOString(),
     closedAt: iso(row.closedAt),
     syncedAt: row.syncedAt.toISOString(),
   }

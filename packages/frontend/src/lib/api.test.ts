@@ -716,6 +716,72 @@ describe("github view api client", () => {
       lastSyncedAt: null,
     })
   })
+
+  test("listGitHubIssues sends the filters and parses the envelope", async () => {
+    const issueRow = {
+      id: "issue-row-5",
+      repositoryId: "repo-1",
+      number: 5,
+      title: "Login redirect loops",
+      state: "open",
+      authorLogin: "hubot",
+      authorAvatarUrl: null,
+      url: "https://github.com/acme/web/issues/5",
+      labels: [{ name: "bug", color: "d73a4a" }],
+      assignees: [{ login: "octocat", avatarUrl: null }],
+      commentCount: 3,
+      bodyExcerpt: "Steps to reproduce.",
+      githubCreatedAt: "2026-10-01T09:00:00.000Z",
+      githubUpdatedAt: "2026-10-03T09:00:00.000Z",
+      closedAt: null,
+      syncedAt: "2026-10-10T12:00:00.000Z",
+      repository: "acme/web",
+      linkedIssues: [],
+    }
+    const fetchMock = mockFetchOnce({
+      items: [issueRow],
+      nextCursor: "cursor-2",
+      lastSyncedAt: "2026-10-10T12:00:00.000Z",
+      connection: { status: "active", login: "octocat" },
+      repositories: [
+        {
+          id: "repo-1",
+          fullName: "acme/web",
+          issuesEnabled: true,
+          unavailable: false,
+        },
+      ],
+      filters: {
+        authors: ["hubot", "octocat"],
+        labels: [{ name: "bug", color: "d73a4a" }],
+      },
+    })
+
+    const result = await api.listGitHubIssues("pr-1", {
+      state: "closed",
+      author: "hubot",
+      label: "bug",
+      q: "login",
+      cursor: "cursor-1",
+      limit: 10,
+    })
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/projects/pr-1/github/issues?")
+    expect(url).toContain("state=closed")
+    expect(url).toContain("author=hubot")
+    expect(url).toContain("label=bug")
+    expect(url).toContain("q=login")
+    expect(url).toContain("cursor=cursor-1")
+    expect(url).toContain("limit=10")
+    expect(result.items[0]).toMatchObject({
+      number: 5,
+      labels: [{ name: "bug", color: "d73a4a" }],
+      assignees: [{ login: "octocat", avatarUrl: null }],
+      repository: "acme/web",
+    })
+    expect(result.filters.labels).toEqual([{ name: "bug", color: "d73a4a" }])
+  })
 })
 
 describe("github item api client", () => {

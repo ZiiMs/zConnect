@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import { createMemoryWorkspaceStore } from "../workspaces/store.js"
 import { createFakeProvider } from "./fake-provider.js"
-import { GitProviderError, type RemotePullRequest } from "./provider.js"
+import {
+  GitProviderError,
+  type RemoteGitHubIssue,
+  type RemotePullRequest,
+} from "./provider.js"
 import {
   createMemoryGitHubStore,
   type GitHubStore,
@@ -49,12 +53,32 @@ const openPullRequest: RemotePullRequest = {
   updatedAt: "2026-10-02T11:00:00.000Z",
 }
 
-async function setup(options: { repositories?: RemoteRepository[] } = {}) {
+const openIssue: RemoteGitHubIssue = {
+  number: 5,
+  title: "Login redirect loops",
+  authorLogin: "hubot",
+  authorAvatarUrl: null,
+  url: "https://github.com/acme/web/issues/5",
+  labels: [{ name: "bug", color: "d73a4a" }],
+  assignees: [{ login: "octocat", avatarUrl: "https://avatars/x.png" }],
+  commentCount: 3,
+  bodyExcerpt: "Steps to reproduce the loop.",
+  createdAt: "2026-10-01T09:00:00.000Z",
+  updatedAt: "2026-10-03T09:00:00.000Z",
+}
+
+async function setup(
+  options: {
+    repositories?: RemoteRepository[]
+    issues?: Record<string, RemoteGitHubIssue[]>
+  } = {}
+) {
   const workspaces = createMemoryWorkspaceStore()
   const github = createMemoryGitHubStore()
   const provider = createFakeProvider({
     repositories: options.repositories ?? [webRepository, apiRepository],
     pullRequests: { "acme/web": [openPullRequest] },
+    issues: options.issues ?? {},
   })
   const workspace = await workspaces.createWorkspace(owner.id, "Acme")
   const project = await workspaces.createProject(workspace.id, {
@@ -294,5 +318,134 @@ describe("github pull request sync", () => {
     })
     expect(await github.listOpenPullRequests(web.id)).toHaveLength(1)
     expect(await github.listOpenPullRequests(api.id)).toHaveLength(1)
+  })
+})
+
+describe("github issue sync", () => {
+  test("stores open GitHub Issues and counts them in the outcome", async () => {
+    const { github, deps, web } = await setup({
+      issues: { "acme/web": [openIssue] },
+    })
+
+    const outcome = await syncRepository(deps, web.id)
+    expect(outcome).toEqual({
+      status: "ok",
+      repositories: 1,
+      pullRequests: 1,
+      issues: 1,
+      linked: 0,
+    })
+
+    const items = await github.listOpenGitHubIssues(web.id)
+    expect(items).toHaveLength(1)
+    expect(items[0]).toMatchObject({
+      repositoryId: web.id,
+      number: 5,
+      title: "Login redirect loops",
+      state: "open",
+      authorLogin: "hubot",
+      authorAvatarUrl: null,
+      url: "https://github.com/acme/web/issues/5",
+      labels: [{ name: "bug", color: "d73a4a" }],
+      assignees: [{ login: "octocat", avatarUrl: "https://avatars/x.png" }],
+      commentCount: 3,
+      bodyExcerpt: "Steps to reproduce the loop.",
+      githubCreatedAt: "2026-10-01T09:00:00.000Z",
+      githubUpdatedAt: "2026-10-03T09:00:00.000Z",
+      closedAt: null,
+      syncedAt: FIXED,
+    })
+  })
+
+  test("a second sync of unchanged Issues keeps the rows and creates no duplicates", async () => {
+    const { github, deps, web } = await setup({
+      issues: { "acme/web": [openIssue] },
+    })
+    await syncRepository(deps, web.id)
+    const first = await github.listOpenGitHubIssues(web.id)
+
+    const again = await syncRepository(deps, web.id)
+    expect(again.status).toBe("ok")
+    const second = await github.listOpenGitHubIssues(web.id)
+    expect(second).toHaveLength(1)
+    expect(second[0]?.id).toBe(first[0]?.id as string)
+    expect(second[0]?.number).toBe(5)
+  })
+
+  test("reopening a GitHub Issue that reappears clears its closed state", async () => {
+    const { github, deps, web } = await setup({
+      issues: { "acme/web": [openIssue] },
+    })
+    await syncRepository(deps, web.id)
+    await github.setGitHubIssueState(
+      web.id,
+      5,
+      {
+        state: "closed",
+        closedAt: "2026-10-09T09:00:00.000Z",
+        githubUpdatedAt: "2026-10-09T09:00:00.000Z",
+      },
+      "2026-10-09T09:00:00.000Z"
+    )
+    expect((await github.getGitHubIssue(web.id, 5))?.state).toBe("closed")
+
+    await syncRepository(deps, web.id)
+    const reopened = await github.getGitHubIssue(web.id, 5)
+    expect(reopened).toMatchObject({ state: "open", closedAt: null })
+  })
+
+  test("skips fetching Issues when the repository has them disabled", async () => {
+    const { github, provider, deps, web } = await setup({
+      issues: { "acme/web": [openIssue] },
+    })
+    await github.updateRepository(web.id, { issuesEnabled: false })
+    provider.calls.length = 0
+
+    const outcome = await syncRepository(deps, web.id)
+    expect(outcome).toEqual({
+      status: "ok",
+      repositories: 1,
+      pullRequests: 1,
+      issues: 0,
+      linked: 0,
+    })
+    expect(provider.calls).not.toContain("listOpenIssues:acme/web")
+    expect(provider.calls).toContain("listOpenPullRequests:acme/web")
+    expect(await github.listOpenGitHubIssues(web.id)).toEqual([])
+  })
+
+  test("Pull Requests never land in the Issue store", async () => {
+    const { github, deps, web } = await setup({
+      issues: { "acme/web": [openIssue] },
+    })
+    await syncRepository(deps, web.id)
+
+    expect(await github.getGitHubIssue(web.id, 12)).toBeNull()
+    expect(await github.getPullRequest(web.id, 5)).toBeNull()
+    expect(
+      (await github.listOpenGitHubIssues(web.id)).map((item) => item.number)
+    ).toEqual([5])
+  })
+
+  test("syncConnection sums the Issue counts across repositories", async () => {
+    const { provider, deps, connection } = await setup({
+      issues: { "acme/web": [openIssue] },
+    })
+    provider.issues["acme/api"] = [
+      {
+        ...openIssue,
+        number: 8,
+        title: "API 500 on refresh",
+        url: "https://github.com/acme/api/issues/8",
+      },
+    ]
+
+    const outcome = await syncConnection(deps, connection.id)
+    expect(outcome).toMatchObject({
+      status: "ok",
+      repositories: 2,
+      pullRequests: 1,
+      issues: 2,
+    })
   })
 })

@@ -5,7 +5,7 @@
  * Vocabulary per GLOSSARY.md: External Link (never Integration/Sync).
  */
 import type { ExternalLinkKind } from "./parse.js"
-import type { RemotePullRequest } from "./provider.js"
+import type { RemoteGitHubIssue, RemotePullRequest } from "./provider.js"
 
 export type ExternalLinkState = "open" | "merged" | "closed"
 
@@ -368,6 +368,32 @@ export interface GitHubStore {
   /** #49 — External Link chips for a page of GitHub Items, newest link first. */
   listLinkedIssueRefs(urls: string[]): Promise<Record<string, LinkedIssueRef[]>>
 
+  /** #50 — GitHub Issue snapshots. */
+  upsertGitHubIssues(
+    repositoryId: string,
+    items: RemoteGitHubIssue[],
+    at: string
+  ): Promise<void>
+  listGitHubIssuesForProject(
+    projectId: string,
+    filters: GitHubItemFilters
+  ): Promise<{ items: GitHubIssueSnapshot[]; nextCursor: string | null }>
+  listOpenGitHubIssues(repositoryId: string): Promise<GitHubIssueSnapshot[]>
+  getGitHubIssue(
+    repositoryId: string,
+    number: number
+  ): Promise<GitHubIssueSnapshot | null>
+  setGitHubIssueState(
+    repositoryId: string,
+    number: number,
+    patch: {
+      state: GitHubIssueState
+      closedAt: string | null
+      githubUpdatedAt: string
+    },
+    at: string
+  ): Promise<void>
+
   /** #52 — reverse link lookup / removal. */
   findExternalLinksByUrl(url: string): Promise<ExternalLink[]>
   getExternalLink(id: string): Promise<ExternalLink | null>
@@ -406,6 +432,7 @@ export function createMemoryGitHubStore(
   const repositories = new Map<string, GitHubRepository>()
   const projectLinks = new Map<string, ProjectRepositoryLink>()
   const pullRequests = new Map<string, PullRequestSnapshot>()
+  const githubIssues = new Map<string, GitHubIssueSnapshot>()
 
   function cloneConnection(
     connection: GitHubConnectionSecret
@@ -418,6 +445,14 @@ export function createMemoryGitHubStore(
   ): GitHubConnection {
     const { encryptedAccessToken: _encrypted, ...safe } = connection
     return { ...safe, scopes: [...safe.scopes] }
+  }
+
+  function cloneIssue(item: GitHubIssueSnapshot): GitHubIssueSnapshot {
+    return {
+      ...item,
+      labels: item.labels.map((label) => ({ ...label })),
+      assignees: item.assignees.map((assignee) => ({ ...assignee })),
+    }
   }
 
   function linkKey(projectId: string, repositoryId: string): string {
@@ -436,6 +471,9 @@ export function createMemoryGitHubStore(
     removeLinksForRepository(id)
     for (const [key, snapshot] of pullRequests) {
       if (snapshot.repositoryId === id) pullRequests.delete(key)
+    }
+    for (const [key, snapshot] of githubIssues) {
+      if (snapshot.repositoryId === id) githubIssues.delete(key)
     }
     repositories.delete(id)
   }
@@ -861,6 +899,97 @@ export function createMemoryGitHubStore(
         })
       }
       return byUrl
+    },
+
+    async upsertGitHubIssues(repositoryId, items, at) {
+      for (const item of items) {
+        const key = `${repositoryId}:${item.number}`
+        const current = githubIssues.get(key)
+        const snapshot: GitHubIssueSnapshot = {
+          id: current?.id ?? crypto.randomUUID(),
+          repositoryId,
+          number: item.number,
+          title: item.title,
+          state: "open",
+          authorLogin: item.authorLogin,
+          authorAvatarUrl: item.authorAvatarUrl,
+          url: item.url,
+          labels: item.labels.map((label) => ({ ...label })),
+          assignees: item.assignees.map((assignee) => ({ ...assignee })),
+          commentCount: item.commentCount,
+          bodyExcerpt: item.bodyExcerpt,
+          githubCreatedAt: item.createdAt,
+          githubUpdatedAt: item.updatedAt,
+          closedAt: null,
+          syncedAt: at,
+        }
+        githubIssues.set(key, snapshot)
+      }
+    },
+
+    async listGitHubIssuesForProject(projectId, filters) {
+      const repositoryIds = new Set(
+        [...projectLinks.values()]
+          .filter((link) => link.projectId === projectId)
+          .map((link) => link.repositoryId)
+      )
+      const cursor = decodeGitHubItemCursor(filters.cursor)
+      const author = filters.author?.toLowerCase() ?? null
+      const label = filters.label?.trim().toLowerCase() ?? ""
+      const query = filters.query?.trim().toLowerCase() ?? ""
+      const matching = [...githubIssues.values()]
+        .filter((item) => repositoryIds.has(item.repositoryId))
+        .filter(
+          (item) => filters.state === "all" || item.state === filters.state
+        )
+        .filter((item) => !author || item.authorLogin.toLowerCase() === author)
+        .filter(
+          (item) =>
+            label === "" ||
+            item.labels.some(
+              (candidate) => candidate.name.toLowerCase() === label
+            )
+        )
+        .filter(
+          (item) => query === "" || item.title.toLowerCase().includes(query)
+        )
+        .filter((item) => !cursor || isOlderThanGitHubCursor(item, cursor))
+        .sort(compareGitHubItemsDesc)
+      const limit = githubItemLimit(filters)
+      const page = matching.slice(0, limit)
+      return {
+        items: page.map(cloneIssue),
+        nextCursor:
+          matching.length > page.length && page.length > 0
+            ? encodeGitHubItemCursor(
+                page[page.length - 1] as GitHubIssueSnapshot
+              )
+            : null,
+      }
+    },
+
+    async listOpenGitHubIssues(repositoryId) {
+      return [...githubIssues.values()]
+        .filter(
+          (item) => item.repositoryId === repositoryId && item.state === "open"
+        )
+        .sort(compareGitHubItemsDesc)
+        .map(cloneIssue)
+    },
+
+    async getGitHubIssue(repositoryId, number) {
+      const snapshot = githubIssues.get(`${repositoryId}:${number}`)
+      return snapshot ? cloneIssue(snapshot) : null
+    },
+
+    async setGitHubIssueState(repositoryId, number, patch, at) {
+      const key = `${repositoryId}:${number}`
+      const snapshot = githubIssues.get(key)
+      if (!snapshot) return
+      snapshot.state = patch.state
+      snapshot.closedAt = patch.closedAt
+      snapshot.githubUpdatedAt = patch.githubUpdatedAt
+      snapshot.syncedAt = at
     },
 
     async findExternalLinksByUrl(url) {

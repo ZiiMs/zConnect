@@ -1,15 +1,21 @@
 /**
- * Sync runner (#49): fetches open Pull Requests for one repository and writes
- * snapshots, then records freshness on the repository and its Connection.
- * Provider failures map to the three lifecycle outcomes the queue and the
- * GitHub View care about: reconnect_required, unavailable, rate_limited.
+ * Sync runner (#49/#50): fetches open Pull Requests and GitHub Issues for one
+ * repository and writes snapshots, then records freshness on the repository
+ * and its Connection. Provider failures map to the three lifecycle outcomes
+ * the queue and the GitHub View care about: reconnect_required, unavailable,
+ * rate_limited. Repositories with Issues disabled skip the Issue fetch
+ * entirely, so the tab can explain the empty list.
  *
  * Missing-number resolution, the sweep, retention, rename repair and refresh
- * throttling arrive with #51; Issue sync with #50.
+ * throttling arrive with #51.
  */
 
 import type { WorkspaceStore } from "../workspaces/store.js"
-import type { GitProvider, RemotePullRequest } from "./provider.js"
+import type {
+  GitProvider,
+  RemoteGitHubIssue,
+  RemotePullRequest,
+} from "./provider.js"
 import { GitProviderError } from "./provider.js"
 import type { GitHubStore } from "./store.js"
 
@@ -91,6 +97,41 @@ export async function syncRepository(
   }
 
   await deps.github.upsertPullRequests(repositoryId, pullRequests, at)
+
+  // Issues disabled on the repository: leave the snapshot untouched; the
+  // GitHub View explains why the tab is empty.
+  let issues: RemoteGitHubIssue[] = []
+  if (repository.issuesEnabled) {
+    try {
+      issues = await deps.provider.listOpenIssues(accessToken, {
+        owner: repository.owner,
+        name: repository.name,
+      })
+    } catch (error) {
+      if (!(error instanceof GitProviderError)) throw error
+      switch (error.code) {
+        case "unauthorized":
+          await deps.github.setConnectionStatus(
+            connection.workspaceId,
+            "reconnect_required"
+          )
+          return { status: "reconnect_required" }
+        case "rate_limited":
+          return {
+            status: "rate_limited",
+            retryAt: error.retryAt ?? at,
+          }
+        case "forbidden":
+        case "not_found":
+          await deps.github.updateRepository(repositoryId, {
+            syncError: error.message,
+          })
+          return { status: "unavailable", repositoryId }
+      }
+    }
+    await deps.github.upsertGitHubIssues(repositoryId, issues, at)
+  }
+
   await deps.github.updateRepository(repositoryId, {
     lastSyncedAt: at,
     syncError: null,
@@ -100,7 +141,7 @@ export async function syncRepository(
     status: "ok",
     repositories: 1,
     pullRequests: pullRequests.length,
-    issues: 0,
+    issues: issues.length,
     linked: 0,
   }
 }
