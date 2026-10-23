@@ -13,7 +13,6 @@ import type { Issue, Project, WorkspaceStore } from "../workspaces/store.js"
 import type {
   ExternalLink,
   ExternalLinkState,
-  GitHubIssueSnapshot,
   GitHubStore,
   LinkedIssueRef,
 } from "./store.js"
@@ -41,18 +40,9 @@ export interface GitHubItemDeps {
 }
 
 /**
- * #50 adds GitHub Issue snapshots to `GitHubStore`. Reading the lookup
- * optionally keeps this app additive against either store generation: once
- * the Issues slice lands, `kind: "issue"` resolves snapshots without a change
- * here; before it lands the same request answers 404 like any unknown item.
+ * Reads the snapshot a `kind: "issue"` link targets. #50's store method now
+ * covers GitHub Issues, so the route resolves them like Pull Requests.
  */
-interface GitHubIssueSnapshotLookup {
-  getGitHubIssue?(
-    repositoryId: string,
-    number: number
-  ): Promise<GitHubIssueSnapshot | null>
-}
-
 interface ItemSnapshot {
   url: string
   title: string
@@ -75,10 +65,7 @@ async function findItem(
         }
       : null
   }
-  const lookup = (github as GitHubStore & GitHubIssueSnapshotLookup)
-    .getGitHubIssue
-  if (!lookup) return null
-  const issue = await lookup.call(github, repositoryId, number)
+  const issue = await github.getGitHubIssue(repositoryId, number)
   return issue
     ? { url: issue.url, title: issue.title, state: issue.state }
     : null
