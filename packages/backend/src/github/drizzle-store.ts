@@ -4,19 +4,23 @@ import {
   externalLink,
   githubConnection,
   githubRepository,
+  project,
+  projectRepository,
   webhookDelivery,
 } from "../db/schema.js"
 import type { ExternalLinkKind } from "./parse.js"
-import type {
-  CreateExternalLinkInput,
-  ExternalLink,
-  ExternalLinkState,
-  GitHubConnection,
-  GitHubConnectionSecret,
-  GitHubConnectionStatus,
-  GitHubRepository,
-  GitHubStore,
-  RemoteRepository,
+import {
+  type CreateExternalLinkInput,
+  type ExternalLink,
+  type ExternalLinkState,
+  type GitHubConnection,
+  type GitHubConnectionSecret,
+  type GitHubConnectionStatus,
+  type GitHubRepository,
+  type GitHubStore,
+  MAX_ALLOWLIST,
+  type ProjectRepository,
+  type RemoteRepository,
 } from "./store.js"
 
 type Db = ReturnType<typeof getDb>
@@ -339,11 +343,151 @@ export function createDrizzleGitHubStore(resolveDb: () => Db): GitHubStore {
         .where(eq(githubRepository.id, id))
       return row ? toRepository(row) : null
     },
+
+    async listProjectRepositories(projectId) {
+      const db = resolveDb()
+      const rows = await db
+        .select({
+          repository: githubRepository,
+          link: projectRepository,
+        })
+        .from(projectRepository)
+        .innerJoin(
+          githubRepository,
+          eq(projectRepository.repositoryId, githubRepository.id)
+        )
+        .where(eq(projectRepository.projectId, projectId))
+        .orderBy(sql`lower(${githubRepository.fullName})`)
+      return rows.map(toProjectRepository)
+    },
+
+    async replaceProjectRepositories(projectId, repositoryIds, linkedBy, at) {
+      const db = resolveDb()
+      const wanted = [...new Set(repositoryIds)]
+      if (wanted.length > MAX_ALLOWLIST) {
+        throw invalidError(
+          `At most ${MAX_ALLOWLIST} repositories can be linked to a project`
+        )
+      }
+      return db.transaction(async (tx) => {
+        if (wanted.length > 0) {
+          const allowed = await tx
+            .select({ id: githubRepository.id })
+            .from(githubRepository)
+            .innerJoin(
+              githubConnection,
+              eq(githubRepository.connectionId, githubConnection.id)
+            )
+            .innerJoin(
+              project,
+              eq(project.workspaceId, githubConnection.workspaceId)
+            )
+            .where(
+              and(
+                eq(project.id, projectId),
+                inArray(githubRepository.id, wanted)
+              )
+            )
+          if (allowed.length !== wanted.length) {
+            throw invalidError("Repository is outside the workspace allowlist")
+          }
+        }
+
+        const existing = await tx
+          .select()
+          .from(projectRepository)
+          .where(eq(projectRepository.projectId, projectId))
+        const wantedIds = new Set(wanted)
+        const removed = existing
+          .filter((link) => !wantedIds.has(link.repositoryId))
+          .map((link) => link.repositoryId)
+        if (removed.length > 0) {
+          await tx
+            .delete(projectRepository)
+            .where(
+              and(
+                eq(projectRepository.projectId, projectId),
+                inArray(projectRepository.repositoryId, removed)
+              )
+            )
+        }
+        const existingIds = new Set(existing.map((link) => link.repositoryId))
+        const added = wanted.filter(
+          (repositoryId) => !existingIds.has(repositoryId)
+        )
+        if (added.length > 0) {
+          await tx.insert(projectRepository).values(
+            added.map((repositoryId) => ({
+              projectId,
+              repositoryId,
+              linkedBy,
+              linkedAt: new Date(at),
+            }))
+          )
+        }
+
+        const rows = await tx
+          .select({
+            repository: githubRepository,
+            link: projectRepository,
+          })
+          .from(projectRepository)
+          .innerJoin(
+            githubRepository,
+            eq(projectRepository.repositoryId, githubRepository.id)
+          )
+          .where(eq(projectRepository.projectId, projectId))
+          .orderBy(sql`lower(${githubRepository.fullName})`)
+        return rows.map(toProjectRepository)
+      })
+    },
+
+    async listRepositoryProjectIds(repositoryId) {
+      const db = resolveDb()
+      const rows = await db
+        .select({ projectId: projectRepository.projectId })
+        .from(projectRepository)
+        .where(eq(projectRepository.repositoryId, repositoryId))
+      return rows.map((row) => row.projectId)
+    },
+
+    async listLinkedRepositories() {
+      const db = resolveDb()
+      const linked = await db
+        .selectDistinct({ repositoryId: projectRepository.repositoryId })
+        .from(projectRepository)
+      if (linked.length === 0) return []
+      const rows = await db
+        .select()
+        .from(githubRepository)
+        .where(
+          inArray(
+            githubRepository.id,
+            linked.map((row) => row.repositoryId)
+          )
+        )
+        .orderBy(sql`lower(${githubRepository.fullName})`)
+      return rows.map(toRepository)
+    },
+
+    async deleteRepository(repositoryId) {
+      const db = resolveDb()
+      // FK cascades drop project links and cached snapshots.
+      await db
+        .delete(githubRepository)
+        .where(eq(githubRepository.id, repositoryId))
+    },
   }
 }
 
 function iso(value: Date | null | undefined): string | null {
   return value ? value.toISOString() : null
+}
+
+function invalidError(message: string): Error {
+  const error = new Error(message)
+  ;(error as { code?: string }).code = "invalid"
+  return error
 }
 
 function toConnection(
@@ -403,6 +547,17 @@ function repositoryMetadata(remote: RemoteRepository) {
     issuesEnabled: remote.issuesEnabled,
     defaultBranch: remote.defaultBranch,
     pushedAt: remote.pushedAt === null ? null : new Date(remote.pushedAt),
+  }
+}
+
+function toProjectRepository(row: {
+  repository: typeof githubRepository.$inferSelect
+  link: typeof projectRepository.$inferSelect
+}): ProjectRepository {
+  return {
+    ...toRepository(row.repository),
+    linkedBy: row.link.linkedBy,
+    linkedAt: row.link.linkedAt.toISOString(),
   }
 }
 

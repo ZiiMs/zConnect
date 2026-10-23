@@ -5,6 +5,7 @@ import { InviteMemberForm } from "@/components/invite-member-form"
 import { LabelsSettings } from "@/components/labels-settings"
 import { NotificationSettings } from "@/components/notification-settings"
 import { PendingInvites } from "@/components/pending-invites"
+import { RepositoriesSettings } from "@/components/repositories-settings"
 import { WorkflowSettings } from "@/components/workflow-settings"
 import { WorkspaceMembers } from "@/components/workspace-members"
 import type { Project, Workspace } from "@/lib/api"
@@ -54,6 +55,11 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
         id: "labels",
         label: "Labels",
         description: "Organize issues with labels",
+      },
+      {
+        id: "repositories",
+        label: "Repositories",
+        description: "GitHub repositories linked to the selected project",
       },
     ],
   },
@@ -107,6 +113,29 @@ function WorkflowSection({
 }
 
 /**
+ * Project repositories header shell: project identity above the linked
+ * repository panel (the panel itself lives in RepositoriesSettings).
+ */
+function RepositoriesSection({
+  project,
+  canManage,
+}: {
+  project: Project
+  canManage: boolean
+}) {
+  return (
+    <div className="flex flex-col gap-4">
+      <h3 className="flex items-center gap-2 font-medium text-sm">
+        <ProjectIcon icon={project.icon} color={project.color} size={14} />
+        {project.name}{" "}
+        <span className="text-muted-foreground">({project.key})</span>
+      </h3>
+      <RepositoriesSettings project={project} canManage={canManage} />
+    </div>
+  )
+}
+
+/**
  * Settings index homepage (`/{ws}/settings`): a scrollable list of every
  * settings page, organized by the same categories as the sidebar.
  */
@@ -126,17 +155,18 @@ export function SettingsIndex({
           </h3>
           <ul className="mt-2 flex flex-col gap-1">
             {category.items.map((item) => {
-              const disabled = item.id === "workflow" && !hasProject
+              const projectScoped =
+                item.id === "workflow" || item.id === "repositories"
+              const disabled = projectScoped && !hasProject
+              const disabledHint = `Select a project to manage its ${
+                item.id === "repositories" ? "repositories" : "workflow"
+              }`
               return (
                 <li key={item.id}>
                   <button
                     type="button"
                     disabled={disabled}
-                    title={
-                      disabled
-                        ? "Select a project to manage its workflow"
-                        : undefined
-                    }
+                    title={disabled ? disabledHint : undefined}
                     onClick={() => onNavigate(item.id)}
                     className="flex w-full items-center gap-3 rounded-md border px-3 py-2.5 text-left hover:bg-accent disabled:opacity-50"
                   >
@@ -145,9 +175,7 @@ export function SettingsIndex({
                         {item.label}
                       </span>
                       <span className="block truncate text-muted-foreground text-xs">
-                        {disabled
-                          ? "Select a project to manage its workflow"
-                          : item.description}
+                        {disabled ? disabledHint : item.description}
                       </span>
                     </span>
                     <span
@@ -256,6 +284,14 @@ export function WorkspaceSettings({
           ) : (
             <p className="text-muted-foreground text-sm">
               Select a project to manage its workflow.
+            </p>
+          ))}
+        {tab === "repositories" &&
+          (project ? (
+            <RepositoriesSection project={project} canManage={canManage} />
+          ) : (
+            <p className="text-muted-foreground text-sm">
+              Select a project to manage its repositories.
             </p>
           ))}
         {tab === "labels" && (

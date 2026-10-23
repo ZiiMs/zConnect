@@ -574,3 +574,60 @@ describe("github connection api client", () => {
     expect(saved.removed).toBe(2)
   })
 })
+
+describe("project repositories api client", () => {
+  const view = {
+    id: "repo-1",
+    connectionId: "gc-1",
+    githubId: "101",
+    fullName: "acme/web",
+    owner: "acme",
+    name: "web",
+    private: false,
+    archived: false,
+    issuesEnabled: true,
+    defaultBranch: "main",
+    pushedAt: null,
+    selectedAt: "2026-10-01T00:00:00.000Z",
+    lastSyncedAt: "2026-10-10T10:00:00.000Z",
+    syncError: "Forbidden",
+    unavailable: true,
+    linkedBy: "user-1",
+    linkedAt: "2026-10-09T10:00:00.000Z",
+  }
+
+  test("getProjectRepositories parses links and the workspace connection", async () => {
+    const fetchMock = mockFetchOnce({
+      items: [view],
+      connection: { status: "active", login: "octocat" },
+    })
+
+    const result = await api.getProjectRepositories("pr-1")
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/projects/pr-1/repositories")
+    expect(result.items[0]).toMatchObject({
+      fullName: "acme/web",
+      linkedBy: "user-1",
+      unavailable: true,
+    })
+    expect(result.connection).toEqual({
+      status: "active",
+      login: "octocat",
+    })
+  })
+
+  test("setProjectRepositories puts the local repository ids", async () => {
+    const fetchMock = mockFetchOnce({ items: [], connection: null })
+
+    const result = await api.setProjectRepositories("pr-1", ["repo-1"])
+
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/projects/pr-1/repositories")
+    expect(options.method).toBe("PUT")
+    expect(JSON.parse(options.body as string)).toEqual({
+      repositoryIds: ["repo-1"],
+    })
+    expect(result).toEqual({ items: [], connection: null })
+  })
+})

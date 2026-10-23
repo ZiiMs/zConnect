@@ -525,7 +525,9 @@ function WorkspaceShell({
   ])
 
   // Settings workflow needs a project: repair the URL to members when the
-  // workspace has none (the tab itself stays disabled with its hint).
+  // workspace has none (the tab stays disabled with its hint). The
+  // Repositories tab shows the same in-panel hint instead, so a deep link
+  // survives the initial project load.
   useEffect(() => {
     if (
       parsed.section === "settings" &&
@@ -724,8 +726,9 @@ function WorkspaceShell({
                       {category.label}
                     </p>
                     {category.items.map((item) => {
-                      const disabled =
-                        item.id === "workflow" && !selectedProject
+                      const projectScoped =
+                        item.id === "workflow" || item.id === "repositories"
+                      const disabled = projectScoped && !selectedProject
                       const active = parsed.settingsTab === item.id
                       return (
                         <button
@@ -735,7 +738,11 @@ function WorkspaceShell({
                           disabled={disabled}
                           title={
                             disabled
-                              ? "Select a project to manage its workflow"
+                              ? `Select a project to manage its ${
+                                  item.id === "repositories"
+                                    ? "repositories"
+                                    : "workflow"
+                                }`
                               : undefined
                           }
                           onClick={() => goSettings(item.id)}

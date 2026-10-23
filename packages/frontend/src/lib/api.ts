@@ -237,6 +237,23 @@ export const githubAllowlistResponseSchema = z.object({
   removed: z.number(),
 })
 
+/** Project link row: repository metadata plus the link and sync state. */
+export const projectRepositoryViewSchema = githubRepositorySchema.extend({
+  unavailable: z.boolean(),
+  linkedAt: z.string(),
+  linkedBy: z.string(),
+})
+
+export const projectConnectionSchema = z.object({
+  status: githubConnectionStatusSchema,
+  login: z.string(),
+})
+
+export const projectRepositoriesResponseSchema = z.object({
+  items: z.array(projectRepositoryViewSchema),
+  connection: projectConnectionSchema.nullable(),
+})
+
 export const commentSchema = z.object({
   id: z.string(),
   issueId: z.string(),
@@ -391,6 +408,11 @@ export type RemoteRepositoryOption = z.infer<
 >
 export type GitHubAllowlistResponse = z.infer<
   typeof githubAllowlistResponseSchema
+>
+export type ProjectRepositoryView = z.infer<typeof projectRepositoryViewSchema>
+export type ProjectConnection = z.infer<typeof projectConnectionSchema>
+export type ProjectRepositoriesResponse = z.infer<
+  typeof projectRepositoriesResponseSchema
 >
 
 /**
@@ -908,6 +930,26 @@ export const api = {
       `/api/workspaces/${workspaceId}/github-connection/repositories`,
       githubAllowlistResponseSchema,
       { method: "PUT", body: { githubIds } }
+    )
+  },
+
+  getProjectRepositories(
+    projectId: string
+  ): Promise<ProjectRepositoriesResponse> {
+    return request(
+      `/api/projects/${projectId}/repositories`,
+      projectRepositoriesResponseSchema
+    )
+  },
+
+  setProjectRepositories(
+    projectId: string,
+    repositoryIds: string[]
+  ): Promise<ProjectRepositoriesResponse> {
+    return request(
+      `/api/projects/${projectId}/repositories`,
+      projectRepositoriesResponseSchema,
+      { method: "PUT", body: { repositoryIds } }
     )
   },
 }
