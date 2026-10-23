@@ -59,6 +59,8 @@ vi.mock("@/lib/api", async (importOriginal) => {
       disconnectGitHubConnection: vi.fn(),
       searchGitHubRepositories: vi.fn(),
       setGitHubAllowlist: vi.fn(),
+      getProjectRepositories: vi.fn(),
+      setProjectRepositories: vi.fn(),
     },
   }
 })
@@ -70,6 +72,7 @@ const listProjects = vi.mocked(api.listProjects)
 const getInvitation = vi.mocked(api.getInvitation)
 const acceptInvitation = vi.mocked(api.acceptInvitation)
 const getGitHubConnection = vi.mocked(api.getGitHubConnection)
+const getProjectRepositories = vi.mocked(api.getProjectRepositories)
 
 const workspaces: Workspace[] = [
   { id: "ws-1", name: "Acme", role: "Owner" },
@@ -140,6 +143,10 @@ beforeEach(() => {
   vi.mocked(api.getGitHubConnection).mockResolvedValue({
     connection: null,
     repositories: [],
+  })
+  getProjectRepositories.mockResolvedValue({
+    items: [],
+    connection: null,
   })
 })
 
@@ -713,6 +720,137 @@ describe("URL as the state store", () => {
     ).not.toBeInTheDocument()
     expect(
       screen.queryByRole("button", { name: /disconnect GitHub/i })
+    ).not.toBeInTheDocument()
+  })
+
+  test("settings repositories lets an admin link from the workspace allowlist", async () => {
+    const user = userEvent.setup()
+    const lastSyncedAt = new Date(Date.now() - 5 * 60_000).toISOString()
+    const repository = {
+      id: "repo-1",
+      connectionId: "gc-1",
+      githubId: "101",
+      fullName: "acme/web",
+      owner: "acme",
+      name: "web",
+      private: false,
+      archived: false,
+      issuesEnabled: true,
+      defaultBranch: "main",
+      pushedAt: null,
+      selectedAt: "2026-10-01T00:00:00.000Z",
+      lastSyncedAt,
+      syncError: null,
+      unavailable: false,
+      linkedBy: "user-1",
+      linkedAt: "2026-10-02T00:00:00.000Z",
+    }
+    getProjectRepositories.mockResolvedValue({
+      items: [repository],
+      connection: { status: "active", login: "octocat" },
+    })
+    getGitHubConnection.mockResolvedValue({
+      connection: {
+        id: "gc-1",
+        workspaceId: "ws-1",
+        connectorUserId: "user-1",
+        connectorAccountId: "ba-1",
+        login: "octocat",
+        scopes: ["repo"],
+        status: "active",
+        lastSyncedAt: null,
+        lastManualRefreshAt: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+        updatedAt: "2026-10-01T00:00:00.000Z",
+        connectorName: "Ada",
+        repositoryCount: 1,
+      },
+      repositories: [repository],
+    })
+    const { rail } = renderShell()
+    await rail().findByRole("button", { name: /web/i })
+
+    await user.click(rail().getByRole("button", { name: /settings/i }))
+    await user.click(rail().getByRole("button", { name: /^repositories$/i }))
+    expect(window.location.pathname).toBe("/acme/settings/repositories")
+
+    const region = await screen.findByRole("region", {
+      name: "Project repositories",
+    })
+    expect(
+      await within(region).findByRole("checkbox", { name: "acme/web" })
+    ).toBeChecked()
+    expect(within(region).getByText(/last synced 5m ago/i)).toBeInTheDocument()
+    expect(
+      within(region).getByRole("button", { name: /^save$/i })
+    ).toBeInTheDocument()
+    expect(getProjectRepositories).toHaveBeenCalledWith("pr-1")
+  })
+
+  test("a member sees the Repositories tab read-only", async () => {
+    const user = userEvent.setup()
+    getProjectRepositories.mockResolvedValue({
+      items: [
+        {
+          id: "repo-3",
+          connectionId: "gc-2",
+          githubId: "201",
+          fullName: "beta/app",
+          owner: "beta",
+          name: "app",
+          private: false,
+          archived: false,
+          issuesEnabled: true,
+          defaultBranch: "main",
+          pushedAt: null,
+          selectedAt: "2026-10-01T00:00:00.000Z",
+          lastSyncedAt: null,
+          syncError: null,
+          unavailable: false,
+          linkedBy: "user-owner",
+          linkedAt: "2026-10-02T00:00:00.000Z",
+        },
+      ],
+      connection: { status: "active", login: "octocat" },
+    })
+    const { rail } = renderShell()
+    await screen.findByTestId("rail-workspace-trigger")
+    await user.click(screen.getByTestId("rail-workspace-trigger"))
+    await user.click(screen.getByRole("menuitemradio", { name: /beta/i }))
+    await waitFor(() => expect(listProjects).toHaveBeenCalledWith("ws-2"))
+
+    await user.click(rail().getByRole("button", { name: /settings/i }))
+    await user.click(rail().getByRole("button", { name: /^repositories$/i }))
+    expect(window.location.pathname).toBe("/beta/settings/repositories")
+
+    await waitFor(() =>
+      expect(getProjectRepositories).toHaveBeenCalledWith("pr-3")
+    )
+    expect(await screen.findByText("beta/app")).toBeInTheDocument()
+    expect(screen.getByText("Not synced yet")).toBeInTheDocument()
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: /^save$/i })
+    ).not.toBeInTheDocument()
+    expect(getGitHubConnection).not.toHaveBeenCalled()
+  })
+
+  test("an unlinked project points an admin at the GitHub connection", async () => {
+    getProjectRepositories.mockResolvedValue({
+      items: [],
+      connection: null,
+    })
+    window.history.replaceState(null, "", "/acme/settings/repositories")
+    renderShell()
+
+    expect(
+      await screen.findByText(/GitHub is not connected/i)
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/settings → connections → github/i)
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: /^save$/i })
     ).not.toBeInTheDocument()
   })
 
