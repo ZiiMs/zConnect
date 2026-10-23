@@ -600,6 +600,95 @@ describe("github create issue from an item", () => {
     ])
   })
 
+  test("an edited title overrides only the snapshot title", async () => {
+    const { app, project, repository } = await setup()
+
+    const { res, issue } = await createFromItem(app, project, {
+      kind: "pr",
+      repositoryId: repository.id,
+      number: 12,
+      title: "  Fix the GitHub View login redirect  ",
+    })
+
+    expect(res.status).toBe(201)
+    expect(issue).toMatchObject({
+      title: "Fix the GitHub View login redirect",
+      description: "https://github.com/acme/web/pull/12",
+    })
+  })
+
+  test("an edited description overrides only the URL-plus-excerpt body", async () => {
+    const { app, project, repository } = await setup()
+
+    const { res, issue } = await createFromItem(app, project, {
+      kind: "pr",
+      repositoryId: repository.id,
+      number: 12,
+      description: "  Fix the redirect loop before shipping.  ",
+    })
+
+    expect(res.status).toBe(201)
+    expect(issue).toMatchObject({
+      title: "Add the GitHub View",
+      description: "Fix the redirect loop before shipping.",
+    })
+  })
+
+  test("edited title and description are both used, and the link still points at the item", async () => {
+    const { app, project, repository } = await setup()
+
+    const { res, issue } = await createFromItem(app, project, {
+      kind: "pr",
+      repositoryId: repository.id,
+      number: 12,
+      title: "Ship the GitHub View",
+      description: "Tracking the review in GitHub.",
+    })
+
+    expect(res.status).toBe(201)
+    expect(issue).toMatchObject({
+      title: "Ship the GitHub View",
+      description: "Tracking the review in GitHub.",
+    })
+
+    const links = await app.request(
+      `/api/issues/${issue.identifier}/external-links`,
+      { headers: auth(owner.id) }
+    )
+    expect(await links.json()).toMatchObject([
+      {
+        issueId: issue.id,
+        kind: "pr",
+        // The External Link keeps the GitHub Item's own title and URL.
+        title: "Add the GitHub View",
+        url: "https://github.com/acme/web/pull/12",
+      },
+    ])
+    expect(await pullRequestChips(app, project)).toEqual([
+      {
+        linkId: expect.any(String),
+        issueId: issue.id,
+        identifier: issue.identifier,
+        title: "Ship the GitHub View",
+      },
+    ])
+  })
+
+  test("rejects an empty or oversized title and an oversized description", async () => {
+    const { app, project, repository } = await setup()
+    const base = { kind: "pr", repositoryId: repository.id, number: 12 }
+    const bodies: unknown[] = [
+      { ...base, title: "   " },
+      { ...base, title: "x".repeat(201) },
+      { ...base, description: "x".repeat(20_001) },
+    ]
+
+    for (const body of bodies) {
+      const { res } = await createFromItem(app, project, body)
+      expect(res.status).toBe(400)
+    }
+  })
+
   test("falls back to the first Status when the project has no default", async () => {
     const { app, workspaces, project, repository } = await setup()
     const statuses = await workspaces.listStatuses(project.id)
