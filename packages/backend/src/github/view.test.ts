@@ -189,7 +189,14 @@ function cloneRemote<T>(record: Record<string, T[]>): Record<string, T[]> {
   )
 }
 
-async function setup(options: { issuesEnabled?: boolean } = {}) {
+async function setup(
+  options: {
+    issuesEnabled?: boolean
+    /** Defaults to the inline adapter so the list reflects the sync. */
+    inlineSync?: boolean
+    startAt?: string
+  } = {}
+) {
   const workspaces = createMemoryWorkspaceStore()
   const github = createMemoryGitHubStore({
     projectWorkspaceId: async (projectId) =>
@@ -209,6 +216,7 @@ async function setup(options: { issuesEnabled?: boolean } = {}) {
     pullRequests: cloneRemote(pullRequests),
     issues: cloneRemote(githubIssues),
   })
+  const clock = { at: options.startAt ?? FIXED }
   const workspace = await workspaces.createWorkspace(owner.id, "Acme")
   const project = await workspaces.createProject(workspace.id, {
     name: "Web",
@@ -246,11 +254,12 @@ async function setup(options: { issuesEnabled?: boolean } = {}) {
     workspaces,
     provider,
     decrypt: () => "token-1",
-    now: () => new Date(FIXED),
+    now: () => new Date(clock.at),
   }
   const enqueued: string[] = []
   async function enqueueSync(repositoryId: string) {
     enqueued.push(repositoryId)
+    if (options.inlineSync === false) return
     await syncRepository(deps, repositoryId)
   }
 
@@ -262,7 +271,13 @@ async function setup(options: { issuesEnabled?: boolean } = {}) {
   }
   app.route(
     "/",
-    createGitHubViewApp({ workspaces, github, getSession, enqueueSync })
+    createGitHubViewApp({
+      workspaces,
+      github,
+      getSession,
+      enqueueSync,
+      now: () => new Date(clock.at),
+    })
   )
 
   await syncConnection(deps, connection.id)
@@ -297,6 +312,7 @@ async function setup(options: { issuesEnabled?: boolean } = {}) {
     api,
     issue,
     enqueued,
+    clock,
   }
 }
 
@@ -324,6 +340,27 @@ async function listIssues(
     { headers: auth(userId) }
   )
   return { res, body: (await res.json()) as GitHubIssueListResponse }
+}
+
+interface RefreshBody {
+  accepted?: boolean
+  enqueued?: number
+  lastSyncedAt?: string | null
+  /** Present on a 429. */
+  error?: string
+  retryAfter?: number
+}
+
+async function refresh(
+  app: Hono,
+  project: Project,
+  userId = owner.id
+): Promise<{ res: Response; body: RefreshBody }> {
+  const res = await app.request(`/api/projects/${project.id}/github/refresh`, {
+    method: "POST",
+    headers: auth(userId),
+  })
+  return { res, body: (await res.json()) as RefreshBody }
 }
 
 function numbers(items: PullRequestSnapshot[]): number[] {
@@ -501,7 +538,7 @@ describe("github view pull requests", () => {
   })
 
   test("manual refresh enqueues every linked repository and the list reflects the sync", async () => {
-    const { app, project, provider, web, api, enqueued } = await setup()
+    const { app, project, provider, web, api, enqueued, clock } = await setup()
     provider.pullRequests["acme/web"] = [
       ...(provider.pullRequests["acme/web"] ?? []),
       pullRequest({
@@ -521,16 +558,10 @@ describe("github view pull requests", () => {
       }),
     ]
 
-    const res = await app.request(
-      `/api/projects/${project.id}/github/refresh`,
-      { method: "POST", headers: auth(owner.id) }
-    )
+    // Six minutes after the last sync: both repositories are due.
+    clock.at = "2026-10-10T12:06:00.000Z"
+    const { res, body } = await refresh(app, project)
     expect(res.status).toBe(202)
-    const body = (await res.json()) as {
-      accepted: boolean
-      enqueued: number
-      lastSyncedAt: string | null
-    }
     expect(body).toEqual({
       accepted: true,
       enqueued: 2,
@@ -564,6 +595,210 @@ describe("github view pull requests", () => {
     )
     expect(res.status).toBe(409)
     expect(await res.json()).toEqual({ error: "GitHub is not connected" })
+  })
+
+  test("refresh enqueues only repositories older than five minutes and serves the snapshot immediately", async () => {
+    const { app, project, clock, enqueued, web, api } = await setup({
+      inlineSync: false,
+    })
+
+    // Four minutes after the last sync: fresh.
+    clock.at = "2026-10-10T12:04:00.000Z"
+    const fresh = await refresh(app, project)
+    expect(fresh.res.status).toBe(202)
+    expect(fresh.body).toEqual({
+      accepted: true,
+      enqueued: 0,
+      lastSyncedAt: FIXED,
+    })
+    expect(enqueued).toEqual([])
+
+    // Six minutes after the last sync: both repositories are due.
+    clock.at = "2026-10-10T12:06:00.000Z"
+    const stale = await refresh(app, project)
+    expect(stale.res.status).toBe(202)
+    expect(stale.body).toEqual({
+      accepted: true,
+      enqueued: 2,
+      lastSyncedAt: FIXED,
+    })
+    expect([...enqueued].sort()).toEqual([web.id, api.id].sort())
+
+    // The cached snapshot stays on screen while the queue catches up.
+    const { body } = await list(app, project)
+    expect(numbers(body.items)).toEqual([7, 9, 12, 5])
+    expect(body.lastSyncedAt).toBe(FIXED)
+  })
+
+  test("manual refresh is throttled per workspace to once a minute", async () => {
+    const { app, project, clock } = await setup({ inlineSync: false })
+    clock.at = "2026-10-10T12:06:00.000Z"
+
+    const first = await refresh(app, project)
+    expect(first.res.status).toBe(202)
+    expect(first.body.accepted).toBe(true)
+
+    clock.at = "2026-10-10T12:06:30.000Z"
+    const throttled = await refresh(app, project)
+    expect(throttled.res.status).toBe(429)
+    expect(throttled.body).toEqual({
+      error: "Refresh throttled",
+      retryAfter: 30,
+    })
+    expect(throttled.res.headers.get("retry-after")).toBe("30")
+
+    // Exactly sixty seconds after the accepted refresh: allowed again.
+    clock.at = "2026-10-10T12:07:00.000Z"
+    const allowed = await refresh(app, project)
+    expect(allowed.res.status).toBe(202)
+  })
+
+  test("the throttle is per workspace, so another connection still refreshes", async () => {
+    const { app, project, github, workspaces, clock } = await setup({
+      inlineSync: false,
+    })
+    const beta = await workspaces.createWorkspace(owner.id, "Beta")
+    const betaProject = await workspaces.createProject(beta.id, {
+      name: "Beta App",
+      key: "BET",
+    })
+    const betaConnection = await github.upsertConnection({
+      workspaceId: beta.id,
+      connectorUserId: owner.id,
+      connectorAccountId: "ba-account-2",
+      login: "octocat",
+      scopes: ["repo"],
+      encryptedAccessToken: "encrypted:token-2",
+      at: FIXED,
+    })
+    await github.replaceAllowlist(
+      betaConnection.id,
+      [
+        {
+          ...webRepository,
+          githubId: "201",
+          fullName: "beta/app",
+          owner: "beta",
+          name: "app",
+        },
+      ],
+      FIXED
+    )
+    const betaRepositories = await github.listAllowlist(betaConnection.id)
+    const betaRepository = betaRepositories[0]
+    if (!betaRepository) throw new Error("beta fixture repository missing")
+    await github.replaceProjectRepositories(
+      betaProject.id,
+      [betaRepository.id],
+      owner.id,
+      FIXED
+    )
+
+    clock.at = "2026-10-10T12:06:00.000Z"
+    expect((await refresh(app, project)).res.status).toBe(202)
+    expect((await refresh(app, project)).res.status).toBe(429)
+
+    const betaRefresh = await refresh(app, betaProject)
+    expect(betaRefresh.res.status).toBe(202)
+    expect(betaRefresh.body.enqueued).toBe(1)
+  })
+})
+
+describe("github view status", () => {
+  test("returns the same non-item envelope as the lists", async () => {
+    const { app, project } = await setup()
+    const res = await app.request(`/api/projects/${project.id}/github/status`, {
+      headers: auth(owner.id),
+    })
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({
+      connection: { status: "active", login: "octocat" },
+      repositories: [
+        {
+          id: expect.any(String),
+          fullName: "acme/api",
+          issuesEnabled: true,
+          unavailable: false,
+        },
+        {
+          id: expect.any(String),
+          fullName: "acme/web",
+          issuesEnabled: true,
+          unavailable: false,
+        },
+      ],
+      lastSyncedAt: FIXED,
+    })
+  })
+
+  test("status is project read: Viewer 200, outsider 403, anonymous 401, missing 404", async () => {
+    const { app, project } = await setup()
+    const read = (userId?: string) =>
+      app.request(`/api/projects/${project.id}/github/status`, {
+        headers: auth(userId),
+      })
+
+    expect((await read(viewer.id)).status).toBe(200)
+    expect((await read(outsider.id)).status).toBe(403)
+    expect((await read()).status).toBe(401)
+    expect(
+      (
+        await app.request(
+          "/api/projects/00000000-0000-4000-8000-000000000000/github/status",
+          { headers: auth(owner.id) }
+        )
+      ).status
+    ).toBe(404)
+  })
+
+  test("reports a paused connection and unavailable repositories without dropping the snapshot", async () => {
+    const { app, project, github, workspace, web } = await setup()
+    await github.setConnectionStatus(workspace.id, "reconnect_required")
+    await github.updateRepository(web.id, {
+      syncError: "GitHub access forbidden",
+    })
+
+    const res = await app.request(`/api/projects/${project.id}/github/status`, {
+      headers: auth(viewer.id),
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      connection: { status: string; login: string } | null
+      repositories: Array<{ fullName: string; unavailable: boolean }>
+      lastSyncedAt: string | null
+    }
+    expect(body.connection).toEqual({
+      status: "reconnect_required",
+      login: "octocat",
+    })
+    expect(
+      body.repositories.find((repository) => repository.fullName === "acme/web")
+        ?.unavailable
+    ).toBe(true)
+    expect(
+      body.repositories.find((repository) => repository.fullName === "acme/api")
+        ?.unavailable
+    ).toBe(false)
+    expect(body.lastSyncedAt).toBe(FIXED)
+  })
+
+  test("an unconnected workspace reports an empty status", async () => {
+    const { app, workspaces } = await setup()
+    const beta = await workspaces.createWorkspace(owner.id, "Beta")
+    const project = await workspaces.createProject(beta.id, {
+      name: "Beta App",
+      key: "BET",
+    })
+    const res = await app.request(`/api/projects/${project.id}/github/status`, {
+      headers: auth(owner.id),
+    })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({
+      connection: null,
+      repositories: [],
+      lastSyncedAt: null,
+    })
   })
 })
 

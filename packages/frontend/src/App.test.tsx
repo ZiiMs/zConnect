@@ -65,6 +65,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
       listPullRequests: vi.fn(),
       listGitHubIssues: vi.fn(),
       refreshGitHub: vi.fn(),
+      getGitHubStatus: vi.fn(),
       linkGitHubItem: vi.fn(),
       createIssueFromGitHubItem: vi.fn(),
       getIssue: vi.fn(),
@@ -249,6 +250,11 @@ beforeEach(() => {
     accepted: true,
     enqueued: 1,
     lastSyncedAt: "2026-10-10T12:00:00.000Z",
+  })
+  vi.mocked(api.getGitHubStatus).mockResolvedValue({
+    connection: { status: "active", login: "octocat" },
+    repositories: githubViewResponse.repositories,
+    lastSyncedAt: githubViewResponse.lastSyncedAt,
   })
   linkGitHubItem.mockResolvedValue({
     link: {

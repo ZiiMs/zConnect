@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { GitHubCreateDialog } from "@/components/github-create-dialog"
 import { GitHubIssueTable } from "@/components/github-issue-rows"
 import { GitHubLinkDialog } from "@/components/github-link-dialog"
@@ -7,6 +7,7 @@ import { PullRequestTable } from "@/components/pull-request-rows"
 import { Button } from "@/components/ui/button"
 import { navigate } from "@/hooks/use-pathname"
 import {
+  ApiError,
   api,
   type GitHubIssueListResponse,
   type GitHubIssueRow,
@@ -18,6 +19,7 @@ import {
   type PullRequestRow,
   type Workspace,
 } from "@/lib/api"
+import { authClient } from "@/lib/auth-client"
 import {
   buildGitHubSearch,
   type GitHubViewFilters,
@@ -101,6 +103,7 @@ export function GitHubView({
       ? filters.state
       : "open"
   const [linkTarget, setLinkTarget] = useState<GitHubLinkTarget | null>(null)
+  const autoRefreshed = useRef(false)
   const [createTarget, setCreateTarget] = useState<GitHubCreateTarget | null>(
     null
   )
@@ -183,6 +186,32 @@ export function GitHubView({
     reloadKey,
   ])
 
+  // Freshness (#51): when the snapshot on screen is older than five minutes
+  // (or has never synced), ask the backend once per mount. The cached rows
+  // stay visible; a throttled or failed request must not disturb them.
+  useEffect(() => {
+    if (autoRefreshed.current) return
+    const active = tab === "issues" ? issueData : data
+    if (!active?.connection || active.repositories.length === 0) return
+    // A paused Connection cannot sync; the banner explains why.
+    if (active.connection.status === "reconnect_required") return
+    const last = active.lastSyncedAt
+    if (
+      last !== null &&
+      Date.now() - new Date(last).getTime() <= STALE_AFTER_MS
+    ) {
+      return
+    }
+    autoRefreshed.current = true
+    void (async () => {
+      try {
+        await api.refreshGitHub(project.id)
+      } catch {
+        // Throttled or offline: keep serving the snapshot and its stale mark.
+      }
+    })()
+  }, [tab, data, issueData, project.id])
+
   const updateFilters = useCallback(
     (patch: Partial<GitHubViewFilters>) => {
       setFilters((current) => {
@@ -252,10 +281,34 @@ export function GitHubView({
       )
       setReloadKey((key) => key + 1)
     } catch (err) {
-      setError(errorMessage(err))
+      if (err instanceof ApiError && err.status === 429) {
+        const seconds = err.retryAfter ?? 60
+        setNotice(
+          `Refresh is limited to once a minute. Try again in ${seconds} ${
+            seconds === 1 ? "second" : "seconds"
+          }.`
+        )
+      } else {
+        setError(errorMessage(err))
+      }
     } finally {
       setRefreshing(false)
     }
+  }
+
+  function reconnect() {
+    // Same OAuth flow as Settings → Connections: the callback lands on the
+    // settings tab, whose `?linked=1` handler finalizes the connection.
+    const url = new URL(
+      buildSettingsPath(workspace.name, "connections"),
+      window.location.origin
+    )
+    url.searchParams.set("linked", "1")
+    void authClient.linkSocial({
+      provider: "github",
+      scopes: ["repo"],
+      callbackURL: url.toString(),
+    })
   }
 
   const activeData = tab === "issues" ? issueData : data
@@ -292,6 +345,11 @@ export function GitHubView({
   const stale =
     lastSyncedAt !== null &&
     Date.now() - new Date(lastSyncedAt).getTime() > STALE_AFTER_MS
+  const unavailableRepositories = new Set(
+    (activeData?.repositories ?? [])
+      .filter((repository) => repository.unavailable)
+      .map((repository) => repository.fullName)
+  )
   const showRepository = (activeData?.repositories.length ?? 0) > 1
   const hasConnection = Boolean(activeData?.connection)
   const hasRepositories = (activeData?.repositories.length ?? 0) > 0
@@ -425,17 +483,11 @@ export function GitHubView({
             >
               GitHub needs to be reconnected.{" "}
               {canAdmin ? (
-                <button
-                  type="button"
-                  className="underline"
-                  onClick={() =>
-                    navigate(buildSettingsPath(workspace.name, "connections"))
-                  }
-                >
+                <button type="button" className="underline" onClick={reconnect}>
                   Reconnect
                 </button>
               ) : (
-                "Ask a workspace admin to reconnect it."
+                "Ask a workspace admin to reconnect GitHub."
               )}
             </p>
           )}
@@ -603,6 +655,7 @@ export function GitHubView({
                     <GitHubIssueTable
                       rows={issueItems}
                       showRepository={showRepository}
+                      unavailableRepositories={unavailableRepositories}
                       canWrite={canWrite}
                       onLink={(row) =>
                         setLinkTarget({
@@ -637,6 +690,7 @@ export function GitHubView({
                           number: row.number,
                         })
                       }
+                      unavailableRepositories={unavailableRepositories}
                       onCreate={(row) =>
                         setCreateTarget({
                           kind: "pr",

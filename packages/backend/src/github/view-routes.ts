@@ -78,13 +78,27 @@ export interface RefreshResponse {
   lastSyncedAt: string | null
 }
 
+/** `GET /github/status`: the list envelope without items or filters. */
+export interface GitHubStatusResponse {
+  connection: GitHubViewConnection | null
+  repositories: GitHubViewRepository[]
+  lastSyncedAt: string | null
+}
+
 export interface GitHubViewDeps {
   workspaces: WorkspaceStore
   github: GitHubStore
   getSession: GetSession
   /** Enqueues one sync job per linked repository (BullMQ in production). */
   enqueueSync: (repositoryId: string) => Promise<void>
+  /** Injected clock for staleness and the refresh throttle; tests fake it. */
+  now?: () => Date
 }
+
+/** A snapshot older than this is refreshed when the view opens. */
+const SNAPSHOT_STALE_MS = 5 * 60 * 1000
+/** A manual refresh is accepted at most once per this window per workspace. */
+const MANUAL_REFRESH_WINDOW_MS = 60 * 1000
 
 function newestLastSyncedAt(rows: Array<{ lastSyncedAt: string | null }>) {
   let newest: string | null = null
@@ -187,6 +201,7 @@ export function createGitHubViewApp({
   github,
   getSession,
   enqueueSync,
+  now = () => new Date(),
 }: GitHubViewDeps) {
   const app = new Hono()
 
@@ -322,8 +337,9 @@ export function createGitHubViewApp({
     return c.json(body)
   })
 
-  // #49 is deliberately naive: every linked repository is enqueued and the
-  // 60-second throttle plus staleness check arrive with #51.
+  // #51: enqueue only linked repositories whose snapshot is stale, and answer
+  // 429 while the per-workspace manual-refresh window is open. The cached
+  // snapshot is served untouched either way.
   app.post("/api/projects/:id/github/refresh", async (c) => {
     const projectId = c.req.param("id")
     const project = await projectForRead(c, projectId)
@@ -333,16 +349,60 @@ export function createGitHubViewApp({
     if (!connection) {
       return c.json({ error: "GitHub is not connected" }, 409)
     }
+
+    const at = now()
+    if (connection.lastManualRefreshAt) {
+      const elapsed =
+        at.getTime() - new Date(connection.lastManualRefreshAt).getTime()
+      const retryAfter = Math.ceil((MANUAL_REFRESH_WINDOW_MS - elapsed) / 1000)
+      if (retryAfter > 0) {
+        c.header("Retry-After", String(retryAfter))
+        return c.json({ error: "Refresh throttled", retryAfter }, 429)
+      }
+    }
+
     const repositories = await github.listProjectRepositories(project.id)
-    for (const repository of repositories) {
+    const cutoff = at.getTime() - SNAPSHOT_STALE_MS
+    const stale = repositories.filter(
+      (repository) =>
+        repository.lastSyncedAt === null ||
+        new Date(repository.lastSyncedAt).getTime() < cutoff
+    )
+    for (const repository of stale) {
       await enqueueSync(repository.id)
     }
+    await github.touchConnectionManualRefresh(
+      project.workspaceId,
+      at.toISOString()
+    )
     const body: RefreshResponse = {
       accepted: true,
-      enqueued: repositories.length,
+      enqueued: stale.length,
       lastSyncedAt: newestLastSyncedAt(repositories),
     }
     return c.json(body, 202)
+  })
+
+  app.get("/api/projects/:id/github/status", async (c) => {
+    const projectId = c.req.param("id")
+    const project = await projectForRead(c, projectId)
+    if (isResponse(project)) return project
+
+    const repositories = await github.listProjectRepositories(project.id)
+    const connection = await github.getConnection(project.workspaceId)
+    const body: GitHubStatusResponse = {
+      connection: connection
+        ? { status: connection.status, login: connection.login }
+        : null,
+      repositories: repositories.map((repository) => ({
+        id: repository.id,
+        fullName: repository.fullName,
+        issuesEnabled: repository.issuesEnabled,
+        unavailable: repository.syncError !== null,
+      })),
+      lastSyncedAt: newestLastSyncedAt(repositories),
+    }
+    return c.json(body)
   })
 
   return app

@@ -399,6 +399,14 @@ export interface GitHubStore {
   getExternalLink(id: string): Promise<ExternalLink | null>
   /** True when a row was removed; false when it was already gone. */
   deleteExternalLink(id: string): Promise<boolean>
+
+  /**
+   * #51 — retention. Deletes merged/closed rows whose closing instant
+   * (`mergedAt ?? closedAt`, falling back to `githubUpdatedAt`) is older than
+   * `olderThan`. Open rows are never touched.
+   */
+  deleteExpiredPullRequests(olderThan: string): Promise<number>
+  deleteExpiredGitHubIssues(olderThan: string): Promise<number>
 }
 
 export interface MemoryGitHubStoreOptions {
@@ -1005,6 +1013,34 @@ export function createMemoryGitHubStore(
 
     async deleteExternalLink(id) {
       return links.delete(id)
+    },
+
+    async deleteExpiredPullRequests(olderThan) {
+      const cutoff = new Date(olderThan).getTime()
+      let deleted = 0
+      for (const [key, item] of pullRequests) {
+        if (item.state === "open") continue
+        const closing = item.mergedAt ?? item.closedAt ?? item.githubUpdatedAt
+        if (new Date(closing).getTime() < cutoff) {
+          pullRequests.delete(key)
+          deleted += 1
+        }
+      }
+      return deleted
+    },
+
+    async deleteExpiredGitHubIssues(olderThan) {
+      const cutoff = new Date(olderThan).getTime()
+      let deleted = 0
+      for (const [key, item] of githubIssues) {
+        if (item.state === "open") continue
+        const closing = item.closedAt ?? item.githubUpdatedAt
+        if (new Date(closing).getTime() < cutoff) {
+          githubIssues.delete(key)
+          deleted += 1
+        }
+      }
+      return deleted
     },
   }
 }

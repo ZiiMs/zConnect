@@ -15,6 +15,8 @@ import { formatRelativeTime } from "@/lib/relative-time"
 const cell = "px-2 py-2 align-middle"
 const badge =
   "inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium"
+const unavailableBadge =
+  "inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 font-medium text-[10px] text-amber-700 dark:text-amber-400"
 
 function StateIcon({ state }: { state: PullRequestRow["state"] }) {
   if (state === "merged") {
@@ -107,6 +109,7 @@ export function PullRequestTable({
   canWrite = false,
   onLink,
   onCreate,
+  unavailableRepositories,
 }: {
   rows: PullRequestRow[]
   showRepository: boolean
@@ -114,6 +117,8 @@ export function PullRequestTable({
   canWrite?: boolean
   onLink?: (row: PullRequestRow) => void
   onCreate?: (row: PullRequestRow) => void
+  /** Full names of repositories whose last sync failed; rows stay visible. */
+  unavailableRepositories?: ReadonlySet<string>
 }) {
   return (
     <div className="overflow-x-auto rounded-md border">
@@ -180,11 +185,30 @@ export function PullRequestTable({
                       Draft
                     </span>
                   )}
+                  {!showRepository &&
+                    unavailableRepositories?.has(row.repository) && (
+                      <span
+                        className={unavailableBadge}
+                        title="GitHub is unavailable for this repository; showing the cached snapshot."
+                      >
+                        Unavailable
+                      </span>
+                    )}
                 </span>
               </td>
               {showRepository && (
                 <td className={`${cell} text-muted-foreground text-xs`}>
-                  {row.repository}
+                  <span className="flex items-center gap-1.5">
+                    {row.repository}
+                    {unavailableRepositories?.has(row.repository) && (
+                      <span
+                        className={unavailableBadge}
+                        title="GitHub is unavailable for this repository; showing the cached snapshot."
+                      >
+                        Unavailable
+                      </span>
+                    )}
+                  </span>
                 </td>
               )}
               <td className={`${cell} whitespace-nowrap text-xs`}>

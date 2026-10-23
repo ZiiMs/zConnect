@@ -11,7 +11,13 @@ import {
   type GitHubStore,
   type RemoteRepository,
 } from "./store.js"
-import { type GitHubSyncDeps, syncConnection, syncRepository } from "./sync.js"
+import {
+  applyRetention,
+  type GitHubSyncDeps,
+  selectSweepRepositories,
+  syncConnection,
+  syncRepository,
+} from "./sync.js"
 
 const owner = { id: "user-owner", email: "owner@example.com" }
 const FIXED = "2026-10-10T12:00:00.000Z"
@@ -70,6 +76,7 @@ const openIssue: RemoteGitHubIssue = {
 async function setup(
   options: {
     repositories?: RemoteRepository[]
+    pullRequests?: Record<string, RemotePullRequest[]>
     issues?: Record<string, RemoteGitHubIssue[]>
   } = {}
 ) {
@@ -77,7 +84,7 @@ async function setup(
   const github = createMemoryGitHubStore()
   const provider = createFakeProvider({
     repositories: options.repositories ?? [webRepository, apiRepository],
-    pullRequests: { "acme/web": [openPullRequest] },
+    pullRequests: options.pullRequests ?? { "acme/web": [openPullRequest] },
     issues: options.issues ?? {},
   })
   const workspace = await workspaces.createWorkspace(owner.id, "Acme")
@@ -233,6 +240,25 @@ describe("github pull request sync", () => {
     // Already reconnecting: no further provider call is made.
     provider.calls.length = 0
     expect(await syncRepository(deps, web.id)).toEqual({
+      status: "reconnect_required",
+    })
+    expect(provider.calls).toEqual([])
+  })
+
+  test("a 401 pauses the workspace for every repository", async () => {
+    const { provider, deps, web, api } = await setup()
+    provider.failNext.set(
+      "acme/web",
+      new GitProviderError("GitHub authorization failed", "unauthorized")
+    )
+
+    expect(await syncRepository(deps, web.id)).toEqual({
+      status: "reconnect_required",
+    })
+
+    // The Connection is paused: a sibling repository never reaches GitHub.
+    provider.calls.length = 0
+    expect(await syncRepository(deps, api.id)).toEqual({
       status: "reconnect_required",
     })
     expect(provider.calls).toEqual([])
@@ -447,5 +473,311 @@ describe("github issue sync", () => {
       pullRequests: 1,
       issues: 2,
     })
+  })
+})
+
+describe("github state resolution", () => {
+  test("closes and merges stored rows that disappeared from the open list", async () => {
+    const { github, provider, deps, project, web } = await setup({
+      issues: { "acme/web": [openIssue] },
+    })
+    await syncRepository(deps, web.id)
+
+    provider.pullRequests["acme/web"] = []
+    provider.closedPullRequests["acme/web"] = [
+      { number: 12, state: "merged", at: "2026-10-09T08:00:00.000Z" },
+    ]
+    provider.issues["acme/web"] = []
+    provider.closedIssues["acme/web"] = [
+      { number: 5, at: "2026-10-09T09:00:00.000Z" },
+    ]
+
+    expect((await syncRepository(deps, web.id)).status).toBe("ok")
+
+    expect(await github.getPullRequest(web.id, 12)).toMatchObject({
+      state: "merged",
+      mergedAt: "2026-10-09T08:00:00.000Z",
+      closedAt: null,
+      githubUpdatedAt: "2026-10-09T08:00:00.000Z",
+    })
+    expect(await github.getGitHubIssue(web.id, 5)).toMatchObject({
+      state: "closed",
+      closedAt: "2026-10-09T09:00:00.000Z",
+      githubUpdatedAt: "2026-10-09T09:00:00.000Z",
+    })
+    expect(await github.listOpenPullRequests(web.id)).toEqual([])
+    expect(await github.listOpenGitHubIssues(web.id)).toEqual([])
+
+    // The rows stay visible on the merged/closed tabs for retention to age.
+    const retained = await github.listPullRequestsForProject(project.id, {
+      state: "all",
+      limit: 100,
+    })
+    expect(retained.items.map((item) => item.number)).toEqual([12])
+  })
+
+  test("resolves missing numbers in batches of at most fifty", async () => {
+    const pullRequests = Array.from({ length: 120 }, (_, index) => ({
+      ...openPullRequest,
+      number: index + 1,
+      title: `Pull request ${index + 1}`,
+      url: `https://github.com/acme/web/pull/${index + 1}`,
+    }))
+    const { github, provider, deps, web } = await setup({
+      pullRequests: { "acme/web": pullRequests },
+    })
+    await syncRepository(deps, web.id)
+
+    const batches: number[][] = []
+    const resolve = provider.resolvePullRequestStates.bind(provider)
+    provider.resolvePullRequestStates = async (token, repo, numbers) => {
+      batches.push([...numbers])
+      return resolve(token, repo, numbers)
+    }
+    provider.pullRequests["acme/web"] = []
+    provider.closedPullRequests["acme/web"] = pullRequests.map((item) => ({
+      number: item.number,
+      state: "closed" as const,
+      at: "2026-10-09T00:00:00.000Z",
+    }))
+
+    expect((await syncRepository(deps, web.id)).status).toBe("ok")
+    expect(batches.map((batch) => batch.length)).toEqual([50, 50, 20])
+    expect(await github.listOpenPullRequests(web.id)).toEqual([])
+  })
+
+  test("never deletes a row merely because it disappeared from the open list", async () => {
+    const { github, provider, deps, web } = await setup()
+    await syncRepository(deps, web.id)
+
+    // GitHub's open list missed it, but state resolution still reports open.
+    provider.pullRequests["acme/web"] = []
+    provider.resolvePullRequestStates = async (_token, _repo, numbers) =>
+      new Map(
+        numbers.map((number) => [
+          number,
+          {
+            state: "open" as const,
+            mergedAt: null,
+            closedAt: null,
+            updatedAt: "2026-10-09T00:00:00.000Z",
+          },
+        ])
+      )
+
+    await syncRepository(deps, web.id)
+    expect(await github.getPullRequest(web.id, 12)).toMatchObject({
+      state: "open",
+    })
+    expect(await github.listOpenPullRequests(web.id)).toHaveLength(1)
+  })
+})
+
+describe("github rename repair", () => {
+  test("repairs a renamed repository through its immutable id and retries once", async () => {
+    const { github, provider, deps, web } = await setup()
+    await syncRepository(deps, web.id)
+
+    provider.pullRequests["acme/webapp"] =
+      provider.pullRequests["acme/web"] ?? []
+    provider.repositories = [
+      { ...webRepository, fullName: "acme/webapp", name: "webapp" },
+      apiRepository,
+    ]
+    provider.failNext.set(
+      "acme/web",
+      new GitProviderError("GitHub resource not found", "not_found")
+    )
+    provider.calls.length = 0
+
+    const outcome = await syncRepository(deps, web.id)
+    expect(outcome.status).toBe("ok")
+    expect(provider.calls).toContain("listRepositories")
+    expect(provider.calls).toContain("listOpenPullRequests:acme/webapp")
+    expect(await repositoryRow(github, web.id)).toMatchObject({
+      fullName: "acme/webapp",
+      owner: "acme",
+      name: "webapp",
+      lastSyncedAt: FIXED,
+      syncError: null,
+    })
+    expect(await github.listOpenPullRequests(web.id)).toHaveLength(1)
+  })
+
+  test("stays unavailable when GitHub no longer knows the immutable id", async () => {
+    const { github, provider, deps, web } = await setup()
+    provider.repositories = [apiRepository]
+    provider.failNext.set(
+      "acme/web",
+      new GitProviderError("GitHub resource not found", "not_found")
+    )
+
+    expect(await syncRepository(deps, web.id)).toEqual({
+      status: "unavailable",
+      repositoryId: web.id,
+    })
+    expect((await repositoryRow(github, web.id)).syncError).toBe(
+      "GitHub resource not found"
+    )
+  })
+})
+
+describe("github sync sweep", () => {
+  test("selects linked repositories that never synced or aged past the window, never unlinked ones", async () => {
+    const docsRepository: RemoteRepository = {
+      ...webRepository,
+      githubId: "103",
+      fullName: "acme/docs",
+      name: "docs",
+    }
+    const { github, deps, connection, workspace, web, api } = await setup()
+    await github.replaceAllowlist(
+      connection.id,
+      [webRepository, apiRepository, docsRepository],
+      FIXED
+    )
+
+    // acme/docs is allowlisted but linked to no project; the other two never synced.
+    expect(await selectSweepRepositories(deps, 15 * 60 * 1000)).toEqual([
+      api.id,
+      web.id,
+    ])
+
+    await github.updateRepository(web.id, {
+      lastSyncedAt: "2026-10-10T11:59:00.000Z",
+    })
+    await github.updateRepository(api.id, {
+      lastSyncedAt: "2026-10-10T11:44:00.000Z",
+    })
+    // acme/api is sixteen minutes old; acme/web is fresh.
+    expect(await selectSweepRepositories(deps, 15 * 60 * 1000)).toEqual([
+      api.id,
+    ])
+
+    await github.updateRepository(web.id, {
+      lastSyncedAt: "2026-10-10T11:44:00.000Z",
+    })
+    expect(await selectSweepRepositories(deps, 15 * 60 * 1000)).toEqual([
+      api.id,
+      web.id,
+    ])
+
+    await github.setConnectionStatus(workspace.id, "reconnect_required")
+    expect(await selectSweepRepositories(deps, 15 * 60 * 1000)).toEqual([])
+  })
+})
+
+describe("github retention", () => {
+  test("deletes merged and closed items older than ninety days, keeps the rest, and never touches open items", async () => {
+    const pullRequests = [12, 13, 14, 15, 16, 17].map((number) => ({
+      ...openPullRequest,
+      number,
+      title: `Pull request ${number}`,
+      url: `https://github.com/acme/web/pull/${number}`,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    }))
+    const issues = [5, 6, 7].map((number) => ({
+      ...openIssue,
+      number,
+      title: `GitHub Issue ${number}`,
+      url: `https://github.com/acme/web/issues/${number}`,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    }))
+    const { github, deps, project, web } = await setup({
+      pullRequests: { "acme/web": pullRequests },
+      issues: { "acme/web": issues },
+    })
+    await syncRepository(deps, web.id)
+
+    const closedPullRequest = (
+      closedAt: string | null,
+      githubUpdatedAt: string
+    ) => ({
+      state: "closed" as const,
+      mergedAt: null,
+      closedAt,
+      githubUpdatedAt,
+    })
+    // 91 days before the fixed clock (2026-07-11) is due; 89 days (2026-07-13) is not.
+    await github.setPullRequestState(
+      web.id,
+      13,
+      {
+        state: "merged",
+        mergedAt: "2026-07-11T12:00:00.000Z",
+        closedAt: null,
+        githubUpdatedAt: "2026-07-11T12:00:00.000Z",
+      },
+      FIXED
+    )
+    await github.setPullRequestState(
+      web.id,
+      14,
+      closedPullRequest("2026-07-13T12:00:00.000Z", "2026-07-13T12:00:00.000Z"),
+      FIXED
+    )
+    // No closing timestamp: githubUpdatedAt decides.
+    await github.setPullRequestState(
+      web.id,
+      15,
+      closedPullRequest(null, "2026-07-11T12:00:00.000Z"),
+      FIXED
+    )
+    await github.setPullRequestState(
+      web.id,
+      16,
+      closedPullRequest(null, "2026-07-13T12:00:00.000Z"),
+      FIXED
+    )
+    // Exactly ninety days old is not older than the cutoff.
+    await github.setPullRequestState(
+      web.id,
+      17,
+      closedPullRequest("2026-07-12T12:00:00.000Z", "2026-07-12T12:00:00.000Z"),
+      FIXED
+    )
+    await github.setGitHubIssueState(
+      web.id,
+      5,
+      {
+        state: "closed",
+        closedAt: "2026-07-11T12:00:00.000Z",
+        githubUpdatedAt: "2026-07-11T12:00:00.000Z",
+      },
+      FIXED
+    )
+    await github.setGitHubIssueState(
+      web.id,
+      6,
+      {
+        state: "closed",
+        closedAt: "2026-07-13T12:00:00.000Z",
+        githubUpdatedAt: "2026-07-13T12:00:00.000Z",
+      },
+      FIXED
+    )
+
+    expect(await applyRetention(deps)).toEqual({
+      pullRequests: 2,
+      issues: 1,
+    })
+
+    const retainedPullRequests = await github.listPullRequestsForProject(
+      project.id,
+      { state: "all", limit: 100 }
+    )
+    expect(
+      retainedPullRequests.items
+        .map((item) => item.number)
+        .sort((a, b) => a - b)
+    ).toEqual([12, 14, 16, 17])
+
+    const retainedIssues = await github.listGitHubIssuesForProject(project.id, {
+      state: "all",
+      limit: 100,
+    })
+    expect(retainedIssues.items.map((item) => item.number).sort()).toEqual([
+      6, 7,
+    ])
   })
 })

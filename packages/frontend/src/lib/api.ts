@@ -362,6 +362,13 @@ export const githubIssueListResponseSchema = z.object({
   filters: githubViewFiltersSchema,
 })
 
+/** The GitHub View list envelope minus items/filters, for the status banner. */
+export const githubStatusResponseSchema = z.object({
+  connection: projectConnectionSchema.nullable(),
+  repositories: z.array(githubViewRepositorySchema),
+  lastSyncedAt: z.string().nullable(),
+})
+
 export const githubItemKindSchema = z.enum(["pr", "issue"])
 
 /** Links one GitHub Item to an Issue; the identifier is the target key. */
@@ -565,6 +572,7 @@ export type GitHubIssueRow = z.infer<typeof githubIssueRowSchema>
 export type GitHubIssueListResponse = z.infer<
   typeof githubIssueListResponseSchema
 >
+export type GitHubStatusResponse = z.infer<typeof githubStatusResponseSchema>
 export type GitHubItemKind = z.infer<typeof githubItemKindSchema>
 export type LinkGitHubItemInput = z.infer<typeof linkGitHubItemInputSchema>
 export type CreateIssueFromGitHubItemInput = z.infer<
@@ -674,10 +682,13 @@ export interface UpdateLabelInput {
 
 export class ApiError extends Error {
   readonly status: number
+  /** Seconds until a throttled request may be retried (429 responses). */
+  readonly retryAfter?: number
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, retryAfter?: number) {
     super(message)
     this.status = status
+    this.retryAfter = retryAfter
   }
 }
 
@@ -698,7 +709,14 @@ async function request<T>(
       typeof json === "object" && json !== null && "error" in json
         ? String((json as { error: unknown }).error)
         : res.statusText
-    throw new ApiError(res.status, message)
+    const retryAfter =
+      typeof json === "object" &&
+      json !== null &&
+      "retryAfter" in json &&
+      typeof (json as { retryAfter: unknown }).retryAfter === "number"
+        ? (json as { retryAfter: number }).retryAfter
+        : undefined
+    throw new ApiError(res.status, message, retryAfter)
   }
   if (res.status === 204) return schema.parse(undefined)
   return schema.parse(json)
@@ -1203,6 +1221,13 @@ export const api = {
       `/api/issues/${encodeURIComponent(issueKey)}/external-links/${encodeURIComponent(linkId)}`,
       z.object({ deleted: z.boolean() }),
       { method: "DELETE" }
+    )
+  },
+
+  getGitHubStatus(projectId: string): Promise<GitHubStatusResponse> {
+    return request(
+      `/api/projects/${projectId}/github/status`,
+      githubStatusResponseSchema
     )
   },
 }
