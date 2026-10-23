@@ -10,6 +10,7 @@ import {
   api,
   type GitHubIssueListResponse,
   type GitHubIssueRow,
+  type GitHubItemKind,
   type LinkedIssueRef,
   type Project,
   type PullRequestListResponse,
@@ -29,6 +30,14 @@ const STALE_AFTER_MS = 5 * 60 * 1000
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Failed to load"
+}
+
+/** The GitHub Item the link dialog is acting on, for either tab. */
+interface GitHubLinkTarget {
+  kind: GitHubItemKind
+  rowId: string
+  repositoryId: string
+  number: number
 }
 
 /**
@@ -75,7 +84,7 @@ export function GitHubView({
     filters.state === "closed" || filters.state === "all"
       ? filters.state
       : "open"
-  const [linkTarget, setLinkTarget] = useState<PullRequestRow | null>(null)
+  const [linkTarget, setLinkTarget] = useState<GitHubLinkTarget | null>(null)
   const autoRefreshed = useRef(false)
 
   useEffect(() => {
@@ -289,9 +298,17 @@ export function GitHubView({
   function handleLinked(linkedIssues: LinkedIssueRef[]) {
     const target = linkTarget
     if (!target) return
+    if (target.kind === "issue") {
+      setIssueItems((current) =>
+        current.map((row) =>
+          row.id === target.rowId ? { ...row, linkedIssues } : row
+        )
+      )
+      return
+    }
     setItems((current) =>
       current.map((row) =>
-        row.id === target.id ? { ...row, linkedIssues } : row
+        row.id === target.rowId ? { ...row, linkedIssues } : row
       )
     )
   }
@@ -610,13 +627,29 @@ export function GitHubView({
                       rows={issueItems}
                       showRepository={showRepository}
                       unavailableRepositories={unavailableRepositories}
+                      canWrite={canWrite}
+                      onLink={(row) =>
+                        setLinkTarget({
+                          kind: "issue",
+                          rowId: row.id,
+                          repositoryId: row.repositoryId,
+                          number: row.number,
+                        })
+                      }
                     />
                   ) : (
                     <PullRequestTable
                       rows={items}
                       showRepository={showRepository}
                       canWrite={canWrite}
-                      onLink={setLinkTarget}
+                      onLink={(row) =>
+                        setLinkTarget({
+                          kind: "pr",
+                          rowId: row.id,
+                          repositoryId: row.repositoryId,
+                          number: row.number,
+                        })
+                      }
                       unavailableRepositories={unavailableRepositories}
                     />
                   )}
@@ -647,7 +680,7 @@ export function GitHubView({
             if (!next) setLinkTarget(null)
           }}
           projectId={project.id}
-          kind="pr"
+          kind={linkTarget.kind}
           repositoryId={linkTarget.repositoryId}
           number={linkTarget.number}
           onLinked={handleLinked}

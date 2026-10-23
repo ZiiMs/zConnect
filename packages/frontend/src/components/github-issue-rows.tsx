@@ -1,4 +1,5 @@
 import { CircleCheck, CircleDot, MessageSquare } from "lucide-react"
+import { GitHubRowActions } from "@/components/github-row-actions"
 import type { GitHubIssueRow } from "@/lib/api"
 import { formatRelativeTime } from "@/lib/relative-time"
 
@@ -32,17 +33,23 @@ function StateIcon({ state }: { state: GitHubIssueRow["state"] }) {
 /**
  * GitHub Issue rows (#50): state, number, title, author, labels, assignees,
  * comments, linked Issue chips, and the last update. The whole row opens the
- * GitHub URL in a new tab; write actions arrive with #52/#53.
+ * GitHub URL in a new tab; project writers also get the trailing actions
+ * menu (#52).
  */
 export function GitHubIssueTable({
   rows,
   showRepository,
   unavailableRepositories,
+  canWrite = false,
+  onLink,
 }: {
   rows: GitHubIssueRow[]
   showRepository: boolean
   /** Full names of repositories whose last sync failed; rows stay visible. */
   unavailableRepositories?: ReadonlySet<string>
+  /** Writers get the trailing actions menu; Viewers do not. */
+  canWrite?: boolean
+  onLink?: (row: GitHubIssueRow) => void
 }) {
   return (
     <div className="overflow-x-auto rounded-md border">
@@ -69,6 +76,11 @@ export function GitHubIssueTable({
             </th>
             <th className="px-2 py-1 font-medium">Linked</th>
             <th className="px-2 py-1 font-medium">Updated</th>
+            {canWrite && (
+              <th className="px-2 py-1 font-medium">
+                <span className="sr-only">Actions</span>
+              </th>
+            )}
           </tr>
         </thead>
         <tbody>
@@ -185,6 +197,14 @@ export function GitHubIssueTable({
               >
                 {formatRelativeTime(row.githubUpdatedAt)}
               </td>
+              {canWrite && (
+                <td className={cell}>
+                  <GitHubRowActions
+                    url={row.url}
+                    onLink={() => onLink?.(row)}
+                  />
+                </td>
+              )}
             </tr>
           ))}
         </tbody>

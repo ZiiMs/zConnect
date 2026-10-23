@@ -1213,6 +1213,86 @@ describe("URL as the state store", () => {
     expect(await within(row).findByText("WEB-2")).toBeInTheDocument()
   })
 
+  test("a writer links a GitHub Issue to an Issue and sees the chip", async () => {
+    const user = userEvent.setup()
+    const target: Issue = {
+      id: "issue-2",
+      projectId: "pr-1",
+      number: 2,
+      keyPrefix: "WEB",
+      identifier: "WEB-2",
+      title: "Invite your teammates to this workspace",
+      description: null,
+      statusId: "status-1",
+      priority: "None",
+      assigneeId: null,
+      dueDate: null,
+      archived: false,
+      labels: [],
+    }
+    vi.mocked(api.listIssues).mockResolvedValue([target])
+    linkGitHubItem.mockResolvedValue({
+      link: {
+        id: "link-2",
+        issueId: target.id,
+        provider: "github",
+        kind: "issue",
+        url: "https://github.com/acme/web/issues/5",
+        title: "Login redirect loops",
+        state: "open",
+      },
+      issue: {
+        id: target.id,
+        identifier: target.identifier,
+        title: target.title,
+      },
+      linkedIssues: [
+        {
+          linkId: "link-2",
+          issueId: target.id,
+          identifier: target.identifier,
+          title: target.title,
+        },
+      ],
+    })
+    window.history.replaceState(null, "", "/acme/WEB/github/issues")
+    renderShell()
+
+    const row = await screen.findByTestId("github-issue-row-5")
+    await user.click(
+      within(row).getByRole("button", { name: "GitHub item actions" })
+    )
+    expect(
+      screen.getByRole("menuitem", { name: "Open on GitHub" })
+    ).toHaveAttribute("href", "https://github.com/acme/web/issues/5")
+    await user.click(screen.getByRole("menuitem", { name: "Link to Issue" }))
+
+    const dialog = await screen.findByRole("dialog")
+    await user.type(
+      within(dialog).getByRole("searchbox", { name: "Search issues" }),
+      "WEB-2"
+    )
+    await waitFor(() =>
+      expect(api.listIssues).toHaveBeenLastCalledWith("pr-1", {
+        text: "WEB-2",
+      })
+    )
+    await user.click(
+      await within(dialog).findByRole("button", { name: /WEB-2/ })
+    )
+    await user.click(within(dialog).getByRole("button", { name: "Link" }))
+
+    await waitFor(() =>
+      expect(linkGitHubItem).toHaveBeenCalledWith("pr-1", {
+        kind: "issue",
+        repositoryId: "repo-1",
+        number: 5,
+        issue: "WEB-2",
+      })
+    )
+    expect(await within(row).findByText("WEB-2")).toBeInTheDocument()
+  })
+
   test("a Viewer reads the GitHub View without write affordances", async () => {
     listWorkspaces.mockResolvedValue([
       { id: "ws-1", name: "Acme", role: "Viewer" },
