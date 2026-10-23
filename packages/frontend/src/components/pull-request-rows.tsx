@@ -106,12 +106,14 @@ export function PullRequestTable({
   showRepository,
   canWrite = false,
   onLink,
+  onCreate,
 }: {
   rows: PullRequestRow[]
   showRepository: boolean
   /** Writers get the trailing actions menu; Viewers do not. */
   canWrite?: boolean
   onLink?: (row: PullRequestRow) => void
+  onCreate?: (row: PullRequestRow) => void
 }) {
   return (
     <div className="overflow-x-auto rounded-md border">
@@ -231,6 +233,7 @@ export function PullRequestTable({
                   <GitHubRowActions
                     url={row.url}
                     onLink={() => onLink?.(row)}
+                    onCreate={() => onCreate?.(row)}
                   />
                 </td>
               )}

@@ -39,12 +39,14 @@ export function GitHubIssueTable({
   showRepository,
   canWrite = false,
   onLink,
+  onCreate,
 }: {
   rows: GitHubIssueRow[]
   showRepository: boolean
   /** Writers get the trailing actions menu; Viewers do not. */
   canWrite?: boolean
   onLink?: (row: GitHubIssueRow) => void
+  onCreate?: (row: GitHubIssueRow) => void
 }) {
   return (
     <div className="overflow-x-auto rounded-md border">
@@ -176,6 +178,7 @@ export function GitHubIssueTable({
                   <GitHubRowActions
                     url={row.url}
                     onLink={() => onLink?.(row)}
+                    onCreate={() => onCreate?.(row)}
                   />
                 </td>
               )}

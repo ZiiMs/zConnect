@@ -4,6 +4,7 @@ import { createWorkspacesApp } from "../workspaces/routes.js"
 import type { Session } from "../workspaces/session.js"
 import {
   createMemoryWorkspaceStore,
+  type Issue,
   type Project,
   type Workspace,
 } from "../workspaces/store.js"
@@ -20,6 +21,7 @@ import {
 } from "./store.js"
 import {
   createGitHubViewApp,
+  type GitHubIssueListResponse,
   type PullRequestListResponse,
 } from "./view-routes.js"
 
@@ -43,6 +45,19 @@ const webRepository: RemoteRepository = {
   owner: "acme",
   name: "web",
   private: false,
+  archived: false,
+  issuesEnabled: true,
+  defaultBranch: "main",
+  pushedAt: "2026-10-01T10:00:00.000Z",
+}
+
+/** Allowlisted but never linked to the project: create-issue must 404. */
+const apiRepository: RemoteRepository = {
+  githubId: "202",
+  fullName: "acme/api",
+  owner: "acme",
+  name: "api",
+  private: true,
   archived: false,
   issuesEnabled: true,
   defaultBranch: "main",
@@ -134,9 +149,21 @@ async function setup() {
     encryptedAccessToken: "encrypted:token-1",
     at: FIXED,
   })
-  await github.replaceAllowlist(connection.id, [webRepository], FIXED)
-  const [repository] = await github.listAllowlist(connection.id)
-  if (!repository) throw new Error("fixture repository missing")
+  await github.replaceAllowlist(
+    connection.id,
+    [webRepository, apiRepository],
+    FIXED
+  )
+  const allowlist = await github.listAllowlist(connection.id)
+  const repository = allowlist.find(
+    (row) => row.fullName === webRepository.fullName
+  )
+  const unlinkedRepository = allowlist.find(
+    (row) => row.fullName === apiRepository.fullName
+  )
+  if (!repository || !unlinkedRepository) {
+    throw new Error("fixture repositories missing")
+  }
   await github.replaceProjectRepositories(
     project.id,
     [repository.id],
@@ -186,6 +213,7 @@ async function setup() {
     project,
     otherProject,
     repository: repository as GitHubRepository,
+    unlinkedRepository: unlinkedRepository as GitHubRepository,
     issueSnapshot,
   }
 }
@@ -215,6 +243,32 @@ async function pullRequestChips(app: Hono, project: Project) {
   expect(res.status).toBe(200)
   const body = (await res.json()) as PullRequestListResponse
   return body.items.find((item) => item.number === 12)?.linkedIssues ?? []
+}
+
+async function issueChips(app: Hono, project: Project, number = 42) {
+  const res = await app.request(`/api/projects/${project.id}/github/issues`, {
+    headers: auth(owner.id),
+  })
+  expect(res.status).toBe(200)
+  const body = (await res.json()) as GitHubIssueListResponse
+  return body.items.find((item) => item.number === number)?.linkedIssues ?? []
+}
+
+async function createFromItem(
+  app: Hono,
+  project: Project,
+  body: unknown,
+  userId: string = owner.id
+) {
+  const res = await app.request(
+    `/api/projects/${project.id}/github/items/create-issue`,
+    {
+      method: "POST",
+      headers: jsonHeaders(userId),
+      body: JSON.stringify(body),
+    }
+  )
+  return { res, issue: (await res.json()) as Issue }
 }
 
 describe("github item link", () => {
@@ -439,6 +493,212 @@ describe("pasted GitHub issue URLs", () => {
       kind: "issue",
       url: "https://github.com/acme/web/issues/42",
     })
+  })
+})
+
+describe("github create issue from an item", () => {
+  test("creates an Issue from a Pull Request with the GitHub URL body and the default Status", async () => {
+    const { app, workspaces, project, repository } = await setup()
+    const statuses = await workspaces.listStatuses(project.id)
+    const defaultStatus = statuses.find((status) => status.isDefault)
+    // The seeded default is Todo, not the first Status (Backlog): a wrong
+    // fallback would pick the wrong column.
+    expect(defaultStatus?.name).toBe("Todo")
+
+    const { res, issue } = await createFromItem(app, project, {
+      kind: "pr",
+      repositoryId: repository.id,
+      number: 12,
+    })
+
+    expect(res.status).toBe(201)
+    expect(issue).toMatchObject({
+      projectId: project.id,
+      title: "Add the GitHub View",
+      description: "https://github.com/acme/web/pull/12",
+      statusId: defaultStatus?.id,
+      createdBy: owner.id,
+    })
+    expect(issue.identifier).toMatch(/^WEB-\d+$/)
+
+    // The External Link exists immediately on the new Issue…
+    const links = await app.request(
+      `/api/issues/${issue.identifier}/external-links`,
+      { headers: auth(owner.id) }
+    )
+    expect(await links.json()).toMatchObject([
+      {
+        issueId: issue.id,
+        provider: "github",
+        kind: "pr",
+        url: "https://github.com/acme/web/pull/12",
+        title: "Add the GitHub View",
+        state: "open",
+      },
+    ])
+    // …and the source row shows the chip.
+    expect(await pullRequestChips(app, project)).toEqual([
+      {
+        linkId: expect.any(String),
+        issueId: issue.id,
+        identifier: issue.identifier,
+        title: issue.title,
+      },
+    ])
+
+    const events = await workspaces.listActivity(issue.id)
+    // The store emits issue.created; this route adds exactly one link event.
+    expect(
+      events.filter((event) => event.type === "issue.created")
+    ).toHaveLength(1)
+    const linked = events.filter((event) => event.type === "github.linked")
+    expect(linked).toHaveLength(1)
+    expect(linked[0]).toMatchObject({
+      actorType: "user",
+      actorId: owner.id,
+      summary: "Linked from acme/web #12",
+      payload: {
+        kind: "pr",
+        number: 12,
+        url: "https://github.com/acme/web/pull/12",
+        repository: "acme/web",
+      },
+    })
+  })
+
+  test("creates an Issue from a GitHub Issue with the description excerpt", async () => {
+    const { app, github, project, repository } = await setup()
+    await github.upsertGitHubIssues(
+      repository.id,
+      [{ ...remoteIssue, bodyExcerpt: "Steps to reproduce." }],
+      FIXED
+    )
+
+    const { res, issue } = await createFromItem(app, project, {
+      kind: "issue",
+      repositoryId: repository.id,
+      number: 42,
+    })
+
+    expect(res.status).toBe(201)
+    expect(issue).toMatchObject({
+      // Creation always lands in the GitHub View's project; there is no
+      // cross-project target to write to.
+      projectId: project.id,
+      title: "Crash on login",
+      description:
+        "https://github.com/acme/web/issues/42\n\nSteps to reproduce.",
+      createdBy: owner.id,
+    })
+    expect(await issueChips(app, project)).toEqual([
+      {
+        linkId: expect.any(String),
+        issueId: issue.id,
+        identifier: issue.identifier,
+        title: issue.title,
+      },
+    ])
+  })
+
+  test("falls back to the first Status when the project has no default", async () => {
+    const { app, workspaces, project, repository } = await setup()
+    const statuses = await workspaces.listStatuses(project.id)
+    const currentDefault = statuses.find((status) => status.isDefault)
+    if (!currentDefault) throw new Error("fixture default status missing")
+    await workspaces.updateStatus(currentDefault.id, { isDefault: false })
+
+    const { res, issue } = await createFromItem(app, project, {
+      kind: "pr",
+      repositoryId: repository.id,
+      number: 12,
+    })
+
+    expect(res.status).toBe(201)
+    expect(issue.statusId).toBe(statuses[0]?.id)
+  })
+
+  test("a Viewer cannot create and nothing is written", async () => {
+    const { app, workspaces, project, repository } = await setup()
+    const before = await workspaces.listIssues(project.id)
+
+    const { res } = await createFromItem(
+      app,
+      project,
+      { kind: "pr", repositoryId: repository.id, number: 12 },
+      viewer.id
+    )
+
+    expect(res.status).toBe(403)
+    expect(await workspaces.listIssues(project.id)).toHaveLength(before.length)
+  })
+
+  test("repositories not linked to the project and unknown items are 404", async () => {
+    const { app, project, repository, unlinkedRepository } = await setup()
+
+    const unlinked = await createFromItem(app, project, {
+      kind: "pr",
+      repositoryId: unlinkedRepository.id,
+      number: 12,
+    })
+    expect(unlinked.res.status).toBe(404)
+
+    const unknownNumber = await createFromItem(app, project, {
+      kind: "issue",
+      repositoryId: repository.id,
+      number: 999,
+    })
+    expect(unknownNumber.res.status).toBe(404)
+
+    const unknownRepository = await createFromItem(app, project, {
+      kind: "pr",
+      repositoryId: crypto.randomUUID(),
+      number: 12,
+    })
+    expect(unknownRepository.res.status).toBe(404)
+  })
+
+  test("malformed bodies are rejected", async () => {
+    const { app, project, repository } = await setup()
+    const bodies: unknown[] = [
+      {},
+      { kind: "branch", repositoryId: repository.id, number: 12 },
+      { kind: "pr", repositoryId: "", number: 12 },
+      { kind: "pr", repositoryId: repository.id, number: 0 },
+      { kind: "pr", repositoryId: repository.id, number: 1.5 },
+    ]
+
+    for (const body of bodies) {
+      const { res } = await createFromItem(app, project, body)
+      expect(res.status).toBe(400)
+    }
+
+    const invalidJson = await app.request(
+      `/api/projects/${project.id}/github/items/create-issue`,
+      {
+        method: "POST",
+        headers: jsonHeaders(owner.id),
+        body: "{",
+      }
+    )
+    expect(invalidJson.status).toBe(400)
+  })
+
+  test("unauthenticated requests are 401", async () => {
+    const { app, project, repository } = await setup()
+
+    const res = await app.request(
+      `/api/projects/${project.id}/github/items/create-issue`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          kind: "pr",
+          repositoryId: repository.id,
+          number: 12,
+        }),
+      }
+    )
+    expect(res.status).toBe(401)
   })
 })
 
