@@ -1,9 +1,9 @@
-import { Hono } from "hono"
+import { type Context, Hono } from "hono"
 import { z } from "zod"
 import type { IntegrationCipher } from "../lib/cipher.js"
 import type { GetSession } from "../workspaces/session.js"
 import type { WorkspaceStore } from "../workspaces/store.js"
-import type { GitHubRemote } from "./provider.js"
+import { type GitHubRemote, GitProviderError } from "./provider.js"
 import {
   type GitHubConnection,
   type GitHubConnectionSecret,
@@ -57,6 +57,34 @@ function toRepositoryView(repository: GitHubRepository): GitHubRepositoryView {
 }
 
 /**
+ * Outcome of decrypting the stored token and listing GitHub's repositories.
+ * A 401 is distinct from the other failures because it pauses the Connection;
+ * everything else leaves the stored status alone.
+ */
+type RepositoryListing =
+  | { ok: true; accessToken: string; repositories: RemoteRepository[] }
+  | { ok: false; failure: "decrypt_failed" | "unauthorized" | "unavailable" }
+
+function listingFailure(
+  c: Context,
+  failure: "decrypt_failed" | "unauthorized" | "unavailable"
+) {
+  if (failure === "unauthorized") {
+    return c.json(
+      {
+        error: "GitHub connection needs to be reconnected",
+        status: "reconnect_required",
+      },
+      409
+    )
+  }
+  if (failure === "decrypt_failed") {
+    return c.json({ error: "GitHub connection needs to be reconnected" }, 502)
+  }
+  return c.json({ error: "GitHub repositories are unavailable" }, 502)
+}
+
+/**
  * GitHub Connection HTTP boundary (#47). Read is workspace membership;
  * connect, reconnect, disconnect and the allowlist are Owner/Admin only.
  * Mounted additively next to the existing GitHub webhook app.
@@ -97,6 +125,39 @@ export function createGitHubConnectionApp({
     return {
       connection,
       repositories: await github.listAllowlist(connection.id),
+    }
+  }
+
+  /**
+   * Shared by the repository search and the allowlist save. GitHub answers a
+   * 401 by pausing the Connection; other provider failures keep the status.
+   */
+  async function decryptAndListRepositories(
+    connection: GitHubConnectionSecret,
+    query?: string
+  ): Promise<RepositoryListing> {
+    if (!cipher) return { ok: false, failure: "unavailable" }
+    let accessToken: string
+    try {
+      accessToken = cipher.decrypt(connection.encryptedAccessToken)
+    } catch {
+      return { ok: false, failure: "decrypt_failed" }
+    }
+    try {
+      return {
+        ok: true,
+        accessToken,
+        repositories: await remote.listRepositories(accessToken, query),
+      }
+    } catch (error) {
+      if (error instanceof GitProviderError && error.code === "unauthorized") {
+        await github.setConnectionStatus(
+          connection.workspaceId,
+          "reconnect_required"
+        )
+        return { ok: false, failure: "unauthorized" }
+      }
+      return { ok: false, failure: "unavailable" }
     }
   }
 
@@ -180,25 +241,15 @@ export function createGitHubConnectionApp({
     }
     const state = await connectionState(workspaceId)
     if (!state) return c.json({ error: "GitHub is not connected" }, 409)
-    let accessToken: string
-    try {
-      accessToken = cipher.decrypt(state.connection.encryptedAccessToken)
-    } catch {
-      return c.json({ error: "GitHub connection needs to be reconnected" }, 502)
-    }
     const query = (c.req.query("query") ?? "").trim()
-    let items: RemoteRepository[]
-    try {
-      items = await remote.listRepositories(accessToken, query)
-    } catch {
-      return c.json({ error: "GitHub repositories are unavailable" }, 502)
-    }
+    const listing = await decryptAndListRepositories(state.connection, query)
+    if (!listing.ok) return listingFailure(c, listing.failure)
     const lower = query.toLowerCase()
     const selected = new Set(
       state.repositories.map((repository) => repository.githubId)
     )
     return c.json({
-      items: items
+      items: listing.repositories
         .filter((item) => item.fullName.toLowerCase().includes(lower))
         .sort((a, b) =>
           a.fullName.toLowerCase().localeCompare(b.fullName.toLowerCase())
@@ -228,20 +279,13 @@ export function createGitHubConnectionApp({
         400
       )
     }
-    let accessToken: string
-    try {
-      accessToken = cipher.decrypt(state.connection.encryptedAccessToken)
-    } catch {
-      return c.json({ error: "GitHub connection needs to be reconnected" }, 502)
-    }
-    let remoteRepositories: RemoteRepository[]
-    try {
-      remoteRepositories = await remote.listRepositories(accessToken)
-    } catch {
-      return c.json({ error: "GitHub repositories are unavailable" }, 502)
-    }
+    const listing = await decryptAndListRepositories(state.connection)
+    if (!listing.ok) return listingFailure(c, listing.failure)
     const byGithubId = new Map(
-      remoteRepositories.map((repository) => [repository.githubId, repository])
+      listing.repositories.map((repository) => [
+        repository.githubId,
+        repository,
+      ])
     )
     const selected: RemoteRepository[] = []
     for (const githubId of githubIds) {
