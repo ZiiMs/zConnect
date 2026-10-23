@@ -8,15 +8,13 @@ import {
   GitPullRequestClosed,
   MessageSquare,
 } from "lucide-react"
-import { GitHubRowActions } from "@/components/github-row-actions"
+import { RowActionsCell, UnavailableBadge } from "@/components/github-row-bits"
 import type { PullRequestRow } from "@/lib/api"
 import { formatRelativeTime } from "@/lib/relative-time"
 
 const cell = "px-2 py-2 align-middle"
 const badge =
   "inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium"
-const unavailableBadge =
-  "inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 font-medium text-[10px] text-amber-700 dark:text-amber-400"
 
 function StateIcon({ state }: { state: PullRequestRow["state"] }) {
   if (state === "merged") {
@@ -185,29 +183,24 @@ export function PullRequestTable({
                       Draft
                     </span>
                   )}
-                  {!showRepository &&
-                    unavailableRepositories?.has(row.repository) && (
-                      <span
-                        className={unavailableBadge}
-                        title="GitHub is unavailable for this repository; showing the cached snapshot."
-                      >
-                        Unavailable
-                      </span>
-                    )}
+                  {!showRepository && (
+                    <UnavailableBadge
+                      show={
+                        unavailableRepositories?.has(row.repository) ?? false
+                      }
+                    />
+                  )}
                 </span>
               </td>
               {showRepository && (
                 <td className={`${cell} text-muted-foreground text-xs`}>
                   <span className="flex items-center gap-1.5">
                     {row.repository}
-                    {unavailableRepositories?.has(row.repository) && (
-                      <span
-                        className={unavailableBadge}
-                        title="GitHub is unavailable for this repository; showing the cached snapshot."
-                      >
-                        Unavailable
-                      </span>
-                    )}
+                    <UnavailableBadge
+                      show={
+                        unavailableRepositories?.has(row.repository) ?? false
+                      }
+                    />
                   </span>
                 </td>
               )}
@@ -253,13 +246,11 @@ export function PullRequestTable({
                 {formatRelativeTime(row.githubUpdatedAt)}
               </td>
               {canWrite && (
-                <td className={cell}>
-                  <GitHubRowActions
-                    url={row.url}
-                    onLink={() => onLink?.(row)}
-                    onCreate={() => onCreate?.(row)}
-                  />
-                </td>
+                <RowActionsCell
+                  url={row.url}
+                  onLink={() => onLink?.(row)}
+                  onCreate={() => onCreate?.(row)}
+                />
               )}
             </tr>
           ))}
