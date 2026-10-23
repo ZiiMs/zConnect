@@ -8,6 +8,7 @@ import {
   GitPullRequestClosed,
   MessageSquare,
 } from "lucide-react"
+import { GitHubRowActions } from "@/components/github-row-actions"
 import type { PullRequestRow } from "@/lib/api"
 import { formatRelativeTime } from "@/lib/relative-time"
 
@@ -98,15 +99,19 @@ function ReviewBadge({ decision }: { decision: string | null }) {
 
 /**
  * Pull Request rows (#49). The whole row opens the GitHub URL in a new tab;
- * the decision signals (checks, review, comments, linked Issues) stay
- * read-only until the Link action arrives with #52.
+ * project writers also get the trailing actions menu (#52).
  */
 export function PullRequestTable({
   rows,
   showRepository,
+  canWrite = false,
+  onLink,
 }: {
   rows: PullRequestRow[]
   showRepository: boolean
+  /** Writers get the trailing actions menu; Viewers do not. */
+  canWrite?: boolean
+  onLink?: (row: PullRequestRow) => void
 }) {
   return (
     <div className="overflow-x-auto rounded-md border">
@@ -134,6 +139,11 @@ export function PullRequestTable({
             </th>
             <th className="px-2 py-1 font-medium">Linked</th>
             <th className="px-2 py-1 font-medium">Updated</th>
+            {canWrite && (
+              <th className="px-2 py-1 font-medium">
+                <span className="sr-only">Actions</span>
+              </th>
+            )}
           </tr>
         </thead>
         <tbody>
@@ -216,6 +226,14 @@ export function PullRequestTable({
               >
                 {formatRelativeTime(row.githubUpdatedAt)}
               </td>
+              {canWrite && (
+                <td className={cell}>
+                  <GitHubRowActions
+                    url={row.url}
+                    onLink={() => onLink?.(row)}
+                  />
+                </td>
+              )}
             </tr>
           ))}
         </tbody>

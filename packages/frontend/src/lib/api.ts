@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { externalLinkSchema } from "@/lib/external-links"
 
 export const API_URL =
   (import.meta.env.VITE_API_URL as string | undefined) ?? ""
@@ -361,6 +362,26 @@ export const githubIssueListResponseSchema = z.object({
   filters: githubViewFiltersSchema,
 })
 
+export const githubItemKindSchema = z.enum(["pr", "issue"])
+
+/** Links one GitHub Item to an Issue; the identifier is the target key. */
+export const linkGitHubItemInputSchema = z.object({
+  kind: githubItemKindSchema,
+  repositoryId: z.string(),
+  number: z.number().int().positive(),
+  issue: z.string(),
+})
+
+export const githubItemLinkResponseSchema = z.object({
+  link: externalLinkSchema,
+  issue: z.object({
+    id: z.string(),
+    identifier: z.string(),
+    title: z.string(),
+  }),
+  linkedIssues: z.array(linkedIssueRefSchema),
+})
+
 export const commentSchema = z.object({
   id: z.string(),
   issueId: z.string(),
@@ -536,6 +557,11 @@ export type GitHubIssueState = z.infer<typeof githubIssueStateSchema>
 export type GitHubIssueRow = z.infer<typeof githubIssueRowSchema>
 export type GitHubIssueListResponse = z.infer<
   typeof githubIssueListResponseSchema
+>
+export type GitHubItemKind = z.infer<typeof githubItemKindSchema>
+export type LinkGitHubItemInput = z.infer<typeof linkGitHubItemInputSchema>
+export type GitHubItemLinkResponse = z.infer<
+  typeof githubItemLinkResponseSchema
 >
 
 /** Query accepted by the Pull Request list; empty values are skipped. */
@@ -1137,6 +1163,25 @@ export const api = {
     return request(
       `/api/projects/${projectId}/github/issues${suffix}`,
       githubIssueListResponseSchema
+    )
+  },
+
+  linkGitHubItem(
+    projectId: string,
+    input: LinkGitHubItemInput
+  ): Promise<GitHubItemLinkResponse> {
+    return request(
+      `/api/projects/${projectId}/github/items/link`,
+      githubItemLinkResponseSchema,
+      { method: "POST", body: input }
+    )
+  },
+
+  async deleteExternalLink(issueKey: string, linkId: string): Promise<void> {
+    await request(
+      `/api/issues/${encodeURIComponent(issueKey)}/external-links/${encodeURIComponent(linkId)}`,
+      z.object({ deleted: z.boolean() }),
+      { method: "DELETE" }
     )
   },
 }

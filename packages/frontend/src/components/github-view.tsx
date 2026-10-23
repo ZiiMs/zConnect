@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
 import { GitHubIssueTable } from "@/components/github-issue-rows"
+import { GitHubLinkDialog } from "@/components/github-link-dialog"
 import { ProjectNavTabs } from "@/components/project-nav-tabs"
 import { PullRequestTable } from "@/components/pull-request-rows"
 import { Button } from "@/components/ui/button"
@@ -8,6 +9,7 @@ import {
   api,
   type GitHubIssueListResponse,
   type GitHubIssueRow,
+  type LinkedIssueRef,
   type Project,
   type PullRequestListResponse,
   type PullRequestRow,
@@ -71,6 +73,7 @@ export function GitHubView({
     filters.state === "closed" || filters.state === "all"
       ? filters.state
       : "open"
+  const [linkTarget, setLinkTarget] = useState<PullRequestRow | null>(null)
 
   useEffect(() => {
     if (tab !== "pull-requests") return
@@ -229,6 +232,17 @@ export function GitHubView({
   const activeItems = tab === "issues" ? issueItems : items
   const activeCursor = tab === "issues" ? issueCursor : cursor
   const lastSyncedAt = activeData?.lastSyncedAt ?? null
+
+  function handleLinked(linkedIssues: LinkedIssueRef[]) {
+    const target = linkTarget
+    if (!target) return
+    setItems((current) =>
+      current.map((row) =>
+        row.id === target.id ? { ...row, linkedIssues } : row
+      )
+    )
+  }
+
   const stale =
     lastSyncedAt !== null &&
     Date.now() - new Date(lastSyncedAt).getTime() > STALE_AFTER_MS
@@ -548,6 +562,8 @@ export function GitHubView({
                     <PullRequestTable
                       rows={items}
                       showRepository={showRepository}
+                      canWrite={canWrite}
+                      onLink={setLinkTarget}
                     />
                   )}
 
@@ -568,6 +584,20 @@ export function GitHubView({
             </>
           )}
         </>
+      )}
+
+      {linkTarget && (
+        <GitHubLinkDialog
+          open={true}
+          onOpenChange={(next) => {
+            if (!next) setLinkTarget(null)
+          }}
+          projectId={project.id}
+          kind="pr"
+          repositoryId={linkTarget.repositoryId}
+          number={linkTarget.number}
+          onLinked={handleLinked}
+        />
       )}
     </div>
   )

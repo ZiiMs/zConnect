@@ -393,6 +393,12 @@ export interface GitHubStore {
     },
     at: string
   ): Promise<void>
+
+  /** #52 — reverse link lookup / removal. */
+  findExternalLinksByUrl(url: string): Promise<ExternalLink[]>
+  getExternalLink(id: string): Promise<ExternalLink | null>
+  /** True when a row was removed; false when it was already gone. */
+  deleteExternalLink(id: string): Promise<boolean>
 }
 
 export interface MemoryGitHubStoreOptions {
@@ -984,6 +990,21 @@ export function createMemoryGitHubStore(
       snapshot.closedAt = patch.closedAt
       snapshot.githubUpdatedAt = patch.githubUpdatedAt
       snapshot.syncedAt = at
+    },
+
+    async findExternalLinksByUrl(url) {
+      return [...links.values()]
+        .filter((link) => link.url === url)
+        .map((link) => ({ ...link }))
+    },
+
+    async getExternalLink(id) {
+      const link = links.get(id)
+      return link ? { ...link } : null
+    },
+
+    async deleteExternalLink(id) {
+      return links.delete(id)
     },
   }
 }
