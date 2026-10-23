@@ -232,6 +232,7 @@ the sync runner can drive a fake clock.
 ```ts
 // #47 — connection custody
 getConnection(workspaceId: string): Promise<GitHubConnectionSecret | null>
+getConnectionById(connectionId: string): Promise<GitHubConnectionSecret | null>
 upsertConnection(input: {
   workspaceId: string
   connectorUserId: string
@@ -297,6 +298,11 @@ listLinkedIssueRefs(urls: string[]): Promise<Record<string, LinkedIssueRef[]>>
 /** Removes cached items for a repository (allowlist removal / disconnect cascade). */
 deleteRepository(repositoryId: string): Promise<void>
 ```
+
+`listLinkedIssueRefs` is introduced by **#49** (the Pull Request rows need chips); #52 adds
+`findExternalLinksByUrl`, `getExternalLink`, `deleteExternalLink`, and the `/issues/N` URL
+classification. #49/#50 must also purge their snapshot maps inside the memory store's
+`removeRepository`, and extend `deleteConnection`/`replaceAllowlist` cascades through it.
 
 ```ts
 /** Chip shown on a GitHub Item row. One entry per External Link. */
@@ -448,6 +454,12 @@ export interface FakeProvider extends GitProvider {
 `failNext` is consumed per repo. Use it for 401/403/404/rate-limit tests.
 
 ## 5. Sync engine (`packages/backend/src/github/sync.ts`) — #49 seeds, #50/#51/#54 extend
+
+Ticket split inside the engine: **#49** ships provider + open Pull Request upsert + `lastSyncedAt`
++ provider error mapping (401/403/404). **#50** adds GitHub Issue upsert. **#51** adds
+missing-number state resolution, the 15-minute sweep, retention, rename repair, refresh
+throttling, and the status route. **#54** adds auto-link and transition Activity Events.
+
 
 ```ts
 export interface GitHubSyncDeps {
