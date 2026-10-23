@@ -511,6 +511,15 @@ describe("github view pull requests", () => {
         updatedAt: "2026-10-11T09:00:00.000Z",
       }),
     ]
+    provider.issues["acme/web"] = [
+      ...(provider.issues["acme/web"] ?? []),
+      githubIssue({
+        number: 11,
+        title: "Freshly filed GitHub Issue",
+        url: "https://github.com/acme/web/issues/11",
+        updatedAt: "2026-10-11T09:00:00.000Z",
+      }),
+    ]
 
     const res = await app.request(
       `/api/projects/${project.id}/github/refresh`,
@@ -533,6 +542,12 @@ describe("github view pull requests", () => {
     expect(refreshed.body.items[0]).toMatchObject({
       number: 21,
       title: "Freshly opened",
+    })
+
+    const refreshedIssues = await listIssues(app, project)
+    expect(refreshedIssues.body.items[0]).toMatchObject({
+      number: 11,
+      title: "Freshly filed GitHub Issue",
     })
   })
 
