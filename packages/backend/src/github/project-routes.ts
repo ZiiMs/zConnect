@@ -8,6 +8,7 @@ import type { GetSession } from "../workspaces/session.js"
 import type { Project, WorkspaceStore } from "../workspaces/store.js"
 import {
   type GitHubConnectionStatus,
+  GitHubInputError,
   type GitHubStore,
   MAX_ALLOWLIST,
   type ProjectRepository,
@@ -44,11 +45,7 @@ function toView(repository: ProjectRepository): ProjectRepositoryView {
 }
 
 function isInvalid(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    (error as { code?: string }).code === "invalid"
-  )
+  return error instanceof GitHubInputError
 }
 
 /**

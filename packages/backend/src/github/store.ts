@@ -425,10 +425,20 @@ export interface MemoryGitHubStoreOptions {
   ) => Promise<{ identifier: string; title: string } | null>
 }
 
-function invalid(message: string): Error {
-  const error = new Error(message)
-  ;(error as { code?: string }).code = "invalid"
-  return error
+/**
+ * Invalid project-repository input: an unknown id, a repository outside the
+ * Connection's allowlist, or more than the cap. Routes map it to 400 instead
+ * of a leaked 500.
+ */
+export class GitHubInputError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "GitHubInputError"
+  }
+}
+
+function invalid(message: string): GitHubInputError {
+  return new GitHubInputError(message)
 }
 
 export function createMemoryGitHubStore(
