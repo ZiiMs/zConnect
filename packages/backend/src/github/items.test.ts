@@ -8,6 +8,7 @@ import {
   type Project,
   type Workspace,
 } from "../workspaces/store.js"
+import { createFakeProvider } from "./fake-provider.js"
 import { createGitHubItemApp } from "./item-routes.js"
 import type { GitHubWebhookPayload } from "./job.js"
 import type { RemoteGitHubIssue, RemotePullRequest } from "./provider.js"
@@ -19,6 +20,7 @@ import {
   type LinkedIssueRef,
   type RemoteRepository,
 } from "./store.js"
+import { type GitHubSyncDeps, syncConnection } from "./sync.js"
 import {
   createGitHubViewApp,
   type GitHubIssueListResponse,
@@ -809,5 +811,174 @@ describe("github item unlink", () => {
       { method: "DELETE", headers: auth(owner.id) }
     )
     expect(missing.status).toBe(404)
+  })
+})
+
+interface TimelineBody {
+  items: Array<{
+    kind: "activity" | "comment"
+    type?: string
+    summary?: string
+    payload?: Record<string, unknown>
+  }>
+  nextCursor: string | null
+}
+
+async function timeline(app: Hono, key: string): Promise<TimelineBody> {
+  const res = await app.request(`/api/issues/${key}/timeline?limit=50`, {
+    headers: auth(owner.id),
+  })
+  expect(res.status).toBe(200)
+  return (await res.json()) as TimelineBody
+}
+
+describe("github automatic linking over HTTP", () => {
+  async function setupSync() {
+    const workspaces = createMemoryWorkspaceStore()
+    const github = createMemoryGitHubStore({
+      projectWorkspaceId: async (projectId) =>
+        (await workspaces.getProject(projectId))?.workspaceId ?? null,
+      getIssue: async (issueId) => {
+        const issue = await workspaces.getIssue(issueId)
+        return issue
+          ? { identifier: issue.identifier, title: issue.title }
+          : null
+      },
+    })
+    const provider = createFakeProvider({
+      repositories: [webRepository],
+      pullRequests: {
+        "acme/web": [
+          {
+            ...remotePullRequest,
+            sourceBranch: "feature/WEB-2-login",
+            title: "Fix WEB-2 and WEB-999",
+          },
+        ],
+      },
+      issues: { "acme/web": [{ ...remoteIssue, title: "WEB-3 crash" }] },
+    })
+    const workspace = await workspaces.createWorkspace(owner.id, "Acme")
+    const project = await workspaces.createProject(workspace.id, {
+      name: "Web",
+      key: "WEB",
+    })
+    const connection = await github.upsertConnection({
+      workspaceId: workspace.id,
+      connectorUserId: owner.id,
+      connectorAccountId: "ba-account-1",
+      login: "octocat",
+      scopes: ["repo"],
+      encryptedAccessToken: "encrypted:token-1",
+      at: FIXED,
+    })
+    await github.replaceAllowlist(connection.id, [webRepository], FIXED)
+    const [repository] = await github.listAllowlist(connection.id)
+    if (!repository) throw new Error("fixture repository missing")
+    await github.replaceProjectRepositories(
+      project.id,
+      [repository.id],
+      owner.id,
+      FIXED
+    )
+
+    const clock = { at: FIXED }
+    const deps: GitHubSyncDeps = {
+      github,
+      workspaces,
+      provider,
+      decrypt: () => "token-1",
+      now: () => new Date(clock.at),
+    }
+    const getSession = async (req: Request) => {
+      const match = /^Bearer (.+)$/.exec(req.headers.get("authorization") ?? "")
+      const user = match ? users[match[1]] : undefined
+      return user ? { user } : null
+    }
+    const app = new Hono()
+    app.route("/", createWorkspacesApp({ store: workspaces, getSession }))
+    app.route(
+      "/",
+      createGitHubApp({
+        workspaces,
+        github,
+        getSession,
+        enqueue: async () => {},
+      })
+    )
+    return { app, workspaces, github, provider, deps, connection, clock }
+  }
+
+  test("an inline sync exposes the automatic badge and its activity, then the merged transition", async () => {
+    const { app, provider, deps, connection, clock } = await setupSync()
+
+    expect(await syncConnection(deps, connection.id)).toMatchObject({
+      status: "ok",
+      linked: 2,
+    })
+
+    const linksRes = await app.request("/api/issues/WEB-2/external-links", {
+      headers: auth(owner.id),
+    })
+    expect(linksRes.status).toBe(200)
+    expect(await linksRes.json()).toMatchObject([
+      {
+        provider: "github",
+        kind: "pr",
+        url: remotePullRequest.url,
+        title: "Fix WEB-2 and WEB-999",
+        state: "open",
+      },
+    ])
+
+    const linked = await timeline(app, "WEB-2")
+    expect(linked.items).toContainEqual(
+      expect.objectContaining({
+        kind: "activity",
+        type: "github.linked",
+        summary: "Linked automatically from WEB-2",
+        payload: expect.objectContaining({
+          kind: "pr",
+          number: 12,
+          identifier: "WEB-2",
+        }),
+      })
+    )
+
+    const issueLinks = await app.request("/api/issues/WEB-3/external-links", {
+      headers: auth(owner.id),
+    })
+    expect(await issueLinks.json()).toMatchObject([
+      { provider: "github", kind: "issue", state: "open" },
+    ])
+
+    provider.pullRequests["acme/web"] = []
+    provider.closedPullRequests["acme/web"] = [
+      { number: 12, state: "merged", at: "2026-10-11T10:00:00.000Z" },
+    ]
+    clock.at = "2026-10-11T12:00:00.000Z"
+    await syncConnection(deps, connection.id)
+
+    const mergedLinks = await app.request("/api/issues/WEB-2/external-links", {
+      headers: auth(owner.id),
+    })
+    expect(await mergedLinks.json()).toMatchObject([
+      { title: "Fix WEB-2 and WEB-999", state: "merged" },
+    ])
+
+    const merged = await timeline(app, "WEB-2")
+    expect(merged.items).toContainEqual(
+      expect.objectContaining({
+        kind: "activity",
+        type: "github.pull_request.merged",
+        summary: "Merged pull request #12",
+        payload: {
+          kind: "pr",
+          number: 12,
+          url: remotePullRequest.url,
+          repository: "acme/web",
+        },
+      })
+    )
   })
 })
