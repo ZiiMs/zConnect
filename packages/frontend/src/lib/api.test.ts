@@ -670,6 +670,7 @@ describe("github view api client", () => {
           fullName: "acme/web",
           issuesEnabled: true,
           unavailable: false,
+          lastSyncedAt: "2026-10-10T12:00:00.000Z",
         },
       ],
       filters: { authors: ["octocat"], labels: [] },
@@ -717,6 +718,19 @@ describe("github view api client", () => {
     })
   })
 
+  test("refreshGitHub sends the automatic flag only for the view-opening path", async () => {
+    const fetchMock = mockFetchOnce({
+      accepted: true,
+      enqueued: 1,
+      lastSyncedAt: null,
+    })
+
+    await api.refreshGitHub("pr-1", { automatic: true })
+
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(JSON.parse(String(options.body))).toEqual({ automatic: true })
+  })
+
   test("listGitHubIssues sends the filters and parses the envelope", async () => {
     const issueRow = {
       id: "issue-row-5",
@@ -749,6 +763,7 @@ describe("github view api client", () => {
           fullName: "acme/web",
           issuesEnabled: true,
           unavailable: false,
+          lastSyncedAt: "2026-10-10T12:00:00.000Z",
         },
       ],
       filters: {

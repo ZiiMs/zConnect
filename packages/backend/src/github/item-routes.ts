@@ -93,6 +93,54 @@ function issueSummary(issue: Issue): GitHubItemLinkResponse["issue"] {
   return { id: issue.id, identifier: issue.identifier, title: issue.title }
 }
 
+type GitHubItemLinkDeps = Pick<GitHubItemDeps, "workspaces" | "github">
+
+/**
+ * Links one GitHub Item snapshot to an Issue: finds an existing link for the
+ * same URL first, otherwise creates it and appends exactly one
+ * `github.linked` Activity Event. Both the manual link route and create-issue
+ * use this, so a retry never duplicates the link or the event.
+ */
+async function linkSnapshotToIssue(
+  deps: GitHubItemLinkDeps,
+  input: {
+    issueId: string
+    kind: GitHubItemKind
+    number: number
+    repository: string
+    item: ItemSnapshot
+    actor: { type: "user"; id: string }
+  }
+): Promise<{ link: ExternalLink; created: boolean }> {
+  const existing = (
+    await deps.github.findExternalLinksByUrl(input.item.url)
+  ).find((link) => link.issueId === input.issueId)
+  if (existing) return { link: existing, created: false }
+
+  const link = await deps.github.createExternalLink(input.issueId, {
+    provider: "github",
+    kind: input.kind,
+    url: input.item.url,
+    title: input.item.title,
+    state: input.item.state,
+  })
+  const draft = githubActivityDraft(
+    "linked",
+    `Linked from ${input.repository} #${input.number}`
+  )
+  await deps.workspaces.appendActivity(input.issueId, {
+    actor: input.actor,
+    ...draft,
+    payload: {
+      kind: input.kind,
+      number: input.number,
+      url: input.item.url,
+      repository: input.repository,
+    },
+  })
+  return { link, created: true }
+}
+
 export function createGitHubItemApp({
   workspaces,
   github,
@@ -155,48 +203,24 @@ export function createGitHubItemApp({
     )
     if (!targetProject) return c.json({ error: "Forbidden" }, 403)
 
-    const existing = (await github.findExternalLinksByUrl(item.url)).find(
-      (link) => link.issueId === target.id
-    )
-    if (existing) {
-      return c.json(
-        {
-          link: existing,
-          issue: issueSummary(target),
-          linkedIssues: await chips(item.url),
-        },
-        200
-      )
-    }
-
-    const link = await github.createExternalLink(target.id, {
-      provider: "github",
-      kind,
-      url: item.url,
-      title: item.title,
-      state: item.state,
-    })
-    const draft = githubActivityDraft(
-      "linked",
-      `Linked from ${repository.fullName} #${number}`
-    )
-    await workspaces.appendActivity(target.id, {
-      actor: { type: "user", id: session.user.id },
-      ...draft,
-      payload: {
+    const { link, created } = await linkSnapshotToIssue(
+      { workspaces, github },
+      {
+        issueId: target.id,
         kind,
         number,
-        url: item.url,
         repository: repository.fullName,
-      },
-    })
+        item,
+        actor: { type: "user", id: session.user.id },
+      }
+    )
 
     const body: GitHubItemLinkResponse = {
       link,
       issue: issueSummary(target),
       linkedIssues: await chips(item.url),
     }
-    return c.json(body, 201)
+    return c.json(body, created ? 201 : 200)
   })
 
   app.post("/api/projects/:id/github/items/create-issue", async (c) => {
@@ -241,37 +265,20 @@ export function createGitHubItemApp({
       actor
     )
     // The creator follows their issue, matching the normal create route. The
-    // store already emitted `issue.created`; this route adds only the link.
+    // store already emitted `issue.created`; the helper adds only the link.
     await workspaces.addWatcher(issue.id, session.user.id)
 
-    // A brand-new Issue has no links yet; the check keeps a retried create
-    // from appending a second `github.linked` event.
-    const existing = (await github.findExternalLinksByUrl(item.url)).find(
-      (link) => link.issueId === issue.id
-    )
-    if (!existing) {
-      await github.createExternalLink(issue.id, {
-        provider: "github",
+    await linkSnapshotToIssue(
+      { workspaces, github },
+      {
+        issueId: issue.id,
         kind,
-        url: item.url,
-        title: item.title,
-        state: item.state,
-      })
-      const draft = githubActivityDraft(
-        "linked",
-        `Linked from ${repository.fullName} #${number}`
-      )
-      await workspaces.appendActivity(issue.id, {
+        number,
+        repository: repository.fullName,
+        item,
         actor,
-        ...draft,
-        payload: {
-          kind,
-          number,
-          url: item.url,
-          repository: repository.fullName,
-        },
-      })
-    }
+      }
+    )
 
     return c.json(issue, 201)
   })

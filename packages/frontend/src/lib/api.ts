@@ -296,6 +296,7 @@ export const githubViewRepositorySchema = z.object({
   fullName: z.string(),
   issuesEnabled: z.boolean(),
   unavailable: z.boolean(),
+  lastSyncedAt: z.string().nullable(),
 })
 
 export const githubViewFiltersSchema = z.object({
@@ -1171,11 +1172,17 @@ export const api = {
     )
   },
 
-  refreshGitHub(projectId: string): Promise<GitHubRefreshResponse> {
+  refreshGitHub(
+    projectId: string,
+    options: { automatic?: boolean } = {}
+  ): Promise<GitHubRefreshResponse> {
     return request(
       `/api/projects/${projectId}/github/refresh`,
       githubRefreshResponseSchema,
-      { method: "POST", body: {} }
+      {
+        method: "POST",
+        body: options.automatic ? { automatic: true } : {},
+      }
     )
   },
 

@@ -4,6 +4,7 @@
  * The provider token never appears here.
  */
 import { type Context, Hono } from "hono"
+import { z } from "zod"
 import { readableProject } from "../workspaces/permissions.js"
 import type { GetSession } from "../workspaces/session.js"
 import type { Project, WorkspaceStore } from "../workspaces/store.js"
@@ -13,6 +14,7 @@ import {
   type GitHubIssueSnapshot,
   type GitHubItemFilters,
   type GitHubLabel,
+  type GitHubRepository,
   type GitHubStore,
   type LinkedIssueRef,
   MAX_GITHUB_ITEM_LIMIT,
@@ -47,9 +49,15 @@ export interface GitHubViewRepository {
   fullName: string
   issuesEnabled: boolean
   unavailable: boolean
+  /** When this repository last synced; null when it never has. */
+  lastSyncedAt: string | null
 }
 
-export interface GitHubViewFilters {
+/**
+ * Author and label options for the filter pickers. Distinct from the
+ * frontend's `GitHubViewFilters`, which is the applied state/author/label/q set.
+ */
+export interface GitHubViewFacets {
   authors: string[]
   labels: GitHubLabel[]
 }
@@ -60,7 +68,7 @@ export interface PullRequestListResponse {
   lastSyncedAt: string | null
   connection: GitHubViewConnection | null
   repositories: GitHubViewRepository[]
-  filters: GitHubViewFilters
+  filters: GitHubViewFacets
 }
 
 export interface GitHubIssueListResponse {
@@ -69,7 +77,7 @@ export interface GitHubIssueListResponse {
   lastSyncedAt: string | null
   connection: GitHubViewConnection | null
   repositories: GitHubViewRepository[]
-  filters: GitHubViewFilters
+  filters: GitHubViewFacets
 }
 
 export interface RefreshResponse {
@@ -109,6 +117,26 @@ function newestLastSyncedAt(rows: Array<{ lastSyncedAt: string | null }>) {
   }
   return newest
 }
+
+/** The one place a repository summary is built for the envelope. */
+function toViewRepository(repository: GitHubRepository): GitHubViewRepository {
+  return {
+    id: repository.id,
+    fullName: repository.fullName,
+    issuesEnabled: repository.issuesEnabled,
+    unavailable: repository.syncError !== null,
+    lastSyncedAt: repository.lastSyncedAt,
+  }
+}
+
+/** Non-item fields shared by both list endpoints and the status route. */
+interface ProjectEnvelope {
+  connection: GitHubViewConnection | null
+  repositories: GitHubViewRepository[]
+  lastSyncedAt: string | null
+}
+
+const refreshBody = z.object({ automatic: z.boolean().optional() })
 
 function parseState(raw: string | undefined): GitHubItemState | null {
   const value = (raw ?? "open").toLowerCase()
@@ -170,7 +198,7 @@ async function collectAuthors(
 async function collectIssueFacets(
   github: GitHubStore,
   projectId: string
-): Promise<GitHubViewFilters> {
+): Promise<GitHubViewFacets> {
   const byAuthor = new Map<string, string>()
   const byLabel = new Map<string, GitHubLabel>()
   let cursor: string | null = null
@@ -228,6 +256,21 @@ export function createGitHubViewApp({
     return value instanceof Response
   }
 
+  /** Built once per request and spread into whichever envelope is served. */
+  async function projectEnvelope(project: Project): Promise<ProjectEnvelope> {
+    const [repositories, connection] = await Promise.all([
+      github.listProjectRepositories(project.id),
+      github.getConnection(project.workspaceId),
+    ])
+    return {
+      connection: connection
+        ? { status: connection.status, login: connection.login }
+        : null,
+      repositories: repositories.map(toViewRepository),
+      lastSyncedAt: newestLastSyncedAt(repositories),
+    }
+  }
+
   app.get("/api/projects/:id/github/pull-requests", async (c) => {
     const projectId = c.req.param("id")
     const project = await projectForRead(c, projectId)
@@ -246,14 +289,16 @@ export function createGitHubViewApp({
       cursor: c.req.query("cursor") ?? null,
     }
 
-    const repositories = await github.listProjectRepositories(project.id)
-    const [page, connection, authors] = await Promise.all([
+    const [page, envelope, authors] = await Promise.all([
       github.listPullRequestsForProject(project.id, filters),
-      github.getConnection(project.workspaceId),
+      projectEnvelope(project),
       collectAuthors(github, project.id),
     ])
     const repositoryNames = new Map(
-      repositories.map((repository) => [repository.id, repository.fullName])
+      envelope.repositories.map((repository) => [
+        repository.id,
+        repository.fullName,
+      ])
     )
     const linkedIssues = await github.listLinkedIssueRefs(
       page.items.map((item) => item.url)
@@ -265,18 +310,9 @@ export function createGitHubViewApp({
     }))
 
     const body: PullRequestListResponse = {
+      ...envelope,
       items,
       nextCursor: page.nextCursor,
-      lastSyncedAt: newestLastSyncedAt(repositories),
-      connection: connection
-        ? { status: connection.status, login: connection.login }
-        : null,
-      repositories: repositories.map((repository) => ({
-        id: repository.id,
-        fullName: repository.fullName,
-        issuesEnabled: repository.issuesEnabled,
-        unavailable: repository.syncError !== null,
-      })),
       filters: { authors, labels: [] },
     }
     return c.json(body)
@@ -301,14 +337,16 @@ export function createGitHubViewApp({
       cursor: c.req.query("cursor") ?? null,
     }
 
-    const repositories = await github.listProjectRepositories(project.id)
-    const [page, connection, facets] = await Promise.all([
+    const [page, envelope, facets] = await Promise.all([
       github.listGitHubIssuesForProject(project.id, filters),
-      github.getConnection(project.workspaceId),
+      projectEnvelope(project),
       collectIssueFacets(github, project.id),
     ])
     const repositoryNames = new Map(
-      repositories.map((repository) => [repository.id, repository.fullName])
+      envelope.repositories.map((repository) => [
+        repository.id,
+        repository.fullName,
+      ])
     )
     const linkedIssues = await github.listLinkedIssueRefs(
       page.items.map((item) => item.url)
@@ -320,26 +358,18 @@ export function createGitHubViewApp({
     }))
 
     const body: GitHubIssueListResponse = {
+      ...envelope,
       items,
       nextCursor: page.nextCursor,
-      lastSyncedAt: newestLastSyncedAt(repositories),
-      connection: connection
-        ? { status: connection.status, login: connection.login }
-        : null,
-      repositories: repositories.map((repository) => ({
-        id: repository.id,
-        fullName: repository.fullName,
-        issuesEnabled: repository.issuesEnabled,
-        unavailable: repository.syncError !== null,
-      })),
       filters: facets,
     }
     return c.json(body)
   })
 
   // #51: enqueue only linked repositories whose snapshot is stale, and answer
-  // 429 while the per-workspace manual-refresh window is open. The cached
-  // snapshot is served untouched either way.
+  // 429 while the per-workspace manual-refresh window is open. An `automatic`
+  // refresh (opening the view) is a separate path: it never checks or stamps
+  // the manual window. The cached snapshot is served untouched either way.
   app.post("/api/projects/:id/github/refresh", async (c) => {
     const projectId = c.req.param("id")
     const project = await projectForRead(c, projectId)
@@ -350,8 +380,11 @@ export function createGitHubViewApp({
       return c.json({ error: "GitHub is not connected" }, 409)
     }
 
+    const parsed = refreshBody.safeParse(await c.req.json().catch(() => ({})))
+    const automatic = parsed.success && parsed.data.automatic === true
+
     const at = now()
-    if (connection.lastManualRefreshAt) {
+    if (!automatic && connection.lastManualRefreshAt) {
       const elapsed =
         at.getTime() - new Date(connection.lastManualRefreshAt).getTime()
       const retryAfter = Math.ceil((MANUAL_REFRESH_WINDOW_MS - elapsed) / 1000)
@@ -371,10 +404,12 @@ export function createGitHubViewApp({
     for (const repository of stale) {
       await enqueueSync(repository.id)
     }
-    await github.touchConnectionManualRefresh(
-      project.workspaceId,
-      at.toISOString()
-    )
+    if (!automatic) {
+      await github.touchConnectionManualRefresh(
+        project.workspaceId,
+        at.toISOString()
+      )
+    }
     const body: RefreshResponse = {
       accepted: true,
       enqueued: stale.length,
@@ -388,20 +423,7 @@ export function createGitHubViewApp({
     const project = await projectForRead(c, projectId)
     if (isResponse(project)) return project
 
-    const repositories = await github.listProjectRepositories(project.id)
-    const connection = await github.getConnection(project.workspaceId)
-    const body: GitHubStatusResponse = {
-      connection: connection
-        ? { status: connection.status, login: connection.login }
-        : null,
-      repositories: repositories.map((repository) => ({
-        id: repository.id,
-        fullName: repository.fullName,
-        issuesEnabled: repository.issuesEnabled,
-        unavailable: repository.syncError !== null,
-      })),
-      lastSyncedAt: newestLastSyncedAt(repositories),
-    }
+    const body: GitHubStatusResponse = await projectEnvelope(project)
     return c.json(body)
   })
 

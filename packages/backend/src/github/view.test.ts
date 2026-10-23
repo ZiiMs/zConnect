@@ -354,11 +354,13 @@ interface RefreshBody {
 async function refresh(
   app: Hono,
   project: Project,
-  userId = owner.id
+  userId = owner.id,
+  body?: unknown
 ): Promise<{ res: Response; body: RefreshBody }> {
   const res = await app.request(`/api/projects/${project.id}/github/refresh`, {
     method: "POST",
-    headers: auth(userId),
+    headers: { "content-type": "application/json", ...auth(userId) },
+    body: body === undefined ? undefined : JSON.stringify(body),
   })
   return { res, body: (await res.json()) as RefreshBody }
 }
@@ -387,12 +389,14 @@ describe("github view pull requests", () => {
         fullName: "acme/api",
         issuesEnabled: true,
         unavailable: false,
+        lastSyncedAt: FIXED,
       },
       {
         id: expect.any(String),
         fullName: "acme/web",
         issuesEnabled: true,
         unavailable: false,
+        lastSyncedAt: FIXED,
       },
     ])
     expect(body.filters).toEqual({
@@ -653,6 +657,52 @@ describe("github view pull requests", () => {
     expect(allowed.res.status).toBe(202)
   })
 
+  test("automatic refresh neither checks nor stamps the manual throttle", async () => {
+    const { app, project, clock, enqueued } = await setup({ inlineSync: false })
+    clock.at = "2026-10-10T12:06:00.000Z"
+
+    const automatic = await refresh(app, project, owner.id, {
+      automatic: true,
+    })
+    expect(automatic.res.status).toBe(202)
+    expect(automatic.body).toEqual({
+      accepted: true,
+      enqueued: 2,
+      lastSyncedAt: FIXED,
+    })
+    expect(enqueued).toHaveLength(2)
+
+    // An automatic refresh never stamps lastManualRefreshAt: a manual refresh
+    // immediately after is accepted (and starts the window itself).
+    const manual = await refresh(app, project)
+    expect(manual.res.status).toBe(202)
+
+    clock.at = "2026-10-10T12:06:30.000Z"
+    const throttled = await refresh(app, project)
+    expect(throttled.res.status).toBe(429)
+    expect(throttled.body.retryAfter).toBe(30)
+  })
+
+  test("an automatic refresh still enqueues inside an open manual window", async () => {
+    const { app, project, clock, enqueued, web, api } = await setup({
+      inlineSync: false,
+    })
+    clock.at = "2026-10-10T12:06:00.000Z"
+    expect((await refresh(app, project)).res.status).toBe(202)
+    enqueued.length = 0
+
+    clock.at = "2026-10-10T12:06:30.000Z"
+    const automatic = await refresh(app, project, owner.id, {
+      automatic: true,
+    })
+    expect(automatic.res.status).toBe(202)
+    expect(automatic.body.enqueued).toBe(2)
+    expect([...enqueued].sort()).toEqual([web.id, api.id].sort())
+
+    // The window still belongs to the earlier manual request.
+    expect((await refresh(app, project)).res.status).toBe(429)
+  })
+
   test("the throttle is per workspace, so another connection still refreshes", async () => {
     const { app, project, github, workspaces, clock } = await setup({
       inlineSync: false,
@@ -720,16 +770,41 @@ describe("github view status", () => {
           fullName: "acme/api",
           issuesEnabled: true,
           unavailable: false,
+          lastSyncedAt: FIXED,
         },
         {
           id: expect.any(String),
           fullName: "acme/web",
           issuesEnabled: true,
           unavailable: false,
+          lastSyncedAt: FIXED,
         },
       ],
       lastSyncedAt: FIXED,
     })
+  })
+
+  test("reports per-repository freshness alongside the newest project sync", async () => {
+    const { app, project, github, web } = await setup()
+    await github.updateRepository(web.id, { lastSyncedAt: null })
+
+    const res = await app.request(`/api/projects/${project.id}/github/status`, {
+      headers: auth(owner.id),
+    })
+    const body = (await res.json()) as {
+      repositories: Array<{ fullName: string; lastSyncedAt: string | null }>
+      lastSyncedAt: string | null
+    }
+    expect(
+      body.repositories.find((repository) => repository.fullName === "acme/web")
+        ?.lastSyncedAt
+    ).toBeNull()
+    expect(
+      body.repositories.find((repository) => repository.fullName === "acme/api")
+        ?.lastSyncedAt
+    ).toBe(FIXED)
+    // The project-wide value still reports the newest sync.
+    expect(body.lastSyncedAt).toBe(FIXED)
   })
 
   test("status is project read: Viewer 200, outsider 403, anonymous 401, missing 404", async () => {
@@ -960,12 +1035,14 @@ describe("github view issues", () => {
         fullName: "acme/api",
         issuesEnabled: false,
         unavailable: false,
+        lastSyncedAt: FIXED,
       },
       {
         id: web.id,
         fullName: "acme/web",
         issuesEnabled: false,
         unavailable: false,
+        lastSyncedAt: FIXED,
       },
     ])
     expect(body.lastSyncedAt).toBe(FIXED)

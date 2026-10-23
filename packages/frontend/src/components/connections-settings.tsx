@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { Modal } from "@/components/ui/dialog"
 import {
+  ApiError,
   api,
   type GitHubConnection,
   type GitHubConnectionResponse,
@@ -45,6 +46,8 @@ export function ConnectionsSettings({
   const [saving, setSaving] = useState(false)
   const [disconnectOpen, setDisconnectOpen] = useState(false)
   const [disconnecting, setDisconnecting] = useState(false)
+  /** Full names of allowlisted repositories the pending save would drop. */
+  const [removalConfirm, setRemovalConfirm] = useState<string[] | null>(null)
 
   const connection = state?.connection ?? null
 
@@ -89,6 +92,27 @@ export function ConnectionsSettings({
     )
   }, [state])
 
+  /**
+   * A 409 from the connection API means GitHub rejected the stored token: the
+   * Connection is `reconnect_required` server-side, so mirror that state here
+   * and reuse the pane's Reconnect action.
+   */
+  const applyReconnectRequired = useCallback((failure: unknown): boolean => {
+    if (!(failure instanceof ApiError) || failure.status !== 409) return false
+    setState((previous) =>
+      previous?.connection
+        ? {
+            ...previous,
+            connection: {
+              ...previous.connection,
+              status: "reconnect_required",
+            },
+          }
+        : previous
+    )
+    return true
+  }, [])
+
   useEffect(() => {
     if (!connection || !canManage) {
       setOptions([])
@@ -109,6 +133,7 @@ export function ConnectionsSettings({
           if (!cancelled) {
             setOptions([])
             setOptionsLoading(false)
+            applyReconnectRequired(failure)
             setActionError(
               errorMessage(failure, "Failed to load GitHub repositories")
             )
@@ -119,7 +144,7 @@ export function ConnectionsSettings({
       cancelled = true
       clearTimeout(handle)
     }
-  }, [canManage, connection, query, workspaceId])
+  }, [canManage, connection, query, workspaceId, applyReconnectRequired])
 
   function connect() {
     const url = new URL(window.location.href)
@@ -147,6 +172,7 @@ export function ConnectionsSettings({
   }
 
   async function saveAllowlist() {
+    setRemovalConfirm(null)
     setSaving(true)
     setActionError(null)
     setSavedMessage(null)
@@ -171,10 +197,28 @@ export function ConnectionsSettings({
           : `Saved ${result.repositories.length} repositories.`
       )
     } catch (failure) {
+      applyReconnectRequired(failure)
       setActionError(errorMessage(failure, "Failed to save repositories"))
     } finally {
       setSaving(false)
     }
+  }
+
+  /**
+   * A save that drops allowlisted repositories needs an explicit confirmation
+   * naming what is dropped; adding repositories stays a direct save.
+   */
+  function requestSave() {
+    setActionError(null)
+    setSavedMessage(null)
+    const removed = (state?.repositories ?? [])
+      .filter((repository) => !selectedIds.has(repository.githubId))
+      .map((repository) => repository.fullName)
+    if (removed.length > 0) {
+      setRemovalConfirm(removed)
+      return
+    }
+    void saveAllowlist()
   }
 
   async function disconnect() {
@@ -245,7 +289,7 @@ export function ConnectionsSettings({
               </button>
               <p className="text-muted-foreground text-xs">
                 You will authorize the GitHub account that powers this
-                workspace&apos;s read-only mirror. The request asks for the
+                workspace&apos;s GitHub View. The request asks for the
                 <code className="mx-1 rounded bg-muted px-1">repo</code>
                 scope so private repositories can be read.
               </p>
@@ -370,15 +414,11 @@ export function ConnectionsSettings({
                   <button
                     type="button"
                     disabled={saving}
-                    onClick={() => void saveAllowlist()}
+                    onClick={requestSave}
                     className="rounded-md border px-2.5 py-1.5 font-medium text-xs hover:bg-accent disabled:opacity-50"
                   >
                     Save allowlist
                   </button>
-                  <span className="text-muted-foreground text-xs">
-                    Removing a repository drops its project links and cached
-                    items.
-                  </span>
                 </div>
               </>
             ) : (
@@ -413,6 +453,49 @@ export function ConnectionsSettings({
           </div>
         </>
       )}
+
+      <Modal
+        open={removalConfirm !== null}
+        onOpenChange={(open) => {
+          if (!open) setRemovalConfirm(null)
+        }}
+        title="Remove repositories from the allowlist?"
+        description="Saving this selection stops reading GitHub for the repositories below."
+      >
+        <div className="flex flex-col gap-3 text-sm">
+          <ul className="flex flex-col gap-1 font-mono text-xs">
+            {removalConfirm?.map((fullName) => (
+              <li key={fullName}>{fullName}</li>
+            ))}
+          </ul>
+          <p>
+            Dropped: cached GitHub Items and project repository links in every
+            project.
+          </p>
+          <p>
+            Survives: External Links on Issues, with their last known title and
+            state.
+          </p>
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => setRemovalConfirm(null)}
+              className="rounded-md border px-2.5 py-1.5 text-xs hover:bg-accent disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => void saveAllowlist()}
+              className="rounded-md bg-destructive px-2.5 py-1.5 font-medium text-destructive-foreground text-xs hover:bg-destructive/90 disabled:opacity-50"
+            >
+              Save changes
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal
         open={disconnectOpen}

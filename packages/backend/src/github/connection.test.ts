@@ -11,7 +11,7 @@ import {
   type WorkspaceStore,
 } from "../workspaces/store.js"
 import { createGitHubConnectionApp } from "./connection-routes.js"
-import type { GitHubRemote } from "./provider.js"
+import { type GitHubRemote, GitProviderError } from "./provider.js"
 import { createGitHubApp } from "./routes.js"
 import { createMemoryGitHubStore, type RemoteRepository } from "./store.js"
 import type { GitHubAccountSource } from "./token-source.js"
@@ -68,22 +68,33 @@ export const remoteRepositories: RemoteRepository[] = [
   },
 ]
 
-function fakeRemote(): GitHubRemote & { calls: string[] } {
+function fakeRemote(): GitHubRemote & {
+  calls: string[]
+  /** Thrown by the next listRepositories call, then cleared. */
+  failNext: GitProviderError | null
+} {
   const calls: string[] = []
-  return {
+  const remote = {
     calls,
-    async listRepositories(_token, query) {
+    failNext: null as GitProviderError | null,
+    async listRepositories(_token: string, query?: string) {
       calls.push(`list:${query ?? ""}`)
+      if (remote.failNext) {
+        const failure = remote.failNext
+        remote.failNext = null
+        throw failure
+      }
       const lower = (query ?? "").toLowerCase()
       return remoteRepositories.filter((repo) =>
         repo.fullName.toLowerCase().includes(lower)
       )
     },
-    async getViewerLogin(token) {
+    async getViewerLogin(token: string) {
       calls.push(`login:${token}`)
       return token === "token-2" ? "hubot" : "octocat"
     },
   }
+  return remote
 }
 
 function fixedAccounts(): {
@@ -341,6 +352,77 @@ describe("github repository allowlist", () => {
       items: Array<{ githubId: string }>
     }
     expect(filteredBody.items.map((item) => item.githubId)).toEqual(["101"])
+  })
+
+  test("a provider 401 while listing marks the connection reconnect_required", async () => {
+    const { app, workspaces, github, remote } = setup()
+    const { workspaceId } = await seed(app, workspaces)
+    await connect(app, workspaceId)
+
+    remote.failNext = new GitProviderError(
+      "GitHub authorization failed",
+      "unauthorized"
+    )
+    const search = await app.request(
+      `/api/workspaces/${workspaceId}/github-connection/repositories`,
+      { headers: auth(owner.id) }
+    )
+    expect(search.status).toBe(409)
+    expect(await search.json()).toEqual({
+      error: "GitHub connection needs to be reconnected",
+      status: "reconnect_required",
+    })
+    expect((await github.getConnection(workspaceId))?.status).toBe(
+      "reconnect_required"
+    )
+
+    // The stored flip is what the settings pane reads next.
+    const read = await app.request(
+      `/api/workspaces/${workspaceId}/github-connection`,
+      { headers: auth(owner.id) }
+    )
+    const body = (await read.json()) as { connection: { status: string } }
+    expect(body.connection.status).toBe("reconnect_required")
+  })
+
+  test("a provider 401 while saving the allowlist is the same reconnect state", async () => {
+    const { app, workspaces, github, remote } = setup()
+    const { workspaceId } = await seed(app, workspaces)
+    await connect(app, workspaceId)
+
+    remote.failNext = new GitProviderError(
+      "GitHub authorization failed",
+      "unauthorized"
+    )
+    const saved = await setAllowlist(app, workspaceId, ["101"])
+    expect(saved.res.status).toBe(409)
+    expect(saved.body).toEqual({
+      error: "GitHub connection needs to be reconnected",
+      status: "reconnect_required",
+    })
+    expect((await github.getConnection(workspaceId))?.status).toBe(
+      "reconnect_required"
+    )
+  })
+
+  test("a non-401 provider failure keeps the active status and answers 502", async () => {
+    const { app, workspaces, github, remote } = setup()
+    const { workspaceId } = await seed(app, workspaces)
+    await connect(app, workspaceId)
+
+    remote.failNext = new GitProviderError(
+      "GitHub access forbidden",
+      "forbidden"
+    )
+    const search = await app.request(
+      `/api/workspaces/${workspaceId}/github-connection/repositories`,
+      { headers: auth(owner.id) }
+    )
+    expect(search.status).toBe(502)
+    expect(await search.json()).toEqual({
+      error: "GitHub repositories are unavailable",
+    })
+    expect((await github.getConnection(workspaceId))?.status).toBe("active")
   })
 
   test("saving replaces the allowlist and cascades removals", async () => {

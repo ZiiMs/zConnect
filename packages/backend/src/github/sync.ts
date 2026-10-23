@@ -27,10 +27,8 @@ import type {
 import { GitProviderError } from "./provider.js"
 import type {
   GitHubConnectionStatus,
-  GitHubIssueState,
   GitHubRepository,
   GitHubStore,
-  PullRequestState,
 } from "./store.js"
 
 export interface GitHubSyncDeps {
@@ -237,6 +235,89 @@ async function autoLinkItem(
 }
 
 /**
+ * Reads the stored state of every fetched number before the upsert forces it
+ * back to `open`, so a reopen can be detected. Missing rows are simply absent
+ * from the map (their first appearance is not a transition).
+ */
+async function capturePriorStates<T extends { number: number }, S>(
+  fetched: T[],
+  getStored: (number: number) => Promise<{ state: S } | null>
+): Promise<Map<number, S>> {
+  const prior = new Map<number, S>()
+  for (const item of fetched) {
+    const stored = await getStored(item.number)
+    if (stored) prior.set(item.number, stored.state)
+  }
+  return prior
+}
+
+/**
+ * After an upsert, resolves the stored open numbers that GitHub no longer
+ * listed and applies each reported state. The caller supplies only how to
+ * resolve a batch, how to persist one state, and when to emit a transition.
+ */
+async function resolveMissing<
+  TStored extends { number: number; url: string; title: string },
+  TState,
+>(input: {
+  stored: TStored[]
+  fetchedNumbers: Set<number>
+  resolve: (numbers: number[]) => Promise<Map<number, TState>>
+  apply: (number: number, state: TState) => Promise<void>
+  transition: (item: TStored, state: TState) => Promise<void>
+}): Promise<void> {
+  const storedByNumber = new Map(
+    input.stored.map((item) => [item.number, item])
+  )
+  const missing = input.stored
+    .filter((item) => !input.fetchedNumbers.has(item.number))
+    .map((item) => item.number)
+
+  for (const batch of chunk(missing, STATE_RESOLUTION_BATCH)) {
+    const states = await input.resolve(batch)
+    for (const number of batch) {
+      const state = states.get(number)
+      if (!state) continue
+      await input.apply(number, state)
+      const item = storedByNumber.get(number)
+      if (item) await input.transition(item, state)
+    }
+  }
+}
+
+/**
+ * Runs the auto-link pass over one kind's fetched items. Each item supplies
+ * only the fields `autoLinkRefs` needs; the link/event bookkeeping stays in
+ * `autoLinkItem`.
+ */
+async function autoLinkAll<
+  T extends { number: number; title: string; url: string },
+>(
+  deps: GitHubSyncDeps,
+  input: {
+    kind: "pr" | "issue"
+    items: T[]
+    connectionWorkspaceId: string
+    repository: GitHubRepository
+    sourceBranch?: (item: T) => string | undefined
+  }
+): Promise<number> {
+  let linked = 0
+  for (const item of input.items) {
+    linked += await autoLinkItem(deps, {
+      kind: input.kind,
+      sourceBranch: input.sourceBranch?.(item),
+      title: item.title,
+      url: item.url,
+      number: item.number,
+      connectionWorkspaceId: input.connectionWorkspaceId,
+      repository: input.repository,
+    })
+  }
+  return linked
+}
+
+/**
  * Maps a provider failure to the lifecycle outcome and records it. A 401
  * pauses the whole workspace; 403/404 keep the snapshot but mark the
  * repository unavailable; a rate limit leaves freshness untouched so the next
@@ -295,114 +376,6 @@ async function repairRenamedRepository(
     defaultBranch: remote.defaultBranch,
     pushedAt: remote.pushedAt,
   })
-}
-
-/**
- * After the upsert, any stored open number missing from the fetched open set
- * is resolved through the provider's state query. Closed/merged rows are
- * retained (retention ages them out); a row reported open stays open.
- */
-async function resolveMissingPullRequests(
-  deps: GitHubSyncDeps,
-  repositoryId: string,
-  repository: GitHubRepository,
-  accessToken: string,
-  fetched: RemotePullRequest[],
-  at: string
-): Promise<void> {
-  const stored = await deps.github.listOpenPullRequests(repositoryId)
-  const storedByNumber = new Map(stored.map((item) => [item.number, item]))
-  const fetchedNumbers = new Set(fetched.map((item) => item.number))
-  const missing = stored
-    .filter((item) => !fetchedNumbers.has(item.number))
-    .map((item) => item.number)
-
-  for (const batch of chunk(missing, STATE_RESOLUTION_BATCH)) {
-    const states = await deps.provider.resolvePullRequestStates(
-      accessToken,
-      repoRef(repository),
-      batch
-    )
-    for (const number of batch) {
-      const state = states.get(number)
-      if (!state) continue
-      await deps.github.setPullRequestState(
-        repositoryId,
-        number,
-        {
-          state: state.state,
-          mergedAt: state.mergedAt,
-          closedAt: state.closedAt,
-          githubUpdatedAt: state.updatedAt,
-        },
-        at
-      )
-      const item = storedByNumber.get(number)
-      if (!item || state.state === "open") continue
-      await emitTransition(
-        deps,
-        repository,
-        {
-          kind: "pr",
-          number,
-          url: item.url,
-          title: item.title,
-        },
-        state.state
-      )
-    }
-  }
-}
-
-async function resolveMissingGitHubIssues(
-  deps: GitHubSyncDeps,
-  repositoryId: string,
-  repository: GitHubRepository,
-  accessToken: string,
-  fetched: RemoteGitHubIssue[],
-  at: string
-): Promise<void> {
-  const stored = await deps.github.listOpenGitHubIssues(repositoryId)
-  const storedByNumber = new Map(stored.map((item) => [item.number, item]))
-  const fetchedNumbers = new Set(fetched.map((item) => item.number))
-  const missing = stored
-    .filter((item) => !fetchedNumbers.has(item.number))
-    .map((item) => item.number)
-
-  for (const batch of chunk(missing, STATE_RESOLUTION_BATCH)) {
-    const states = await deps.provider.resolveIssueStates(
-      accessToken,
-      repoRef(repository),
-      batch
-    )
-    for (const number of batch) {
-      const state = states.get(number)
-      if (!state) continue
-      await deps.github.setGitHubIssueState(
-        repositoryId,
-        number,
-        {
-          state: state.state,
-          closedAt: state.closedAt,
-          githubUpdatedAt: state.updatedAt,
-        },
-        at
-      )
-      const item = storedByNumber.get(number)
-      if (!item || state.state !== "closed") continue
-      await emitTransition(
-        deps,
-        repository,
-        {
-          kind: "issue",
-          number,
-          url: item.url,
-          title: item.title,
-        },
-        "closed"
-      )
-    }
-  }
 }
 
 async function runRepositorySync(
@@ -468,24 +441,23 @@ async function runRepositorySync(
 
   // The upsert forces every fetched row back to `open` and clears its closing
   // fields, so the previous state must be captured first to detect a reopen.
-  const previousPullRequests = new Map<number, PullRequestState>()
-  for (const item of pullRequests) {
-    const previous = await deps.github.getPullRequest(repositoryId, item.number)
-    if (previous) previousPullRequests.set(item.number, previous.state)
-  }
+  const previousPullRequests = await capturePriorStates(
+    pullRequests,
+    async (number) => {
+      const previous = await deps.github.getPullRequest(repositoryId, number)
+      return previous ? { state: previous.state } : null
+    }
+  )
 
-  let linked = 0
   await deps.github.upsertPullRequests(repositoryId, pullRequests, at)
+  let linked = await autoLinkAll(deps, {
+    kind: "pr",
+    items: pullRequests,
+    connectionWorkspaceId: connection.workspaceId,
+    repository,
+    sourceBranch: (item) => item.sourceBranch,
+  })
   for (const item of pullRequests) {
-    linked += await autoLinkItem(deps, {
-      kind: "pr",
-      sourceBranch: item.sourceBranch,
-      title: item.title,
-      url: item.url,
-      number: item.number,
-      connectionWorkspaceId: connection.workspaceId,
-      repository,
-    })
     const previous = previousPullRequests.get(item.number)
     if (previous === "merged" || previous === "closed") {
       await emitTransition(
@@ -503,14 +475,42 @@ async function runRepositorySync(
   }
 
   try {
-    await resolveMissingPullRequests(
-      deps,
-      repositoryId,
-      repository,
-      accessToken,
-      pullRequests,
-      at
-    )
+    await resolveMissing({
+      stored: await deps.github.listOpenPullRequests(repositoryId),
+      fetchedNumbers: new Set(pullRequests.map((item) => item.number)),
+      resolve: (numbers) =>
+        deps.provider.resolvePullRequestStates(
+          accessToken,
+          repoRef(repository),
+          numbers
+        ),
+      apply: (number, state) =>
+        deps.github.setPullRequestState(
+          repositoryId,
+          number,
+          {
+            state: state.state,
+            mergedAt: state.mergedAt,
+            closedAt: state.closedAt,
+            githubUpdatedAt: state.updatedAt,
+          },
+          at
+        ),
+      transition: async (item, state) => {
+        if (state.state === "open") return
+        await emitTransition(
+          deps,
+          repository,
+          {
+            kind: "pr",
+            number: item.number,
+            url: item.url,
+            title: item.title,
+          },
+          state.state
+        )
+      },
+    })
   } catch (error) {
     return recordFailure(deps, repositoryId, connection.workspaceId, error, at)
   }
@@ -533,25 +533,19 @@ async function runRepositorySync(
       )
     }
 
-    const previousIssues = new Map<number, GitHubIssueState>()
-    for (const item of issues) {
-      const previous = await deps.github.getGitHubIssue(
-        repositoryId,
-        item.number
-      )
-      if (previous) previousIssues.set(item.number, previous.state)
-    }
+    const previousIssues = await capturePriorStates(issues, async (number) => {
+      const previous = await deps.github.getGitHubIssue(repositoryId, number)
+      return previous ? { state: previous.state } : null
+    })
 
     await deps.github.upsertGitHubIssues(repositoryId, issues, at)
+    linked += await autoLinkAll(deps, {
+      kind: "issue",
+      items: issues,
+      connectionWorkspaceId: connection.workspaceId,
+      repository,
+    })
     for (const item of issues) {
-      linked += await autoLinkItem(deps, {
-        kind: "issue",
-        title: item.title,
-        url: item.url,
-        number: item.number,
-        connectionWorkspaceId: connection.workspaceId,
-        repository,
-      })
       if (previousIssues.get(item.number) === "closed") {
         await emitTransition(
           deps,
@@ -568,14 +562,41 @@ async function runRepositorySync(
     }
 
     try {
-      await resolveMissingGitHubIssues(
-        deps,
-        repositoryId,
-        repository,
-        accessToken,
-        issues,
-        at
-      )
+      await resolveMissing({
+        stored: await deps.github.listOpenGitHubIssues(repositoryId),
+        fetchedNumbers: new Set(issues.map((item) => item.number)),
+        resolve: (numbers) =>
+          deps.provider.resolveIssueStates(
+            accessToken,
+            repoRef(repository),
+            numbers
+          ),
+        apply: (number, state) =>
+          deps.github.setGitHubIssueState(
+            repositoryId,
+            number,
+            {
+              state: state.state,
+              closedAt: state.closedAt,
+              githubUpdatedAt: state.updatedAt,
+            },
+            at
+          ),
+        transition: async (item, state) => {
+          if (state.state !== "closed") return
+          await emitTransition(
+            deps,
+            repository,
+            {
+              kind: "issue",
+              number: item.number,
+              url: item.url,
+              title: item.title,
+            },
+            "closed"
+          )
+        },
+      })
     } catch (error) {
       return recordFailure(
         deps,

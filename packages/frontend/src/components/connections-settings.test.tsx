@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, test, vi } from "vitest"
 import type {
@@ -7,7 +7,7 @@ import type {
   GitHubRepositoryView,
   RemoteRepositoryOption,
 } from "@/lib/api"
-import { api } from "@/lib/api"
+import { ApiError, api } from "@/lib/api"
 import { ConnectionsSettings } from "./connections-settings.js"
 
 const linkSocial = vi.hoisted(() => vi.fn())
@@ -273,6 +273,83 @@ describe("connections settings", () => {
       expect(setGitHubAllowlist).toHaveBeenCalledWith("ws-1", ["101", "102"])
     )
     expect(await screen.findByText(/saved/i)).toBeInTheDocument()
+  })
+
+  test("removing an allowlisted repository confirms what is dropped and what survives", async () => {
+    const user = userEvent.setup()
+    getGitHubConnection.mockResolvedValue(
+      response({
+        connection: connection({ repositoryCount: 2 }),
+        repositories: [
+          repository(),
+          repository({
+            id: "repo-2",
+            githubId: "102",
+            fullName: "acme/api",
+            private: true,
+          }),
+        ],
+      })
+    )
+    setGitHubAllowlist.mockResolvedValue({
+      repositories: [repository()],
+      removed: 1,
+    })
+    render(<ConnectionsSettings workspaceId="ws-1" canManage={true} />)
+
+    await user.click(await screen.findByRole("checkbox", { name: "acme/api" }))
+    await user.click(screen.getByRole("button", { name: /save allowlist/i }))
+
+    const dialog = await screen.findByRole("dialog")
+    expect(within(dialog).getByText(/acme\/api/)).toBeInTheDocument()
+    expect(within(dialog).getByText(/cached GitHub items/i)).toBeInTheDocument()
+    expect(
+      within(dialog).getByText(/project repository links/i)
+    ).toBeInTheDocument()
+    expect(
+      within(dialog).getByText(/External Links on Issues/i)
+    ).toBeInTheDocument()
+    expect(
+      within(dialog).getByText(/last known title and state/i)
+    ).toBeInTheDocument()
+    expect(setGitHubAllowlist).not.toHaveBeenCalled()
+
+    await user.click(within(dialog).getByRole("button", { name: /^cancel$/i }))
+    expect(setGitHubAllowlist).not.toHaveBeenCalled()
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
+    expect(screen.getByRole("checkbox", { name: "acme/api" })).not.toBeChecked()
+
+    await user.click(screen.getByRole("button", { name: /save allowlist/i }))
+    await user.click(
+      within(await screen.findByRole("dialog")).getByRole("button", {
+        name: /save changes/i,
+      })
+    )
+
+    await waitFor(() =>
+      expect(setGitHubAllowlist).toHaveBeenCalledWith("ws-1", ["101"])
+    )
+    expect(
+      await screen.findByText(/saved 1 repositories; removed 1\./i)
+    ).toBeInTheDocument()
+  })
+
+  test("a 401 from the repository picker flips the pane to the reconnect state", async () => {
+    const user = userEvent.setup()
+    searchGitHubRepositories.mockRejectedValue(
+      new ApiError(409, "GitHub connection needs to be reconnected")
+    )
+    render(<ConnectionsSettings workspaceId="ws-1" canManage={true} />)
+
+    await user.type(await screen.findByLabelText("Search repositories"), "acme")
+
+    expect(
+      await screen.findByText("GitHub connection needs to be reconnected")
+    ).toBeInTheDocument()
+    expect(await screen.findByText("Reconnect required")).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: /^reconnect$/i })
+    ).toBeInTheDocument()
   })
 
   test("the allowlist is capped at 50 repositories", async () => {

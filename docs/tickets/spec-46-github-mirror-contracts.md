@@ -345,10 +345,11 @@ export function createIntegrationCipher(key: string): IntegrationCipher
 ```
 
 Format: `v1.<base64url(iv)>.<base64url(ciphertext)>.<base64url(tag)>`, AES-256-GCM,
-12-byte random IV. Implement with `crypto.subtle` (available in Bun and Node 20+).
-Invalid key length throws at construction. `INTEGRATION_ENCRYPTION_KEY` unset means the
-connection feature is unavailable: `POST` connection returns `503 { error: "GitHub
-connection is not configured" }` rather than throwing at import.
+12-byte random IV. The shipped implementation uses `node:crypto` synchronously
+(`createCipheriv`/`createDecipheriv`) with the same versioned payload; `crypto.subtle` is not
+required. Invalid key length throws at construction. `INTEGRATION_ENCRYPTION_KEY` unset
+means the connection feature is unavailable: `POST` connection returns
+`503 { error: "GitHub connection is not configured" }` rather than throwing at import.
 
 ## 4. Provider seam (`packages/backend/src/github/provider.ts`) — #49
 
@@ -435,8 +436,9 @@ export interface GitProvider {
   `github/repository-source.ts` is folded into `github/github-provider.ts` (keep the REST
   repository listing logic, delete the duplicate module).
 - The GitHub adapter is `createGitHubProvider(fetchImpl?)`: GraphQL for open PRs/issues,
-  REST for repository listing (pagination), GraphQL aliases for state resolution. It must
-  never be imported by tests. The fake lives in `github/fake-provider.ts`:
+  REST for repository listing (pagination), GraphQL aliases for state resolution. It is
+  never imported by tests without an injected fetch stub; the mapping tests stub `fetch`
+  and perform no I/O. The fake lives in `github/fake-provider.ts`:
 
 ```ts
 export interface FakeProvider extends GitProvider {
@@ -565,6 +567,12 @@ PUT    /api/workspaces/:id/github-connection/repositories          Owner/Admin
   deletes the ones dropped (and their project links + snapshots), returns
   `{ repositories: GitHubRepositoryView[], removed: number }`. Unknown id → `400`.
   Saving the same set is idempotent (`selectedAt` unchanged).
+- Provider failures on both repository endpoints share one mapping: a `GitProviderError`
+  with `code: "unauthorized"` sets the Connection `reconnect_required` and answers
+  `409 { error: "GitHub connection needs to be reconnected", status: "reconnect_required" }`;
+  other provider codes keep the existing
+  `502 { error: "GitHub repositories are unavailable" }`. The settings picker surfaces the
+  409 as the reconnect state and reuses the pane's Reconnect action.
 
 `GitHubAccountSource` (`github/token-source.ts`):
 
@@ -620,10 +628,22 @@ List envelope (identical for both tabs):
   nextCursor: string | null
   lastSyncedAt: string | null          // newest repository lastSyncedAt in the project
   connection: { status: GitHubConnectionStatus; login: string } | null
-  repositories: Array<{ id: string; fullName: string; issuesEnabled: boolean; unavailable: boolean }>
+  repositories: Array<{
+    id: string
+    fullName: string
+    issuesEnabled: boolean
+    unavailable: boolean
+    lastSyncedAt: string | null        // this repository's own sync instant
+  }>
   filters: { authors: string[]; labels: Array<{ name: string; color: string }> }
 }
 ```
+
+`repositories[].lastSyncedAt` is per repository (`null` when it never synced), so one fresh
+repository cannot hide an older sibling; the top-level `lastSyncedAt` stays the newest across
+the project. The backend names the facet shape `GitHubViewFacets` (author and label options);
+it is distinct from the frontend's `GitHubViewFilters` (§8), the applied
+state/author/label/q filter set.
 
 `PullRequestRow` = `PullRequestSnapshot` + `repository: string` (fullName) +
 `linkedIssues: LinkedIssueRef[]`. `GitHubIssueRow` = `GitHubIssueSnapshot` +
@@ -635,6 +655,10 @@ current filter); `filters.labels` is the same for issue labels, sorted by name.
 
 - Project read. Enqueues a sync for every linked repository older than five minutes
   (`lastSyncedAt` null counts as stale) through the injected `enqueueSync(repositoryId)`.
+- Body `{ automatic?: boolean }`; an empty body is tolerated and means manual. When
+  `automatic` is true (the view-opening path), enqueue the stale repositories, do **not**
+  check or stamp `lastManualRefreshAt`, and return `202`. Manual (the default, used by the
+  Refresh button) keeps the throttle and stamps.
 - Throttled per **workspace** to once per 60 seconds using
   `github_connection.lastManualRefreshAt`; inside the window →
   `429 { error: "Refresh throttled", retryAfter }`.
@@ -642,6 +666,11 @@ current filter); `filters.labels` is the same for issue labels, sorted by name.
 - A workspace with no connection → `409 { error: "GitHub is not connected" }`.
 - #49 ships a naive version (always enqueue, no throttle); #51 adds staleness + throttle +
   status.
+- Rate limits are deferred, not retried across every repository: the sweep stops at the
+  first `rate_limited` outcome and schedules one delayed `github-sync-sweep` job with
+  `delay = max(0, retryAt - now)` under a stable job id (no duplicate when one is already
+  scheduled). The manual per-repository `github-sync` job may complete; the delayed sweep
+  is the retry. `lastSyncedAt` is untouched by the limit.
 
 `GET /github/status` (#51) → `{ connection, repositories, lastSyncedAt }` — same shapes as
 the list envelope's non-item fields, so the settings/inline banner can poll cheaply.

@@ -22,6 +22,7 @@ import {
   type GitHubConnection,
   type GitHubConnectionSecret,
   type GitHubConnectionStatus,
+  GitHubInputError,
   type GitHubIssueSnapshot,
   type GitHubItemFilters,
   type GitHubRepository,
@@ -376,7 +377,7 @@ export function createDrizzleGitHubStore(resolveDb: () => Db): GitHubStore {
       const db = resolveDb()
       const wanted = [...new Set(repositoryIds)]
       if (wanted.length > MAX_ALLOWLIST) {
-        throw invalidError(
+        throw new GitHubInputError(
           `At most ${MAX_ALLOWLIST} repositories can be linked to a project`
         )
       }
@@ -400,7 +401,9 @@ export function createDrizzleGitHubStore(resolveDb: () => Db): GitHubStore {
               )
             )
           if (allowed.length !== wanted.length) {
-            throw invalidError("Repository is outside the workspace allowlist")
+            throw new GitHubInputError(
+              "Repository is outside the workspace allowlist"
+            )
           }
         }
 
@@ -913,12 +916,6 @@ export function createDrizzleGitHubStore(resolveDb: () => Db): GitHubStore {
 
 function iso(value: Date | null | undefined): string | null {
   return value ? value.toISOString() : null
-}
-
-function invalidError(message: string): Error {
-  const error = new Error(message)
-  ;(error as { code?: string }).code = "invalid"
-  return error
 }
 
 function toConnection(
