@@ -9,15 +9,12 @@ import {
 } from "../workspaces/store.js"
 import { createGitHubItemApp } from "./item-routes.js"
 import type { GitHubWebhookPayload } from "./job.js"
-import type { RemotePullRequest } from "./provider.js"
+import type { RemoteGitHubIssue, RemotePullRequest } from "./provider.js"
 import { createGitHubApp } from "./routes.js"
 import {
   createMemoryGitHubStore,
   type ExternalLink,
-  type GitHubIssueSnapshot,
-  type GitHubLabel,
   type GitHubRepository,
-  type GitHubStore,
   type LinkedIssueRef,
   type RemoteRepository,
 } from "./store.js"
@@ -69,7 +66,19 @@ const remotePullRequest: RemotePullRequest = {
   updatedAt: "2026-10-02T11:00:00.000Z",
 }
 
-const issueLabels: GitHubLabel[] = []
+const remoteIssue: RemoteGitHubIssue = {
+  number: 42,
+  title: "Crash on login",
+  authorLogin: "hubot",
+  authorAvatarUrl: null,
+  url: "https://github.com/acme/web/issues/42",
+  labels: [],
+  assignees: [],
+  commentCount: 0,
+  bodyExcerpt: null,
+  createdAt: "2026-10-01T10:00:00.000Z",
+  updatedAt: "2026-10-02T10:00:00.000Z",
+}
 
 interface LinkResponse {
   link: ExternalLink
@@ -83,27 +92,6 @@ function auth(userId?: string): Record<string, string> {
 
 function jsonHeaders(userId?: string): Record<string, string> {
   return { "content-type": "application/json", ...auth(userId) }
-}
-
-/**
- * Stand-in for #50's `getGitHubIssue` store method (its Issues slice adds the
- * method to GitHubStore). The route reads it optionally, so the item app
- * works against either store generation.
- */
-function withIssueSnapshots(
-  store: GitHubStore,
-  snapshots: GitHubIssueSnapshot[]
-): GitHubStore {
-  const byKey = new Map(
-    snapshots.map((snapshot) => [
-      `${snapshot.repositoryId}:${snapshot.number}`,
-      snapshot,
-    ])
-  )
-  return Object.assign(store, {
-    getGitHubIssue: async (repositoryId: string, number: number) =>
-      byKey.get(`${repositoryId}:${number}`) ?? null,
-  })
 }
 
 async function setup() {
@@ -156,26 +144,9 @@ async function setup() {
     FIXED
   )
   await github.upsertPullRequests(repository.id, [remotePullRequest], FIXED)
-
-  const issueSnapshot: GitHubIssueSnapshot = {
-    id: "github-issue-42",
-    repositoryId: repository.id,
-    number: 42,
-    title: "Crash on login",
-    state: "open",
-    authorLogin: "hubot",
-    authorAvatarUrl: null,
-    url: "https://github.com/acme/web/issues/42",
-    labels: issueLabels,
-    assignees: [],
-    commentCount: 0,
-    bodyExcerpt: null,
-    githubCreatedAt: "2026-10-01T10:00:00.000Z",
-    githubUpdatedAt: "2026-10-02T10:00:00.000Z",
-    closedAt: null,
-    syncedAt: FIXED,
-  }
-  const itemStore = withIssueSnapshots(github, [issueSnapshot])
+  await github.upsertGitHubIssues(repository.id, [remoteIssue], FIXED)
+  const issueSnapshot = await github.getGitHubIssue(repository.id, 42)
+  if (!issueSnapshot) throw new Error("fixture GitHub Issue missing")
 
   const getSession = async (req: Request) => {
     const match = /^Bearer (.+)$/.exec(req.headers.get("authorization") ?? "")
@@ -185,15 +156,12 @@ async function setup() {
 
   const app = new Hono()
   app.route("/", createWorkspacesApp({ store: workspaces, getSession }))
-  app.route(
-    "/",
-    createGitHubItemApp({ workspaces, github: itemStore, getSession })
-  )
+  app.route("/", createGitHubItemApp({ workspaces, github, getSession }))
   app.route(
     "/",
     createGitHubApp({
       workspaces,
-      github: itemStore,
+      github,
       getSession,
       enqueue: async (job: GitHubWebhookPayload) => {
         void job
@@ -204,7 +172,7 @@ async function setup() {
     "/",
     createGitHubViewApp({
       workspaces,
-      github: itemStore,
+      github,
       getSession,
       enqueueSync: async () => {},
     })
@@ -214,7 +182,6 @@ async function setup() {
     app,
     workspaces,
     github,
-    itemStore,
     workspace,
     project,
     otherProject,

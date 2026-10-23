@@ -11,6 +11,7 @@ import {
   api,
   type GitHubIssueListResponse,
   type GitHubIssueRow,
+  type Issue,
   type PullRequestListResponse,
   type PullRequestRow,
 } from "@/lib/api"
@@ -24,6 +25,8 @@ vi.mock("@/lib/api", async (importOriginal) => {
       ...actual.api,
       listPullRequests: vi.fn(),
       listGitHubIssues: vi.fn(),
+      listIssues: vi.fn(),
+      linkGitHubItem: vi.fn(),
       refreshGitHub: vi.fn(),
     },
   }
@@ -31,6 +34,8 @@ vi.mock("@/lib/api", async (importOriginal) => {
 
 const listPullRequests = vi.mocked(api.listPullRequests)
 const listGitHubIssues = vi.mocked(api.listGitHubIssues)
+const listIssues = vi.mocked(api.listIssues)
+const linkGitHubItem = vi.mocked(api.linkGitHubItem)
 const refreshGitHub = vi.mocked(api.refreshGitHub)
 
 const workspace = { id: "ws-1", name: "Acme", role: "Owner" as const }
@@ -207,11 +212,52 @@ function issueResponse(
   }
 }
 
+const targetIssue: Issue = {
+  id: "issue-2",
+  projectId: "pr-1",
+  number: 2,
+  keyPrefix: "WEB",
+  identifier: "WEB-2",
+  title: "Fix the API",
+  description: null,
+  statusId: "status-1",
+  priority: "None",
+  assigneeId: null,
+  dueDate: null,
+  archived: false,
+  labels: [],
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   window.history.replaceState(null, "", "/acme/WEB/github")
   listPullRequests.mockResolvedValue(response())
   listGitHubIssues.mockResolvedValue(issueResponse())
+  listIssues.mockResolvedValue([targetIssue])
+  linkGitHubItem.mockResolvedValue({
+    link: {
+      id: "link-9",
+      issueId: "issue-2",
+      provider: "github",
+      kind: "issue",
+      url: "https://github.com/acme/api/issues/8",
+      title: "API 500 on refresh",
+      state: "open",
+    },
+    issue: {
+      id: "issue-2",
+      identifier: "WEB-2",
+      title: "Fix the API",
+    },
+    linkedIssues: [
+      {
+        linkId: "link-9",
+        issueId: "issue-2",
+        identifier: "WEB-2",
+        title: "Fix the API",
+      },
+    ],
+  })
 })
 
 afterEach(() => {
@@ -501,6 +547,58 @@ describe("github view", () => {
       "_blank",
       "noopener,noreferrer"
     )
+  })
+
+  test("a writer links a GitHub Issue row and the chip appears", async () => {
+    const user = userEvent.setup()
+    window.history.replaceState(null, "", "/acme/WEB/github/issues")
+    renderView("issues")
+
+    const row = await screen.findByTestId("github-issue-row-8")
+    await user.click(
+      within(row).getByRole("button", { name: "GitHub item actions" })
+    )
+    await user.click(screen.getByRole("menuitem", { name: "Link to Issue" }))
+
+    expect(await screen.findByRole("dialog")).toBeInTheDocument()
+    await screen.findByRole("button", { name: /WEB-2/ })
+    await user.click(screen.getByRole("button", { name: /WEB-2/ }))
+    await user.click(screen.getByRole("button", { name: "Link" }))
+
+    await waitFor(() =>
+      expect(linkGitHubItem).toHaveBeenCalledWith("pr-1", {
+        kind: "issue",
+        repositoryId: "repo-2",
+        number: 8,
+        issue: "WEB-2",
+      })
+    )
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId("github-issue-row-8")).getByText("WEB-2")
+      ).toBeInTheDocument()
+    )
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
+    )
+  })
+
+  test("a Viewer sees no actions menu on GitHub Issue rows", async () => {
+    window.history.replaceState(null, "", "/acme/WEB/github/issues")
+    render(
+      <GitHubView
+        workspace={{ ...workspace, role: "Viewer" }}
+        project={project}
+        tab="issues"
+        canWrite={false}
+        canAdmin={false}
+      />
+    )
+
+    await screen.findByRole("table", { name: "GitHub issues" })
+    expect(
+      screen.queryByRole("button", { name: "GitHub item actions" })
+    ).toBeNull()
   })
 
   test("an Issues-disabled repository explains the empty tab", async () => {
