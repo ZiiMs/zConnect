@@ -10,6 +10,7 @@ import type { Project, WorkspaceStore } from "../workspaces/store.js"
 import {
   DEFAULT_GITHUB_ITEM_LIMIT,
   type GitHubConnectionStatus,
+  type GitHubIssueSnapshot,
   type GitHubItemFilters,
   type GitHubLabel,
   type GitHubStore,
@@ -19,10 +20,18 @@ import {
 } from "./store.js"
 
 const STATES = ["open", "merged", "closed", "all"] as const
+const ISSUE_STATES = ["open", "closed", "all"] as const
 
 export type GitHubItemState = (typeof STATES)[number]
+export type GitHubIssueFilterState = (typeof ISSUE_STATES)[number]
 
 export interface PullRequestRow extends PullRequestSnapshot {
+  /** Repository full name (`owner/name`). */
+  repository: string
+  linkedIssues: LinkedIssueRef[]
+}
+
+export interface GitHubIssueRow extends GitHubIssueSnapshot {
   /** Repository full name (`owner/name`). */
   repository: string
   linkedIssues: LinkedIssueRef[]
@@ -47,6 +56,15 @@ export interface GitHubViewFilters {
 
 export interface PullRequestListResponse {
   items: PullRequestRow[]
+  nextCursor: string | null
+  lastSyncedAt: string | null
+  connection: GitHubViewConnection | null
+  repositories: GitHubViewRepository[]
+  filters: GitHubViewFilters
+}
+
+export interface GitHubIssueListResponse {
+  items: GitHubIssueRow[]
   nextCursor: string | null
   lastSyncedAt: string | null
   connection: GitHubViewConnection | null
@@ -85,6 +103,15 @@ function parseState(raw: string | undefined): GitHubItemState | null {
     : null
 }
 
+function parseIssueState(
+  raw: string | undefined
+): GitHubIssueFilterState | null {
+  const value = (raw ?? "open").toLowerCase()
+  return (ISSUE_STATES as readonly string[]).includes(value)
+    ? (value as GitHubIssueFilterState)
+    : null
+}
+
 function parseLimit(raw: string | undefined): number | null {
   if (raw === undefined || raw.trim() === "") {
     return DEFAULT_GITHUB_ITEM_LIMIT
@@ -120,6 +147,39 @@ async function collectAuthors(
     cursor = page.nextCursor
   } while (cursor)
   return [...byLower.values()].sort((a, b) => a.localeCompare(b))
+}
+
+/**
+ * Author and label options for the Issues tab, taken from the project's whole
+ * snapshot across every state so the pickers do not shrink as filters apply.
+ */
+async function collectIssueFacets(
+  github: GitHubStore,
+  projectId: string
+): Promise<GitHubViewFilters> {
+  const byAuthor = new Map<string, string>()
+  const byLabel = new Map<string, GitHubLabel>()
+  let cursor: string | null = null
+  do {
+    const page = await github.listGitHubIssuesForProject(projectId, {
+      state: "all",
+      limit: MAX_GITHUB_ITEM_LIMIT,
+      cursor,
+    })
+    for (const item of page.items) {
+      const author = item.authorLogin.toLowerCase()
+      if (!byAuthor.has(author)) byAuthor.set(author, item.authorLogin)
+      for (const label of item.labels) {
+        const key = label.name.toLowerCase()
+        if (!byLabel.has(key)) byLabel.set(key, { ...label })
+      }
+    }
+    cursor = page.nextCursor
+  } while (cursor)
+  return {
+    authors: [...byAuthor.values()].sort((a, b) => a.localeCompare(b)),
+    labels: [...byLabel.values()].sort((a, b) => a.name.localeCompare(b.name)),
+  }
 }
 
 export function createGitHubViewApp({
@@ -203,6 +263,61 @@ export function createGitHubViewApp({
         unavailable: repository.syncError !== null,
       })),
       filters: { authors, labels: [] },
+    }
+    return c.json(body)
+  })
+
+  app.get("/api/projects/:id/github/issues", async (c) => {
+    const projectId = c.req.param("id")
+    const project = await projectForRead(c, projectId)
+    if (isResponse(project)) return project
+
+    const state = parseIssueState(c.req.query("state"))
+    if (!state) return c.json({ error: "Invalid state" }, 400)
+    const limit = parseLimit(c.req.query("limit"))
+    if (limit === null) return c.json({ error: "Invalid limit" }, 400)
+
+    const filters: GitHubItemFilters = {
+      state,
+      author: (c.req.query("author") ?? "").trim() || null,
+      label: (c.req.query("label") ?? "").trim() || null,
+      query: (c.req.query("q") ?? "").trim() || null,
+      limit,
+      cursor: c.req.query("cursor") ?? null,
+    }
+
+    const repositories = await github.listProjectRepositories(project.id)
+    const [page, connection, facets] = await Promise.all([
+      github.listGitHubIssuesForProject(project.id, filters),
+      github.getConnection(project.workspaceId),
+      collectIssueFacets(github, project.id),
+    ])
+    const repositoryNames = new Map(
+      repositories.map((repository) => [repository.id, repository.fullName])
+    )
+    const linkedIssues = await github.listLinkedIssueRefs(
+      page.items.map((item) => item.url)
+    )
+    const items: GitHubIssueRow[] = page.items.map((item) => ({
+      ...item,
+      repository: repositoryNames.get(item.repositoryId) ?? "",
+      linkedIssues: linkedIssues[item.url] ?? [],
+    }))
+
+    const body: GitHubIssueListResponse = {
+      items,
+      nextCursor: page.nextCursor,
+      lastSyncedAt: newestLastSyncedAt(repositories),
+      connection: connection
+        ? { status: connection.status, login: connection.login }
+        : null,
+      repositories: repositories.map((repository) => ({
+        id: repository.id,
+        fullName: repository.fullName,
+        issuesEnabled: repository.issuesEnabled,
+        unavailable: repository.syncError !== null,
+      })),
+      filters: facets,
     }
     return c.json(body)
   })

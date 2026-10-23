@@ -6,7 +6,7 @@ import {
   type Project,
 } from "../workspaces/store.js"
 import { createFakeProvider } from "./fake-provider.js"
-import type { RemotePullRequest } from "./provider.js"
+import type { RemoteGitHubIssue, RemotePullRequest } from "./provider.js"
 import {
   createMemoryGitHubStore,
   type PullRequestSnapshot,
@@ -15,6 +15,8 @@ import {
 import { type GitHubSyncDeps, syncConnection, syncRepository } from "./sync.js"
 import {
   createGitHubViewApp,
+  type GitHubIssueListResponse,
+  type GitHubIssueRow,
   type PullRequestListResponse,
 } from "./view-routes.js"
 
@@ -117,11 +119,77 @@ const pullRequests: Record<string, RemotePullRequest[]> = {
   ],
 }
 
+function githubIssue(overrides: Partial<RemoteGitHubIssue>): RemoteGitHubIssue {
+  return {
+    number: 1,
+    title: "GitHub Issue",
+    authorLogin: "octocat",
+    authorAvatarUrl: null,
+    url: "https://github.com/acme/web/issues/1",
+    labels: [],
+    assignees: [],
+    commentCount: 0,
+    bodyExcerpt: null,
+    createdAt: "2026-10-01T09:00:00.000Z",
+    updatedAt: "2026-10-01T09:00:00.000Z",
+    ...overrides,
+  }
+}
+
+const githubIssues: Record<string, RemoteGitHubIssue[]> = {
+  "acme/web": [
+    githubIssue({
+      number: 5,
+      title: "Login redirect loops",
+      authorLogin: "hubot",
+      url: "https://github.com/acme/web/issues/5",
+      labels: [
+        { name: "bug", color: "d73a4a" },
+        { name: "enhancement", color: "a2eeef" },
+      ],
+      assignees: [{ login: "octocat", avatarUrl: "https://avatars/x.png" }],
+      commentCount: 3,
+      bodyExcerpt: "Steps to reproduce the loop.",
+      updatedAt: "2026-10-05T11:00:00.000Z",
+    }),
+    githubIssue({
+      number: 3,
+      title: "Docs typo",
+      authorLogin: "mona",
+      url: "https://github.com/acme/web/issues/3",
+      labels: [{ name: "docs", color: "0075ca" }],
+      updatedAt: "2026-10-04T11:00:00.000Z",
+    }),
+  ],
+  "acme/api": [
+    githubIssue({
+      number: 8,
+      title: "API 500 on refresh",
+      authorLogin: "octocat",
+      url: "https://github.com/acme/api/issues/8",
+      labels: [{ name: "bug", color: "d73a4a" }],
+      assignees: [{ login: "hubot", avatarUrl: null }],
+      commentCount: 2,
+      updatedAt: "2026-10-06T11:00:00.000Z",
+    }),
+  ],
+}
+
 function auth(userId?: string): Record<string, string> {
   return userId ? { authorization: `Bearer ${userId}` } : {}
 }
 
-async function setup() {
+/** Per-test copy so one test's provider mutation never leaks into the next. */
+function cloneRemote<T>(record: Record<string, T[]>): Record<string, T[]> {
+  return Object.fromEntries(
+    Object.entries(record).map(([key, items]) => [
+      key,
+      items.map((item) => ({ ...item })),
+    ])
+  )
+}
+
+async function setup(options: { issuesEnabled?: boolean } = {}) {
   const workspaces = createMemoryWorkspaceStore()
   const github = createMemoryGitHubStore({
     projectWorkspaceId: async (projectId) =>
@@ -131,9 +199,15 @@ async function setup() {
       return issue ? { identifier: issue.identifier, title: issue.title } : null
     },
   })
+  const issuesEnabled = options.issuesEnabled ?? true
+  const remoteRepositories = [
+    { ...webRepository, issuesEnabled },
+    { ...apiRepository, issuesEnabled },
+  ]
   const provider = createFakeProvider({
-    repositories: [webRepository, apiRepository],
-    pullRequests,
+    repositories: remoteRepositories,
+    pullRequests: cloneRemote(pullRequests),
+    issues: cloneRemote(githubIssues),
   })
   const workspace = await workspaces.createWorkspace(owner.id, "Acme")
   const project = await workspaces.createProject(workspace.id, {
@@ -155,11 +229,7 @@ async function setup() {
     encryptedAccessToken: "encrypted:token-1",
     at: FIXED,
   })
-  await github.replaceAllowlist(
-    connection.id,
-    [webRepository, apiRepository],
-    FIXED
-  )
+  await github.replaceAllowlist(connection.id, remoteRepositories, FIXED)
   const repositories = await github.listAllowlist(connection.id)
   const web = repositories.find((row) => row.fullName === "acme/web")
   const api = repositories.find((row) => row.fullName === "acme/api")
@@ -205,6 +275,13 @@ async function setup() {
     title: "Add the GitHub View",
     state: "open",
   })
+  await github.createExternalLink(issue.id, {
+    provider: "github",
+    kind: "issue",
+    url: "https://github.com/acme/web/issues/5",
+    title: "Login redirect loops",
+    state: "open",
+  })
 
   return {
     app,
@@ -236,7 +313,24 @@ async function list(
   return { res, body: (await res.json()) as PullRequestListResponse }
 }
 
+async function listIssues(
+  app: Hono,
+  project: Project,
+  query = "",
+  userId = owner.id
+) {
+  const res = await app.request(
+    `/api/projects/${project.id}/github/issues${query}`,
+    { headers: auth(userId) }
+  )
+  return { res, body: (await res.json()) as GitHubIssueListResponse }
+}
+
 function numbers(items: PullRequestSnapshot[]): number[] {
+  return items.map((item) => item.number)
+}
+
+function issueNumbers(items: GitHubIssueRow[]): number[] {
   return items.map((item) => item.number)
 }
 
@@ -455,5 +549,178 @@ describe("github view pull requests", () => {
     )
     expect(res.status).toBe(409)
     expect(await res.json()).toEqual({ error: "GitHub is not connected" })
+  })
+})
+
+describe("github view issues", () => {
+  test("lists GitHub Issues with labels, assignees, comments, author, and linked Issue chips", async () => {
+    const { app, project, web } = await setup()
+    const { res, body } = await listIssues(app, project)
+
+    expect(res.status).toBe(200)
+    expect(issueNumbers(body.items)).toEqual([8, 5, 3])
+    // Pull Requests never appear in the Issues list.
+    expect(issueNumbers(body.items)).not.toContain(12)
+    expect(issueNumbers(body.items)).not.toContain(9)
+    expect(body.nextCursor).toBeNull()
+    expect(body.lastSyncedAt).toBe(FIXED)
+    expect(body.connection).toEqual({ status: "active", login: "octocat" })
+    expect(body.repositories.map((repository) => repository.fullName)).toEqual([
+      "acme/api",
+      "acme/web",
+    ])
+
+    const row = body.items.find((item) => item.number === 5)
+    expect(row).toMatchObject({
+      repositoryId: web.id,
+      number: 5,
+      title: "Login redirect loops",
+      state: "open",
+      authorLogin: "hubot",
+      url: "https://github.com/acme/web/issues/5",
+      labels: [
+        { name: "bug", color: "d73a4a" },
+        { name: "enhancement", color: "a2eeef" },
+      ],
+      assignees: [{ login: "octocat", avatarUrl: "https://avatars/x.png" }],
+      commentCount: 3,
+      repository: "acme/web",
+      linkedIssues: [
+        {
+          linkId: expect.any(String),
+          issueId: expect.any(String),
+          identifier: "WEB-1",
+          title: "Tour the List, Table, and Kanban views",
+        },
+      ],
+    })
+
+    const apiRow = body.items.find((item) => item.number === 8)
+    expect(apiRow).toMatchObject({
+      repository: "acme/api",
+      authorLogin: "octocat",
+      labels: [{ name: "bug", color: "d73a4a" }],
+      assignees: [{ login: "hubot", avatarUrl: null }],
+      commentCount: 2,
+      linkedIssues: [],
+    })
+  })
+
+  test("filters by state, author, label, and text, with recently updated first", async () => {
+    const { app, project, github, web } = await setup()
+
+    const defaultOrder = await listIssues(app, project)
+    expect(issueNumbers(defaultOrder.body.items)).toEqual([8, 5, 3])
+
+    const byAuthor = await listIssues(app, project, "?author=MONA")
+    expect(issueNumbers(byAuthor.body.items)).toEqual([3])
+
+    const byLabel = await listIssues(app, project, "?label=BUG")
+    expect(issueNumbers(byLabel.body.items)).toEqual([8, 5])
+
+    const byText = await listIssues(app, project, "?q=LOGIN")
+    expect(issueNumbers(byText.body.items)).toEqual([5])
+
+    await github.setGitHubIssueState(
+      web.id,
+      3,
+      {
+        state: "closed",
+        closedAt: "2026-10-03T10:00:00.000Z",
+        githubUpdatedAt: "2026-10-03T10:00:00.000Z",
+      },
+      FIXED
+    )
+    const open = await listIssues(app, project)
+    expect(issueNumbers(open.body.items)).toEqual([8, 5])
+    const closed = await listIssues(app, project, "?state=closed")
+    expect(issueNumbers(closed.body.items)).toEqual([3])
+    const all = await listIssues(app, project, "?state=all")
+    expect(issueNumbers(all.body.items)).toEqual([8, 5, 3])
+
+    const merged = await listIssues(app, project, "?state=merged")
+    expect(merged.res.status).toBe(400)
+    const invalid = await listIssues(app, project, "?state=nope")
+    expect(invalid.res.status).toBe(400)
+    const invalidLimit = await listIssues(app, project, "?limit=0")
+    expect(invalidLimit.res.status).toBe(400)
+  })
+
+  test("paginates issue results with the opaque cursor", async () => {
+    const { app, project } = await setup()
+    const first = await listIssues(app, project, "?limit=2&state=all")
+    expect(issueNumbers(first.body.items)).toEqual([8, 5])
+    expect(first.body.nextCursor).toEqual(expect.any(String))
+
+    const second = await listIssues(
+      app,
+      project,
+      `?limit=2&state=all&cursor=${first.body.nextCursor}`
+    )
+    expect(issueNumbers(second.body.items)).toEqual([3])
+    expect(second.body.nextCursor).toBeNull()
+  })
+
+  test("derives author and label filter options from the whole snapshot", async () => {
+    const { app, project } = await setup()
+    const { body } = await listIssues(app, project, "?label=docs")
+
+    expect(issueNumbers(body.items)).toEqual([3])
+    expect(body.filters).toEqual({
+      authors: ["hubot", "mona", "octocat"],
+      labels: [
+        { name: "bug", color: "d73a4a" },
+        { name: "docs", color: "0075ca" },
+        { name: "enhancement", color: "a2eeef" },
+      ],
+    })
+  })
+
+  test("Viewers read the Issues list, anonymous requests are 401, outsiders are 403", async () => {
+    const { app, project } = await setup()
+
+    const viewerRead = await listIssues(app, project, "", viewer.id)
+    expect(viewerRead.res.status).toBe(200)
+    expect(viewerRead.body.items).toHaveLength(3)
+
+    const outsiderRead = await listIssues(app, project, "", outsider.id)
+    expect(outsiderRead.res.status).toBe(403)
+
+    const anonymous = await app.request(
+      `/api/projects/${project.id}/github/issues`
+    )
+    expect(anonymous.status).toBe(401)
+
+    const missing = await listIssues(app, {
+      ...project,
+      id: "00000000-0000-4000-8000-000000000000",
+    } as Project)
+    expect(missing.res.status).toBe(404)
+  })
+
+  test("a repository with Issues disabled returns an explanatory empty envelope", async () => {
+    const { app, project, web } = await setup({ issuesEnabled: false })
+    const { res, body } = await listIssues(app, project)
+
+    expect(res.status).toBe(200)
+    expect(body.items).toEqual([])
+    expect(body.repositories).toEqual([
+      {
+        id: expect.any(String),
+        fullName: "acme/api",
+        issuesEnabled: false,
+        unavailable: false,
+      },
+      {
+        id: web.id,
+        fullName: "acme/web",
+        issuesEnabled: false,
+        unavailable: false,
+      },
+    ])
+    expect(body.lastSyncedAt).toBe(FIXED)
+    // The repository still syncs Pull Requests.
+    const pullRequests = await list(app, project)
+    expect(numbers(pullRequests.body.items)).toEqual([7, 9, 12, 5])
   })
 })

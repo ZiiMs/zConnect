@@ -62,6 +62,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
       getProjectRepositories: vi.fn(),
       setProjectRepositories: vi.fn(),
       listPullRequests: vi.fn(),
+      listGitHubIssues: vi.fn(),
       refreshGitHub: vi.fn(),
     },
   }
@@ -76,6 +77,7 @@ const acceptInvitation = vi.mocked(api.acceptInvitation)
 const getGitHubConnection = vi.mocked(api.getGitHubConnection)
 const getProjectRepositories = vi.mocked(api.getProjectRepositories)
 const listPullRequests = vi.mocked(api.listPullRequests)
+const listGitHubIssues = vi.mocked(api.listGitHubIssues)
 const refreshGitHub = vi.mocked(api.refreshGitHub)
 
 const githubViewResponse = {
@@ -117,6 +119,46 @@ const githubViewResponse = {
     },
   ],
   filters: { authors: ["octocat"], labels: [] },
+}
+
+const githubIssueViewResponse = {
+  items: [
+    {
+      id: "issue-row-5",
+      repositoryId: "repo-1",
+      number: 5,
+      title: "Login redirect loops",
+      state: "open" as const,
+      authorLogin: "hubot",
+      authorAvatarUrl: null,
+      url: "https://github.com/acme/web/issues/5",
+      labels: [{ name: "bug", color: "d73a4a" }],
+      assignees: [{ login: "octocat", avatarUrl: null }],
+      commentCount: 3,
+      bodyExcerpt: null,
+      githubCreatedAt: "2026-10-01T09:00:00.000Z",
+      githubUpdatedAt: "2026-10-05T11:00:00.000Z",
+      closedAt: null,
+      syncedAt: "2026-10-10T12:00:00.000Z",
+      repository: "acme/web",
+      linkedIssues: [],
+    },
+  ],
+  nextCursor: null,
+  lastSyncedAt: "2026-10-10T12:00:00.000Z",
+  connection: { status: "active" as const, login: "octocat" },
+  repositories: [
+    {
+      id: "repo-1",
+      fullName: "acme/web",
+      issuesEnabled: true,
+      unavailable: false,
+    },
+  ],
+  filters: {
+    authors: ["hubot"],
+    labels: [{ name: "bug", color: "d73a4a" }],
+  },
 }
 
 const workspaces: Workspace[] = [
@@ -194,6 +236,7 @@ beforeEach(() => {
     connection: null,
   })
   listPullRequests.mockResolvedValue(githubViewResponse)
+  listGitHubIssues.mockResolvedValue(githubIssueViewResponse)
   refreshGitHub.mockResolvedValue({
     accepted: true,
     enqueued: 1,
@@ -1082,6 +1125,72 @@ describe("URL as the state store", () => {
     expect(screen.queryByRole("button", { name: "New issue" })).toBeNull()
     expect(
       await screen.findByRole("table", { name: "Pull requests" })
+    ).toBeInTheDocument()
+  })
+
+  test("a GitHub Issues deep link renders the Issues tab and keeps its URL", async () => {
+    window.history.replaceState(null, "", "/acme/WEB/github/issues")
+    renderShell()
+
+    expect(
+      await screen.findByRole("heading", { name: /web github view/i })
+    ).toBeInTheDocument()
+    expect(
+      await screen.findByRole("tab", { name: "GitHub Issues" })
+    ).toHaveAttribute("aria-selected", "true")
+    expect(await screen.findByText("Login redirect loops")).toBeInTheDocument()
+    expect(listGitHubIssues).toHaveBeenCalledWith("pr-1", {
+      state: "open",
+      author: "",
+      label: "",
+      q: "",
+    })
+    expect(listPullRequests).not.toHaveBeenCalled()
+    expect(window.location.pathname).toBe("/acme/WEB/github/issues")
+  })
+
+  test("GitHub Issues filters update the query string and keep the Issues path", async () => {
+    const user = userEvent.setup()
+    window.history.replaceState(null, "", "/acme/WEB/github/issues")
+    renderShell()
+    await screen.findByRole("table", { name: "GitHub issues" })
+
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "GitHub issue label" }),
+      "bug"
+    )
+    await waitFor(() => expect(window.location.search).toContain("label=bug"))
+    expect(window.location.pathname).toBe("/acme/WEB/github/issues")
+    expect(listGitHubIssues).toHaveBeenLastCalledWith(
+      "pr-1",
+      expect.objectContaining({
+        state: "open",
+        label: "bug",
+        author: "",
+        q: "",
+      })
+    )
+  })
+
+  test("an Issues-disabled repository explains the empty Issues tab", async () => {
+    listGitHubIssues.mockResolvedValueOnce({
+      ...githubIssueViewResponse,
+      items: [],
+      repositories: [
+        {
+          id: "repo-1",
+          fullName: "acme/web",
+          issuesEnabled: false,
+          unavailable: false,
+        },
+      ],
+      filters: { authors: [], labels: [] },
+    })
+    window.history.replaceState(null, "", "/acme/WEB/github/issues")
+    renderShell()
+
+    expect(
+      await screen.findByText("GitHub Issues are disabled on this repository.")
     ).toBeInTheDocument()
   })
 })

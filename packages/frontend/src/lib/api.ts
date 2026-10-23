@@ -317,6 +317,50 @@ export const githubRefreshResponseSchema = z.object({
   lastSyncedAt: z.string().nullable(),
 })
 
+/** Label chip on a GitHub Issue row, colored by GitHub's hex value. */
+export const githubLabelSchema = z.object({
+  name: z.string(),
+  color: z.string(),
+})
+
+export const githubAssigneeSchema = z.object({
+  login: z.string(),
+  avatarUrl: z.string().nullable(),
+})
+
+export const githubIssueStateSchema = z.enum(["open", "closed"])
+
+/** Cached GitHub Issue plus its repository name and linked Issue chips. */
+export const githubIssueRowSchema = z.object({
+  id: z.string(),
+  repositoryId: z.string(),
+  number: z.number(),
+  title: z.string(),
+  state: githubIssueStateSchema,
+  authorLogin: z.string(),
+  authorAvatarUrl: z.string().nullable(),
+  url: z.string(),
+  labels: z.array(githubLabelSchema),
+  assignees: z.array(githubAssigneeSchema),
+  commentCount: z.number(),
+  bodyExcerpt: z.string().nullable(),
+  githubCreatedAt: z.string(),
+  githubUpdatedAt: z.string(),
+  closedAt: z.string().nullable(),
+  syncedAt: z.string(),
+  repository: z.string(),
+  linkedIssues: z.array(linkedIssueRefSchema),
+})
+
+export const githubIssueListResponseSchema = z.object({
+  items: z.array(githubIssueRowSchema),
+  nextCursor: z.string().nullable(),
+  lastSyncedAt: z.string().nullable(),
+  connection: projectConnectionSchema.nullable(),
+  repositories: z.array(githubViewRepositorySchema),
+  filters: githubViewFiltersSchema,
+})
+
 export const commentSchema = z.object({
   id: z.string(),
   issueId: z.string(),
@@ -486,9 +530,26 @@ export type PullRequestListResponse = z.infer<
   typeof pullRequestListResponseSchema
 >
 export type GitHubRefreshResponse = z.infer<typeof githubRefreshResponseSchema>
+export type GitHubLabel = z.infer<typeof githubLabelSchema>
+export type GitHubAssignee = z.infer<typeof githubAssigneeSchema>
+export type GitHubIssueState = z.infer<typeof githubIssueStateSchema>
+export type GitHubIssueRow = z.infer<typeof githubIssueRowSchema>
+export type GitHubIssueListResponse = z.infer<
+  typeof githubIssueListResponseSchema
+>
 
 /** Query accepted by the Pull Request list; empty values are skipped. */
 export interface ListPullRequestsFilters {
+  state?: string
+  author?: string
+  label?: string
+  q?: string
+  cursor?: string | null
+  limit?: number
+}
+
+/** Query accepted by the GitHub Issue list; empty values are skipped. */
+export interface ListGitHubIssuesFilters {
   state?: string
   author?: string
   label?: string
@@ -1058,6 +1119,24 @@ export const api = {
       `/api/projects/${projectId}/github/refresh`,
       githubRefreshResponseSchema,
       { method: "POST", body: {} }
+    )
+  },
+
+  listGitHubIssues(
+    projectId: string,
+    filters: ListGitHubIssuesFilters = {}
+  ): Promise<GitHubIssueListResponse> {
+    const params = new URLSearchParams()
+    if (filters.state?.trim()) params.set("state", filters.state.trim())
+    if (filters.author?.trim()) params.set("author", filters.author.trim())
+    if (filters.label?.trim()) params.set("label", filters.label.trim())
+    if (filters.q?.trim()) params.set("q", filters.q.trim())
+    if (filters.cursor) params.set("cursor", filters.cursor)
+    if (filters.limit !== undefined) params.set("limit", String(filters.limit))
+    const suffix = params.toString() ? `?${params.toString()}` : ""
+    return request(
+      `/api/projects/${projectId}/github/issues${suffix}`,
+      githubIssueListResponseSchema
     )
   },
 }
