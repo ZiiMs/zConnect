@@ -119,12 +119,14 @@ function response(
         fullName: "acme/web",
         issuesEnabled: true,
         unavailable: false,
+        lastSyncedAt: "2026-10-10T12:00:00.000Z",
       },
       {
         id: "repo-2",
         fullName: "acme/api",
         issuesEnabled: true,
         unavailable: false,
+        lastSyncedAt: "2026-10-10T12:00:00.000Z",
       },
     ],
     filters: { authors: ["hubot", "octocat"], labels: [] },
@@ -204,12 +206,14 @@ function issueResponse(
         fullName: "acme/web",
         issuesEnabled: true,
         unavailable: false,
+        lastSyncedAt: "2026-10-10T12:00:00.000Z",
       },
       {
         id: "repo-2",
         fullName: "acme/api",
         issuesEnabled: true,
         unavailable: false,
+        lastSyncedAt: "2026-10-10T12:00:00.000Z",
       },
     ],
     filters: {
@@ -746,6 +750,7 @@ describe("github view", () => {
             fullName: "acme/web",
             issuesEnabled: false,
             unavailable: false,
+            lastSyncedAt: "2026-10-10T12:00:00.000Z",
           },
         ],
         filters: { authors: [], labels: [] },
@@ -759,6 +764,46 @@ describe("github view", () => {
     expect(
       screen.queryByRole("combobox", { name: "GitHub issue state" })
     ).toBeNull()
+  })
+
+  test("a partially Issues-disabled project keeps the filters and names the disabled repository", async () => {
+    window.history.replaceState(null, "", "/acme/WEB/github/issues")
+    listGitHubIssues.mockResolvedValueOnce(
+      issueResponse({
+        items: [],
+        repositories: [
+          {
+            id: "repo-1",
+            fullName: "acme/web",
+            issuesEnabled: false,
+            unavailable: false,
+            lastSyncedAt: "2026-10-10T12:00:00.000Z",
+          },
+          {
+            id: "repo-2",
+            fullName: "acme/api",
+            issuesEnabled: true,
+            unavailable: false,
+            lastSyncedAt: "2026-10-10T12:00:00.000Z",
+          },
+        ],
+        filters: { authors: [], labels: [] },
+      })
+    )
+    renderView("issues")
+
+    expect(
+      await screen.findByText("No open GitHub issues.")
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText("GitHub Issues are disabled on acme/web.")
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole("combobox", { name: "GitHub issue state" })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText(/disabled on this repository/i)
+    ).not.toBeInTheDocument()
   })
 
   test("Issues empty states: no connection, no repositories, no open issues", async () => {
@@ -792,11 +837,35 @@ describe("github view", () => {
 
   test("auto-refreshes a stale snapshot once per mount", async () => {
     const user = userEvent.setup()
+    const fresh = new Date().toISOString()
+    // One fresh repository must not hide an older sibling: the project-wide
+    // newest timestamp is fresh, but acme/api has never been refreshed.
+    listPullRequests.mockResolvedValue(
+      response({
+        lastSyncedAt: fresh,
+        repositories: [
+          {
+            id: "repo-1",
+            fullName: "acme/web",
+            issuesEnabled: true,
+            unavailable: false,
+            lastSyncedAt: fresh,
+          },
+          {
+            id: "repo-2",
+            fullName: "acme/api",
+            issuesEnabled: true,
+            unavailable: false,
+            lastSyncedAt: "2020-01-01T00:00:00.000Z",
+          },
+        ],
+      })
+    )
     renderView()
     await screen.findByRole("table", { name: "Pull requests" })
 
     await waitFor(() => expect(refreshGitHub).toHaveBeenCalledTimes(1))
-    expect(refreshGitHub).toHaveBeenCalledWith("pr-1")
+    expect(refreshGitHub).toHaveBeenCalledWith("pr-1", { automatic: true })
 
     // A filter change reloads the list but never re-fires the refresh.
     await user.selectOptions(
@@ -808,15 +877,26 @@ describe("github view", () => {
   })
 
   test("auto-refreshes a project that never synced", async () => {
-    listPullRequests.mockResolvedValue(response({ lastSyncedAt: null }))
+    const repositories = response().repositories.map((repository) => ({
+      ...repository,
+      lastSyncedAt: null,
+    }))
+    listPullRequests.mockResolvedValue(
+      response({ lastSyncedAt: null, repositories })
+    )
     renderView()
     await screen.findByRole("table", { name: "Pull requests" })
     await waitFor(() => expect(refreshGitHub).toHaveBeenCalledTimes(1))
   })
 
   test("does not auto-refresh a snapshot younger than five minutes", async () => {
+    const fresh = new Date().toISOString()
+    const repositories = response().repositories.map((repository) => ({
+      ...repository,
+      lastSyncedAt: fresh,
+    }))
     listPullRequests.mockResolvedValue(
-      response({ lastSyncedAt: new Date().toISOString() })
+      response({ lastSyncedAt: fresh, repositories })
     )
     renderView()
     await screen.findByRole("table", { name: "Pull requests" })
@@ -875,12 +955,14 @@ describe("github view", () => {
             fullName: "acme/web",
             issuesEnabled: true,
             unavailable: true,
+            lastSyncedAt: "2026-10-10T12:00:00.000Z",
           },
           {
             id: "repo-2",
             fullName: "acme/api",
             issuesEnabled: true,
             unavailable: false,
+            lastSyncedAt: "2026-10-10T12:00:00.000Z",
           },
         ],
       })
@@ -899,8 +981,13 @@ describe("github view", () => {
 
   test("a throttled refresh reports a retry hint without dropping the rows", async () => {
     const user = userEvent.setup()
+    const fresh = new Date().toISOString()
+    const repositories = response().repositories.map((repository) => ({
+      ...repository,
+      lastSyncedAt: fresh,
+    }))
     listPullRequests.mockResolvedValue(
-      response({ lastSyncedAt: new Date().toISOString() })
+      response({ lastSyncedAt: fresh, repositories })
     )
     refreshGitHub.mockRejectedValueOnce(
       new ApiError(429, "Refresh throttled", 30)

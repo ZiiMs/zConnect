@@ -5,17 +5,16 @@ import { GitHubLinkDialog } from "@/components/github-link-dialog"
 import { ProjectNavTabs } from "@/components/project-nav-tabs"
 import { PullRequestTable } from "@/components/pull-request-rows"
 import { Button } from "@/components/ui/button"
+import { useGitHubList } from "@/hooks/use-github-list"
 import { navigate } from "@/hooks/use-pathname"
 import {
   ApiError,
   api,
-  type GitHubIssueListResponse,
   type GitHubIssueRow,
   type GitHubItemKind,
   type Issue,
   type LinkedIssueRef,
   type Project,
-  type PullRequestListResponse,
   type PullRequestRow,
   type Workspace,
 } from "@/lib/api"
@@ -82,18 +81,8 @@ export function GitHubView({
   )
   // The text draft keeps every keystroke while the filtered query reloads.
   const [queryDraft, setQueryDraft] = useState(filters.q)
-  const [data, setData] = useState<PullRequestListResponse | null>(null)
-  const [items, setItems] = useState<PullRequestRow[]>([])
-  const [cursor, setCursor] = useState<string | null>(null)
-  const [issueData, setIssueData] = useState<GitHubIssueListResponse | null>(
-    null
-  )
-  const [issueItems, setIssueItems] = useState<GitHubIssueRow[]>([])
-  const [issueCursor, setIssueCursor] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [loadingMore, setLoadingMore] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [refreshError, setRefreshError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
   // The Issues endpoint accepts open/closed/all; a Pull Request state that
@@ -108,109 +97,61 @@ export function GitHubView({
     null
   )
 
-  useEffect(() => {
-    if (tab !== "pull-requests") return
-    // A manual Refresh bumps reloadKey; the value itself is not read.
-    void reloadKey
-    let cancelled = false
-    setLoading(true)
-    setError(null)
-    void api
-      .listPullRequests(project.id, {
-        state: filters.state,
-        author: filters.author,
-        label: filters.label,
-        q: filters.q,
-      })
-      .then((response) => {
-        if (cancelled) return
-        setData(response)
-        setItems(response.items)
-        setCursor(response.nextCursor)
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setError(errorMessage(err))
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [
-    project.id,
-    tab,
-    filters.state,
-    filters.author,
-    filters.label,
-    filters.q,
+  // One pipeline per tab; the inactive one neither loads nor pages.
+  const pullRequests = useGitHubList<PullRequestRow>({
+    active: tab === "pull-requests",
+    projectId: project.id,
+    filters: {
+      state: filters.state,
+      author: filters.author,
+      label: filters.label,
+      q: filters.q,
+    },
     reloadKey,
-  ])
-
-  useEffect(() => {
-    if (tab !== "issues") return
-    // A manual Refresh bumps reloadKey; the value itself is not read.
-    void reloadKey
-    let cancelled = false
-    setLoading(true)
-    setError(null)
-    void api
-      .listGitHubIssues(project.id, {
-        state: issueState,
-        author: filters.author,
-        label: filters.label,
-        q: filters.q,
-      })
-      .then((response) => {
-        if (cancelled) return
-        setIssueData(response)
-        setIssueItems(response.items)
-        setIssueCursor(response.nextCursor)
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setError(errorMessage(err))
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [
-    project.id,
-    tab,
-    issueState,
-    filters.author,
-    filters.label,
-    filters.q,
+    fetchPage: api.listPullRequests,
+  })
+  const issues = useGitHubList<GitHubIssueRow>({
+    active: tab === "issues",
+    projectId: project.id,
+    filters: {
+      state: issueState,
+      author: filters.author,
+      label: filters.label,
+      q: filters.q,
+    },
     reloadKey,
-  ])
+    fetchPage: api.listGitHubIssues,
+  })
+  const activeList = tab === "issues" ? issues : pullRequests
+  const activeData = activeList.data
+  const loading = activeList.loading
+  const error = activeList.error
 
-  // Freshness (#51): when the snapshot on screen is older than five minutes
-  // (or has never synced), ask the backend once per mount. The cached rows
-  // stay visible; a throttled or failed request must not disturb them.
+  // Freshness (#51): when ANY linked repository is older than five minutes
+  // (or has never synced), ask the backend once per mount. Comparing only the
+  // newest timestamp would let one fresh repository hide an older sibling.
+  // The cached rows stay visible; a throttled or failed request must not
+  // disturb them.
   useEffect(() => {
     if (autoRefreshed.current) return
-    const active = tab === "issues" ? issueData : data
-    if (!active?.connection || active.repositories.length === 0) return
+    if (!activeData?.connection || activeData.repositories.length === 0) return
     // A paused Connection cannot sync; the banner explains why.
-    if (active.connection.status === "reconnect_required") return
-    const last = active.lastSyncedAt
-    if (
-      last !== null &&
-      Date.now() - new Date(last).getTime() <= STALE_AFTER_MS
-    ) {
-      return
-    }
+    if (activeData.connection.status === "reconnect_required") return
+    const stale = activeData.repositories.some((repository) => {
+      if (repository.lastSyncedAt === null) return true
+      return (
+        Date.now() - new Date(repository.lastSyncedAt).getTime() >
+        STALE_AFTER_MS
+      )
+    })
+    if (!stale) return
     autoRefreshed.current = true
-    void (async () => {
-      try {
-        await api.refreshGitHub(project.id)
-      } catch {
-        // Throttled or offline: keep serving the snapshot and its stale mark.
-      }
-    })()
-  }, [tab, data, issueData, project.id])
+    // Opening the view is a separate enqueue path from the manual button: it
+    // carries the automatic flag so it never consumes the manual throttle.
+    void api.refreshGitHub(project.id, { automatic: true }).catch(() => {
+      // Throttled or offline: keep serving the snapshot and its stale mark.
+    })
+  }, [activeData, project.id])
 
   const updateFilters = useCallback(
     (patch: Partial<GitHubViewFilters>) => {
@@ -231,46 +172,10 @@ export function GitHubView({
     [workspace.name, project.key, tab]
   )
 
-  async function loadMore() {
-    const activeCursor = tab === "issues" ? issueCursor : cursor
-    if (!activeCursor || loadingMore) return
-    setLoadingMore(true)
-    setError(null)
-    try {
-      if (tab === "issues") {
-        const response = await api.listGitHubIssues(project.id, {
-          state: issueState,
-          author: filters.author,
-          label: filters.label,
-          q: filters.q,
-          cursor: activeCursor,
-        })
-        setIssueData(response)
-        setIssueItems((current) => [...current, ...response.items])
-        setIssueCursor(response.nextCursor)
-      } else {
-        const response = await api.listPullRequests(project.id, {
-          state: filters.state,
-          author: filters.author,
-          label: filters.label,
-          q: filters.q,
-          cursor: activeCursor,
-        })
-        setData(response)
-        setItems((current) => [...current, ...response.items])
-        setCursor(response.nextCursor)
-      }
-    } catch (err) {
-      setError(errorMessage(err))
-    } finally {
-      setLoadingMore(false)
-    }
-  }
-
   async function refresh() {
     if (refreshing) return
     setRefreshing(true)
-    setError(null)
+    setRefreshError(null)
     setNotice(null)
     try {
       const response = await api.refreshGitHub(project.id)
@@ -289,7 +194,7 @@ export function GitHubView({
           }.`
         )
       } else {
-        setError(errorMessage(err))
+        setRefreshError(errorMessage(err))
       }
     } finally {
       setRefreshing(false)
@@ -311,23 +216,22 @@ export function GitHubView({
     })
   }
 
-  const activeData = tab === "issues" ? issueData : data
-  const activeItems = tab === "issues" ? issueItems : items
-  const activeCursor = tab === "issues" ? issueCursor : cursor
+  const activeItems = activeList.items
+  const activeCursor = activeList.cursor
   const lastSyncedAt = activeData?.lastSyncedAt ?? null
 
   function handleLinked(linkedIssues: LinkedIssueRef[]) {
     const target = linkTarget
     if (!target) return
     if (target.kind === "issue") {
-      setIssueItems((current) =>
+      issues.setItems((current) =>
         current.map((row) =>
           row.id === target.rowId ? { ...row, linkedIssues } : row
         )
       )
       return
     }
-    setItems((current) =>
+    pullRequests.setItems((current) =>
       current.map((row) =>
         row.id === target.rowId ? { ...row, linkedIssues } : row
       )
@@ -344,7 +248,12 @@ export function GitHubView({
 
   const stale =
     lastSyncedAt !== null &&
-    Date.now() - new Date(lastSyncedAt).getTime() > STALE_AFTER_MS
+    (activeData?.repositories ?? []).some(
+      (repository) =>
+        repository.lastSyncedAt === null ||
+        Date.now() - new Date(repository.lastSyncedAt).getTime() >
+          STALE_AFTER_MS
+    )
   const unavailableRepositories = new Set(
     (activeData?.repositories ?? [])
       .filter((repository) => repository.unavailable)
@@ -355,13 +264,13 @@ export function GitHubView({
   const hasRepositories = (activeData?.repositories.length ?? 0) > 0
   const hasFilters =
     filters.author !== "" || filters.q !== "" || filters.label !== ""
+  const disabledRepositories = (activeData?.repositories ?? []).filter(
+    (repository) => !repository.issuesEnabled
+  )
   const issuesDisabled =
     tab === "issues" &&
     hasRepositories &&
-    (activeData?.repositories.every(
-      (repository) => !repository.issuesEnabled
-    ) ??
-      false)
+    disabledRepositories.length === (activeData?.repositories.length ?? 0)
   const issuesDisabledMessage =
     (activeData?.repositories.length ?? 0) > 1
       ? "GitHub Issues are disabled on these repositories."
@@ -450,6 +359,9 @@ export function GitHubView({
         </p>
       )}
       {error && <p className="text-destructive text-sm">{error}</p>}
+      {!error && refreshError && (
+        <p className="text-destructive text-sm">{refreshError}</p>
+      )}
       {notice && (
         <p role="status" className="text-muted-foreground text-sm">
           {notice}
@@ -642,18 +554,27 @@ export function GitHubView({
                   </div>
 
                   {activeItems.length === 0 ? (
-                    <p className="text-muted-foreground text-sm">
-                      {tab === "issues"
-                        ? filters.state === "open" && !hasFilters
-                          ? "No open GitHub issues."
-                          : "No GitHub issues match the current filters."
-                        : filters.state === "open" && !hasFilters
-                          ? "No open pull requests."
-                          : "No pull requests match the current filters."}
-                    </p>
+                    <div className="flex flex-col gap-1">
+                      <p className="text-muted-foreground text-sm">
+                        {tab === "issues"
+                          ? filters.state === "open" && !hasFilters
+                            ? "No open GitHub issues."
+                            : "No GitHub issues match the current filters."
+                          : filters.state === "open" && !hasFilters
+                            ? "No open pull requests."
+                            : "No pull requests match the current filters."}
+                      </p>
+                      {tab === "issues" && disabledRepositories.length > 0 && (
+                        <p className="text-muted-foreground text-xs">
+                          {`GitHub Issues are disabled on ${disabledRepositories
+                            .map((repository) => repository.fullName)
+                            .join(", ")}.`}
+                        </p>
+                      )}
+                    </div>
                   ) : tab === "issues" ? (
                     <GitHubIssueTable
-                      rows={issueItems}
+                      rows={issues.items}
                       showRepository={showRepository}
                       unavailableRepositories={unavailableRepositories}
                       canWrite={canWrite}
@@ -679,7 +600,7 @@ export function GitHubView({
                     />
                   ) : (
                     <PullRequestTable
-                      rows={items}
+                      rows={pullRequests.items}
                       showRepository={showRepository}
                       canWrite={canWrite}
                       onLink={(row) =>
@@ -710,10 +631,10 @@ export function GitHubView({
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={loadMore}
-                        disabled={loadingMore}
+                        onClick={() => void activeList.loadMore()}
+                        disabled={activeList.loadingMore}
                       >
-                        {loadingMore ? "Loading…" : "Load more"}
+                        {activeList.loadingMore ? "Loading…" : "Load more"}
                       </Button>
                     </div>
                   )}
