@@ -631,3 +631,89 @@ describe("project repositories api client", () => {
     expect(result).toEqual({ items: [], connection: null })
   })
 })
+
+describe("github view api client", () => {
+  const row = {
+    id: "pr-row-1",
+    repositoryId: "repo-1",
+    number: 12,
+    title: "Add the GitHub View",
+    state: "open",
+    draft: false,
+    authorLogin: "octocat",
+    authorAvatarUrl: null,
+    url: "https://github.com/acme/web/pull/12",
+    sourceBranch: "feature/github-view",
+    targetBranch: "main",
+    checksState: "success",
+    reviewDecision: "approved",
+    commentCount: 2,
+    bodyExcerpt: null,
+    githubCreatedAt: "2026-10-01T10:00:00.000Z",
+    githubUpdatedAt: "2026-10-02T11:00:00.000Z",
+    mergedAt: null,
+    closedAt: null,
+    syncedAt: "2026-10-10T12:00:00.000Z",
+    repository: "acme/web",
+    linkedIssues: [],
+  }
+
+  test("listPullRequests sends the filters and parses the envelope", async () => {
+    const fetchMock = mockFetchOnce({
+      items: [row],
+      nextCursor: "cursor-2",
+      lastSyncedAt: "2026-10-10T12:00:00.000Z",
+      connection: { status: "active", login: "octocat" },
+      repositories: [
+        {
+          id: "repo-1",
+          fullName: "acme/web",
+          issuesEnabled: true,
+          unavailable: false,
+        },
+      ],
+      filters: { authors: ["octocat"], labels: [] },
+    })
+
+    const result = await api.listPullRequests("pr-1", {
+      state: "merged",
+      author: "octocat",
+      q: "view",
+      cursor: "cursor-1",
+      limit: 30,
+    })
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/projects/pr-1/github/pull-requests?")
+    expect(url).toContain("state=merged")
+    expect(url).toContain("author=octocat")
+    expect(url).toContain("q=view")
+    expect(url).toContain("cursor=cursor-1")
+    expect(url).toContain("limit=30")
+    expect(result.items[0]).toMatchObject({
+      number: 12,
+      repository: "acme/web",
+      checksState: "success",
+    })
+    expect(result.filters.authors).toEqual(["octocat"])
+  })
+
+  test("refreshGitHub posts and retries through ApiError", async () => {
+    const fetchMock = mockFetchOnce({
+      accepted: true,
+      enqueued: 2,
+      lastSyncedAt: null,
+    })
+
+    const result = await api.refreshGitHub("pr-1")
+
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/projects/pr-1/github/refresh")
+    expect(options.method).toBe("POST")
+    expect(result).toEqual({
+      accepted: true,
+      enqueued: 2,
+      lastSyncedAt: null,
+    })
+  })
+})

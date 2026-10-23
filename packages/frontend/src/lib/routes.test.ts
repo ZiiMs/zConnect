@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest"
 import {
+  buildGitHubPath,
   buildInboxPath,
   buildInvitePath,
   buildIssuePath,
@@ -43,6 +44,14 @@ describe("routes", () => {
   test("builds project, settings, my-issues, inbox, and new-project paths", () => {
     expect(buildProjectPath("Acme Corp", "WEB")).toBe("/acme-corp/WEB")
     expect(buildProjectPath("Acme", "web")).toBe("/acme/WEB")
+    expect(buildGitHubPath("Acme Corp", "WEB")).toBe("/acme-corp/WEB/github")
+    expect(buildGitHubPath("Acme", "web")).toBe("/acme/WEB/github")
+    expect(buildGitHubPath("Acme", "WEB", "pull-requests")).toBe(
+      "/acme/WEB/github"
+    )
+    expect(buildGitHubPath("Acme", "WEB", "issues")).toBe(
+      "/acme/WEB/github/issues"
+    )
     expect(buildSettingsPath("Acme")).toBe("/acme/settings")
     expect(buildSettingsPath("Acme", "general")).toBe("/acme/settings/general")
     expect(buildSettingsPath("Acme", "workflow")).toBe(
@@ -97,11 +106,39 @@ describe("routes", () => {
       workspaceSlug: "acme",
       section: "project",
       projectKey: "WEB",
+      projectView: "issues",
+      githubTab: "pull-requests",
     })
     expect(parseAppPath("/acme/web")).toMatchObject({
       workspaceSlug: "acme",
       section: "project",
       projectKey: "WEB",
+      projectView: "issues",
+    })
+    expect(parseAppPath("/acme/WEB/github")).toMatchObject({
+      workspaceSlug: "acme",
+      section: "project",
+      projectKey: "WEB",
+      projectView: "github",
+      githubTab: "pull-requests",
+    })
+    // The view literal is case-insensitive; a title slug after `github` is
+    // ignored, and `issues` selects the second GitHub View tab.
+    expect(parseAppPath("/Acme/Web/GITHUB")).toMatchObject({
+      workspaceSlug: "acme",
+      projectKey: "WEB",
+      projectView: "github",
+      githubTab: "pull-requests",
+    })
+    expect(parseAppPath("/acme/WEB/github/ISSUES")).toMatchObject({
+      workspaceSlug: "acme",
+      projectKey: "WEB",
+      projectView: "github",
+      githubTab: "issues",
+    })
+    expect(parseAppPath("/acme/WEB/github/issues/extra")).toMatchObject({
+      projectView: "github",
+      githubTab: "issues",
     })
     expect(parseAppPath("/acme/settings")).toMatchObject({
       workspaceSlug: "acme",

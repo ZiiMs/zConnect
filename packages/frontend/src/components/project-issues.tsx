@@ -15,6 +15,7 @@ import { IssueFilterPresetTabs } from "@/components/issue-filter-preset-tabs"
 import { IssueList } from "@/components/issue-list"
 import { IssueTable } from "@/components/issue-table"
 import { KanbanBoard } from "@/components/kanban-board"
+import { ProjectNavTabs } from "@/components/project-nav-tabs"
 import {
   LiveIssueBridge,
   LiveIssuesBridge,
@@ -112,6 +113,7 @@ export function saveIssueView(
 
 export function ProjectIssues({
   project,
+  workspaceName,
   userId,
   canWrite,
   canAdmin = false,
@@ -121,6 +123,8 @@ export function ProjectIssues({
   onCloseIssue,
 }: {
   project: Project
+  /** Workspace name for the Issues | GitHub nav row; omitted in embeds. */
+  workspaceName?: string
   userId: string
   canWrite: boolean
   /** Owner/Admin: enables permanent deletion in the row actions. */
@@ -694,6 +698,7 @@ export function ProjectIssues({
    * shell's `deepIssue` or a direct `getIssue` fetch scoped to this project.
    */
   const urlControlled = activeIssueIdentifier !== undefined
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the URL identifier is the trigger; selected rows are read from the latest render and adding them would re-run this effect on every poll/refresh.
   useEffect(() => {
     if (!urlControlled) return
     const wanted =
@@ -850,6 +855,13 @@ export function ProjectIssues({
         >
           <span aria-hidden="true">{starred ? "★" : "☆"}</span>
         </button>
+        {workspaceName && (
+          <ProjectNavTabs
+            workspaceName={workspaceName}
+            projectKey={project.key}
+            current="issues"
+          />
+        )}
         {/* Hidden until the first-visit preset is resolved: before the statuses
             arrive no preset describes the query, and "All Issues" would blink. */}
         {presetResolved && (
