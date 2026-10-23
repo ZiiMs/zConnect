@@ -268,23 +268,6 @@ export const issueLabel = pgTable(
 )
 
 /**
- * GitHub App installs + External Links (T6). Vocabulary per GLOSSARY.md:
- * External Link (never Integration/Sync). An install is workspace-level and
- * scoped to chosen `owner/repo` names; links cache PR title/state from
- * webhook payloads only (no live GitHub reads); merge is badge-only.
- */
-export const githubInstall = pgTable("github_install", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  workspaceId: uuid("workspace_id")
-    .notNull()
-    .references(() => workspace.id, { onDelete: "cascade" }),
-  repos: text("repos").array().notNull().default([]),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-})
-
-/**
  * GitHub Connection (ADR-0005): one OAuth App authorization per Workspace.
  * `encryptedAccessToken` is the versioned AES-256-GCM payload; it is never
  * returned by the API. `login` is display/audit only.

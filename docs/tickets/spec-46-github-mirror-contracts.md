@@ -421,6 +421,13 @@ export interface GitProvider {
 - `bodyExcerpt`: first 400 characters of the body, whitespace collapsed, trimmed; `null`
   when the body is empty. The adapter computes it; the sync engine never fetches bodies.
 - `resolve*States` treats "not found" as closed. Batch ≤ 50 numbers per request.
+- `GitProvider extends GitHubRemote` (the interface #47 created in
+  `github/connection-routes.ts`): `listRepositories(accessToken, query?)` and
+  `getViewerLogin(accessToken)`. `RemoteRepository` stays defined in `github/store.ts` and is
+  imported here. The real adapter is ONE object satisfying both, so `index.ts` passes it as
+  the connection app's `remote` and the sync/view apps' `provider`. #47's
+  `github/repository-source.ts` is folded into `github/github-provider.ts` (keep the REST
+  repository listing logic, delete the duplicate module).
 - The GitHub adapter is `createGitHubProvider(fetchImpl?)`: GraphQL for open PRs/issues,
   REST for repository listing (pagination), GraphQL aliases for state resolution. It must
   never be imported by tests. The fake lives in `github/fake-provider.ts`:

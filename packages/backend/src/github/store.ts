@@ -6,12 +6,6 @@
  */
 import type { ExternalLinkKind } from "./parse.js"
 
-export interface GitHubInstall {
-  id: string
-  workspaceId: string
-  repos: string[]
-}
-
 export type ExternalLinkState = "open" | "merged" | "closed"
 
 export interface ExternalLink {
@@ -105,10 +99,6 @@ export interface RemoteRepository {
 }
 
 export interface GitHubStore {
-  createInstall(workspaceId: string, repos: string[]): Promise<GitHubInstall>
-  listInstalls(workspaceId: string): Promise<GitHubInstall[]>
-  /** Workspace install covering `owner/repo`, or null when not installed. */
-  findInstallByRepo(fullName: string): Promise<GitHubInstall | null>
   /**
    * Creates an External Link, deduped by issue plus URL so webhook
    * redelivery never duplicates the badge.
@@ -227,7 +217,6 @@ function invalid(message: string): Error {
 export function createMemoryGitHubStore(
   options: MemoryGitHubStoreOptions = {}
 ): GitHubStore {
-  const installs = new Map<string, GitHubInstall>()
   const links = new Map<string, ExternalLink>()
   const deliveries = new Set<string>()
   const connections = new Map<string, GitHubConnectionSecret>()
@@ -289,32 +278,6 @@ export function createMemoryGitHubStore(
   }
 
   return {
-    async createInstall(workspaceId, repos) {
-      const install: GitHubInstall = {
-        id: crypto.randomUUID(),
-        workspaceId,
-        repos: [...repos],
-      }
-      installs.set(install.id, install)
-      return { ...install, repos: [...install.repos] }
-    },
-
-    async listInstalls(workspaceId) {
-      return [...installs.values()]
-        .filter((i) => i.workspaceId === workspaceId)
-        .map((i) => ({ ...i, repos: [...i.repos] }))
-    },
-
-    async findInstallByRepo(fullName) {
-      const lower = fullName.toLowerCase()
-      for (const install of installs.values()) {
-        if (install.repos.some((r) => r.toLowerCase() === lower)) {
-          return { ...install, repos: [...install.repos] }
-        }
-      }
-      return null
-    },
-
     async createExternalLink(issueId, input) {
       for (const link of links.values()) {
         if (link.issueId === issueId && link.url === input.url) {

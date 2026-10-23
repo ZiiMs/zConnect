@@ -1,9 +1,10 @@
 /**
  * Webhook job handler (T6 – External Links). Processes one typed
  * `github-webhook` queue job: resolves KEY-N references from the PR branch
- * and body against the installed workspace, upserts External Links with the
- * cached PR title/state, and appends a `github.*` Activity Event. Merge is
- * badge-only: the handler never moves Issue Status.
+ * and body against the workspace whose GitHub Connection selected the
+ * repository, upserts External Links with the cached PR title/state, and
+ * appends a `github.*` Activity Event. Merge is badge-only: the handler never
+ * moves Issue Status.
  */
 import { githubActivityDraft } from "../workspaces/activity.js"
 import type { WorkspaceStore } from "../workspaces/store.js"
@@ -76,8 +77,11 @@ export async function handlePullRequestEvent(
   }
   await github.markDeliveryProcessed(event.deliveryId)
 
-  const install = await github.findInstallByRepo(event.repoFullName)
-  if (!install) return { skipped: false, linked: [] }
+  const selected = await github.findRepositoryByRemoteFullName(
+    event.repoFullName
+  )
+  if (!selected) return { skipped: false, linked: [] }
+  const { connection } = selected
 
   // The spec parser line covers "branch name and PR body" extraction for PR
   // events; the PR title joins the extractor input as a superset because
@@ -90,7 +94,7 @@ export async function handlePullRequestEvent(
     const issue = await workspaces.getIssue(ref)
     if (!issue) continue
     const project = await workspaces.getProject(issue.projectId)
-    if (!project || project.workspaceId !== install.workspaceId) continue
+    if (!project || project.workspaceId !== connection.workspaceId) continue
 
     const existing = (await github.listExternalLinks(issue.id)).find(
       (link) => link.url === event.url
@@ -134,9 +138,9 @@ export async function handlePullRequestEvent(
  * Push-event auto-link (T6 follow-up to story 23 "auto-link when branch/PR
  * text contains WEB-123"). Creates kind=commit External Links for pushed
  * commits whose message contains KEY-N. Mirrors the PR path's T6 patterns:
- * delivery-id idempotency first, install scoping by repo, URL dedupe so
- * redelivery never duplicates, and badge-only behavior (commits carry no
- * open/merged state and never move Issue Status).
+ * delivery-id idempotency first, repository scoping by the Connection
+ * allowlist, URL dedupe so redelivery never duplicates, and badge-only
+ * behavior (commits carry no open/merged state and never move Issue Status).
  */
 export async function handlePushEvent(
   { workspaces, github }: HandlerDeps,
@@ -147,8 +151,11 @@ export async function handlePushEvent(
   }
   await github.markDeliveryProcessed(event.deliveryId)
 
-  const install = await github.findInstallByRepo(event.repoFullName)
-  if (!install) return { skipped: false, linked: [] }
+  const selected = await github.findRepositoryByRemoteFullName(
+    event.repoFullName
+  )
+  if (!selected) return { skipped: false, linked: [] }
+  const { connection } = selected
 
   const linked: string[] = []
 
@@ -158,7 +165,7 @@ export async function handlePushEvent(
       const issue = await workspaces.getIssue(ref)
       if (!issue) continue
       const project = await workspaces.getProject(issue.projectId)
-      if (!project || project.workspaceId !== install.workspaceId) continue
+      if (!project || project.workspaceId !== connection.workspaceId) continue
 
       const existing = (await github.listExternalLinks(issue.id)).find(
         (link) => link.url === commit.url
