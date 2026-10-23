@@ -32,6 +32,9 @@ const createIssueBody = z.object({
   kind: z.enum(["pr", "issue"]),
   repositoryId: z.string().trim().min(1),
   number: z.number().int().positive(),
+  /** Edits from the create dialog; absent falls back to the snapshot. */
+  title: z.string().trim().min(1).max(200).optional(),
+  description: z.string().trim().max(20_000).optional(),
 })
 
 export interface GitHubItemLinkResponse {
@@ -224,14 +227,17 @@ export function createGitHubItemApp({
     if (!status) return c.json({ error: "No Status available" }, 400)
 
     // The GitHub URL is the stable reference; the excerpt is context, omitted
-    // entirely when the item has no body.
+    // entirely when the item has no body. Dialog edits override either field
+    // independently; the External Link keeps the snapshot's own title/URL.
     const excerpt = item.bodyExcerpt?.trim() ?? ""
-    const description =
+    const snapshotDescription =
       excerpt.length > 0 ? `${item.url}\n\n${excerpt}` : item.url
+    const title = parsed.data.title ?? item.title
+    const description = parsed.data.description ?? snapshotDescription
     const actor = { type: "user" as const, id: session.user.id }
     const issue = await workspaces.createIssue(
       project.id,
-      { title: item.title, description, statusId: status.id },
+      { title, description, statusId: status.id },
       actor
     )
     // The creator follows their issue, matching the normal create route. The

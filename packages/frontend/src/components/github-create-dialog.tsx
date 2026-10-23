@@ -21,7 +21,8 @@ export function composeGitHubItemBody(
 /**
  * Create dialog (#53): a prefilled, editable composer for the Issue that will
  * carry the GitHub Item's External Link. The backend resolves the snapshot and
- * the project's default Status; the dialog only submits the item identity.
+ * the project's default Status; the dialog's title and body are submitted as
+ * overrides, so edits persist.
  */
 export function GitHubCreateDialog({
   open,
@@ -72,12 +73,14 @@ export function GitHubCreateDialog({
     setSending(true)
     setError(null)
     try {
-      // The server derives title/body/Status from the snapshot; the dialog is
-      // the review step, so it submits only the item identity.
+      // Send the current dialog values as overrides; the server defaults any
+      // omitted field to the snapshot and validates the lengths.
       const issue = await api.createIssueFromGitHubItem(projectId, {
         kind,
         repositoryId,
         number,
+        title: draftTitle.trim(),
+        description: draftBody.trim(),
       })
       onCreated(issue)
       onOpenChange(false)

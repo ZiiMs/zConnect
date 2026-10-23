@@ -664,12 +664,17 @@ DELETE /api/issues/:key/external-links/:id           issue write
     existing link.
   - Appends `github.linked` Activity Event on the target Issue.
   - → `201 { link: ExternalLink, issue: { id, identifier, title }, linkedIssues: LinkedIssueRef[] }`.
-- `create-issue` body `{ kind, repositoryId, number }`:
-  - Creates an Issue via `workspaces.createIssue(projectId, { title: snapshot.title,
-    description: body, statusId: <project default status> }, { type: "user", id: userId })`
-    where `body = "${url}\n\n${bodyExcerpt ?? ""}"` (no trailing blank line when the
-    excerpt is empty).
-  - Links it with the same External Link rules, appends `github.linked`.
+- `create-issue` body `{ kind, repositoryId, number, title?, description? }`:
+  - `title`/`description` are the create dialog's edited values. When present they
+    override the snapshot-derived values; both are trimmed, `title` must be 1–200
+    characters, `description` at most 20,000 (empty allowed). When absent, title =
+    snapshot title and body = `"${url}\n\n${bodyExcerpt ?? ""}"` (no trailing blank
+    line when the excerpt is empty).
+  - Creates an Issue via `workspaces.createIssue(projectId, { title, description,
+    statusId: <project default status> }, { type: "user", id: userId })`, falling back
+    to the project's first status when none is flagged default.
+  - The External Link still uses the snapshot `url`/`title`/`state`; append
+    `github.linked` once.
   - → `201 Issue`.
 - `DELETE /api/issues/:key/external-links/:id` → `200 { deleted: true }`; link must belong
   to that issue (`404`), issue write required (`403`). Idempotent `200` when already gone.

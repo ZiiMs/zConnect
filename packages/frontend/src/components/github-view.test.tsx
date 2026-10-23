@@ -645,6 +645,8 @@ describe("github view", () => {
         kind: "pr",
         repositoryId: "repo-1",
         number: 12,
+        title: "Add the GitHub View",
+        description: "https://github.com/acme/web/pull/12",
       })
     )
     await waitFor(() => expect(listPullRequests).toHaveBeenCalledTimes(2))
@@ -702,6 +704,8 @@ describe("github view", () => {
         kind: "issue",
         repositoryId: "repo-1",
         number: 5,
+        title: "Login redirect loops",
+        description: "https://github.com/acme/web/issues/5",
       })
     )
     await waitFor(() => expect(listGitHubIssues).toHaveBeenCalledTimes(2))

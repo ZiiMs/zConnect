@@ -856,6 +856,8 @@ describe("github item api client", () => {
       kind: "pr",
       repositoryId: "repo-1",
       number: 12,
+      title: "Ship the GitHub View",
+      description: "Tracking the review in GitHub.",
     })
 
     const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
@@ -865,6 +867,8 @@ describe("github item api client", () => {
       kind: "pr",
       repositoryId: "repo-1",
       number: 12,
+      title: "Ship the GitHub View",
+      description: "Tracking the review in GitHub.",
     })
     expect(result).toMatchObject({
       identifier: "WEB-7",

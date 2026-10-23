@@ -112,12 +112,36 @@ describe("github create dialog", () => {
         kind: "issue",
         repositoryId: "repo-1",
         number: 5,
+        title: "Fix the login redirect loop",
+        description:
+          "https://github.com/acme/web/issues/5\n\nRepro steps live in the issue.",
       })
     )
     expect(onCreated).toHaveBeenCalledWith(created)
     await waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
     )
+  })
+
+  test("submits the untouched prefill when nothing is edited", async () => {
+    const user = userEvent.setup()
+    const onCreated = vi.fn()
+    render(<Harness onCreated={onCreated} />)
+
+    await screen.findByRole("dialog")
+    await user.click(screen.getByRole("button", { name: "Create Issue" }))
+
+    await waitFor(() =>
+      expect(createIssueFromGitHubItem).toHaveBeenCalledWith("pr-1", {
+        kind: "issue",
+        repositoryId: "repo-1",
+        number: 5,
+        title: "Login redirect loops",
+        description:
+          "https://github.com/acme/web/issues/5\n\nSteps to reproduce.",
+      })
+    )
+    expect(onCreated).toHaveBeenCalledWith(created)
   })
 
   test("surfaces a creation failure and keeps the dialog open", async () => {
