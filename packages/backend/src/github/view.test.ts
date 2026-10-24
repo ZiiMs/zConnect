@@ -342,6 +342,25 @@ async function listIssues(
   return { res, body: (await res.json()) as GitHubIssueListResponse }
 }
 
+async function issueChips(
+  app: Hono,
+  project: Project,
+  number: number,
+  userId = owner.id
+) {
+  const { body } = await listIssues(app, project, "", userId)
+  return body.items.find((item) => item.number === number)?.linkedIssues ?? []
+}
+
+async function pullRequestChips(
+  app: Hono,
+  project: Project,
+  userId = owner.id
+) {
+  const { body } = await list(app, project, "", userId)
+  return body.items.find((item) => item.number === 12)?.linkedIssues ?? []
+}
+
 interface RefreshBody {
   accepted?: boolean
   enqueued?: number
@@ -434,6 +453,28 @@ describe("github view pull requests", () => {
     expect(body.items.find((item) => item.number === 9)?.linkedIssues).toEqual(
       []
     )
+  })
+
+  test("linked Issue chips omit targets the reader cannot read", async () => {
+    const { app, project, github, workspaces } = await setup()
+    const otherIssue = await workspaces.getIssue("MOB-1")
+    if (!otherIssue) throw new Error("seeded issue missing")
+    await github.createExternalLink(otherIssue.id, {
+      provider: "github",
+      kind: "pr",
+      url: "https://github.com/acme/web/pull/12",
+      title: "Add the GitHub View",
+      state: "open",
+    })
+
+    const ownerChips = await pullRequestChips(app, project, owner.id)
+    expect(ownerChips.map((chip) => chip.identifier).sort()).toEqual([
+      "MOB-1",
+      "WEB-1",
+    ])
+
+    const viewerChips = await pullRequestChips(app, project, viewer.id)
+    expect(viewerChips.map((chip) => chip.identifier)).toEqual(["WEB-1"])
   })
 
   test("filters by state, author, and text, with recently updated first", async () => {
@@ -929,6 +970,28 @@ describe("github view issues", () => {
       commentCount: 2,
       linkedIssues: [],
     })
+  })
+
+  test("linked Issue chips omit targets the reader cannot read", async () => {
+    const { app, project, github, workspaces } = await setup()
+    const otherIssue = await workspaces.getIssue("MOB-1")
+    if (!otherIssue) throw new Error("seeded issue missing")
+    await github.createExternalLink(otherIssue.id, {
+      provider: "github",
+      kind: "issue",
+      url: "https://github.com/acme/web/issues/5",
+      title: "Login redirect loops",
+      state: "open",
+    })
+
+    const ownerChips = await issueChips(app, project, 5, owner.id)
+    expect(ownerChips.map((chip) => chip.identifier).sort()).toEqual([
+      "MOB-1",
+      "WEB-1",
+    ])
+
+    const viewerChips = await issueChips(app, project, 5, viewer.id)
+    expect(viewerChips.map((chip) => chip.identifier)).toEqual(["WEB-1"])
   })
 
   test("filters by state, author, label, and text, with recently updated first", async () => {
