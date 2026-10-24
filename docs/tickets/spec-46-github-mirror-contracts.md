@@ -730,7 +730,11 @@ DELETE /api/issues/:key/external-links/:id           issue write
 `{ attempts: 3, backoff: { type: "exponential", delay: 5000 }, removeOnComplete: 50,
 removeOnFail: 100 }`.
 
-- Producers add `{ repositoryId }` with `jobId: repositoryId` so duplicates collapse.
+- Producers add `{ repositoryId }` with `deduplication: { id: repositoryId }` so duplicates
+  collapse only while a job for that repository is waiting or active. BullMQ deletes the
+  deduplication key when the job completes or fails, so a later refresh enqueues a fresh
+  sync; a retained `jobId` would swallow those additions until the 50/100 retention evicted
+  the old job.
 - The API receives `enqueueSync: (repositoryId: string) => Promise<void>` as a dependency of
   the view routes; `index.ts` wires the BullMQ producer. Tests pass a collector or an
   inline `(id) => syncConnection(...)` adapter.

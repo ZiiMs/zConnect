@@ -7,6 +7,7 @@ import { createDrizzleGitHubStore } from "./github/drizzle-store.js"
 import { createGitHubProvider } from "./github/github-provider.js"
 import { createGitHubItemApp } from "./github/item-routes.js"
 import type { GitHubWebhookPayload } from "./github/job.js"
+import { githubSyncJobOptions } from "./github/job.js"
 import { createGitHubProjectApp } from "./github/project-routes.js"
 import { createGitHubApp } from "./github/routes.js"
 import { createBetterAuthGitHubAccountSource } from "./github/token-source.js"
@@ -135,7 +136,7 @@ app.route(
       await queues[QUEUES.githubSync].add(
         "github-sync",
         { repositoryId },
-        { jobId: repositoryId }
+        githubSyncJobOptions(repositoryId)
       )
     },
   })

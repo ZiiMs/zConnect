@@ -78,9 +78,9 @@ githubWorker.on("failed", (job, err) => {
 console.log(`[worker] listening on queue "${QUEUES.githubWebhook}"`)
 
 /**
- * GitHub View sync (#49/#51). One job per repository (`jobId` collapses
- * duplicates on the queue); the runner writes Pull Request and GitHub Issue
- * snapshots and freshness. The same worker also owns the repeatable
+ * GitHub View sync (#49/#51). One pending job per repository (a deduplication
+ * key on the queue collapses duplicates); the runner writes Pull Request and
+ * GitHub Issue snapshots and freshness. The same worker also owns the repeatable
  * `github-sync-sweep` and `github-retention` schedulers, branching on the job
  * name so a maintenance job never needs a second queue hop.
  */
