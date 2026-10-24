@@ -483,3 +483,425 @@ describe("subtask and archive api client", () => {
     expect(options.method).toBe("DELETE")
   })
 })
+
+describe("github connection api client", () => {
+  test("getGitHubConnection parses the safe connection view", async () => {
+    const fetchMock = mockFetchOnce({
+      connection: {
+        id: "gc-1",
+        workspaceId: "ws-1",
+        connectorUserId: "user-1",
+        connectorAccountId: "ba-1",
+        login: "octocat",
+        scopes: ["repo"],
+        status: "active",
+        lastSyncedAt: null,
+        lastManualRefreshAt: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+        updatedAt: "2026-10-01T00:00:00.000Z",
+        connectorName: "Ada",
+        repositoryCount: 0,
+      },
+      repositories: [],
+    })
+
+    const result = await api.getGitHubConnection("ws-1")
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/workspaces/ws-1/github-connection")
+    expect(result.connection?.login).toBe("octocat")
+    expect(result.connection?.connectorName).toBe("Ada")
+  })
+
+  test("connect posts an empty finalize body", async () => {
+    const fetchMock = mockFetchOnce({ connection: null, repositories: [] })
+
+    await api.connectGitHubConnection("ws-1")
+
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/workspaces/ws-1/github-connection")
+    expect(options.method).toBe("POST")
+    expect(JSON.parse(options.body as string)).toEqual({})
+  })
+
+  test("disconnect sends DELETE and resolves void", async () => {
+    const fetchMock = mockFetchOnce({ disconnected: true })
+
+    await expect(api.disconnectGitHubConnection("ws-1")).resolves.toBe(
+      undefined
+    )
+
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/workspaces/ws-1/github-connection")
+    expect(options.method).toBe("DELETE")
+  })
+
+  test("repository search encodes the query and the allowlist saves ids", async () => {
+    const fetchMock = mockFetchOnce({
+      items: [
+        {
+          githubId: "101",
+          fullName: "acme/web",
+          owner: "acme",
+          name: "web",
+          private: false,
+          archived: false,
+          issuesEnabled: true,
+          defaultBranch: "main",
+          pushedAt: null,
+          selected: true,
+        },
+      ],
+    })
+
+    const search = await api.searchGitHubRepositories("ws-1", "acme web")
+    expect(fetchMock.mock.calls[0][0]).toContain("query=acme+web")
+    expect(search.items[0].selected).toBe(true)
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ repositories: [], removed: 2 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    )
+    const saved = await api.setGitHubAllowlist("ws-1", ["101", "102"])
+    const [url, options] = fetchMock.mock.calls[1] as [string, RequestInit]
+    expect(url).toContain("/api/workspaces/ws-1/github-connection/repositories")
+    expect(options.method).toBe("PUT")
+    expect(JSON.parse(options.body as string)).toEqual({
+      githubIds: ["101", "102"],
+    })
+    expect(saved.removed).toBe(2)
+  })
+})
+
+describe("project repositories api client", () => {
+  const view = {
+    id: "repo-1",
+    connectionId: "gc-1",
+    githubId: "101",
+    fullName: "acme/web",
+    owner: "acme",
+    name: "web",
+    private: false,
+    archived: false,
+    issuesEnabled: true,
+    defaultBranch: "main",
+    pushedAt: null,
+    selectedAt: "2026-10-01T00:00:00.000Z",
+    lastSyncedAt: "2026-10-10T10:00:00.000Z",
+    syncError: "Forbidden",
+    unavailable: true,
+    linkedBy: "user-1",
+    linkedAt: "2026-10-09T10:00:00.000Z",
+  }
+
+  test("getProjectRepositories parses links and the workspace connection", async () => {
+    const fetchMock = mockFetchOnce({
+      items: [view],
+      connection: { status: "active", login: "octocat" },
+    })
+
+    const result = await api.getProjectRepositories("pr-1")
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/projects/pr-1/repositories")
+    expect(result.items[0]).toMatchObject({
+      fullName: "acme/web",
+      linkedBy: "user-1",
+      unavailable: true,
+    })
+    expect(result.connection).toEqual({
+      status: "active",
+      login: "octocat",
+    })
+  })
+
+  test("setProjectRepositories puts the local repository ids", async () => {
+    const fetchMock = mockFetchOnce({ items: [], connection: null })
+
+    const result = await api.setProjectRepositories("pr-1", ["repo-1"])
+
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/projects/pr-1/repositories")
+    expect(options.method).toBe("PUT")
+    expect(JSON.parse(options.body as string)).toEqual({
+      repositoryIds: ["repo-1"],
+    })
+    expect(result).toEqual({ items: [], connection: null })
+  })
+})
+
+describe("github view api client", () => {
+  const row = {
+    id: "pr-row-1",
+    repositoryId: "repo-1",
+    number: 12,
+    title: "Add the GitHub View",
+    state: "open",
+    draft: false,
+    authorLogin: "octocat",
+    authorAvatarUrl: null,
+    url: "https://github.com/acme/web/pull/12",
+    sourceBranch: "feature/github-view",
+    targetBranch: "main",
+    checksState: "success",
+    reviewDecision: "approved",
+    commentCount: 2,
+    bodyExcerpt: null,
+    githubCreatedAt: "2026-10-01T10:00:00.000Z",
+    githubUpdatedAt: "2026-10-02T11:00:00.000Z",
+    mergedAt: null,
+    closedAt: null,
+    syncedAt: "2026-10-10T12:00:00.000Z",
+    repository: "acme/web",
+    linkedIssues: [],
+  }
+
+  test("listPullRequests sends the filters and parses the envelope", async () => {
+    const fetchMock = mockFetchOnce({
+      items: [row],
+      nextCursor: "cursor-2",
+      lastSyncedAt: "2026-10-10T12:00:00.000Z",
+      connection: { status: "active", login: "octocat" },
+      repositories: [
+        {
+          id: "repo-1",
+          fullName: "acme/web",
+          issuesEnabled: true,
+          unavailable: false,
+          lastSyncedAt: "2026-10-10T12:00:00.000Z",
+        },
+      ],
+      filters: { authors: ["octocat"], labels: [] },
+    })
+
+    const result = await api.listPullRequests("pr-1", {
+      state: "merged",
+      author: "octocat",
+      q: "view",
+      cursor: "cursor-1",
+      limit: 30,
+    })
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/projects/pr-1/github/pull-requests?")
+    expect(url).toContain("state=merged")
+    expect(url).toContain("author=octocat")
+    expect(url).toContain("q=view")
+    expect(url).toContain("cursor=cursor-1")
+    expect(url).toContain("limit=30")
+    expect(result.items[0]).toMatchObject({
+      number: 12,
+      repository: "acme/web",
+      checksState: "success",
+    })
+    expect(result.filters.authors).toEqual(["octocat"])
+  })
+
+  test("refreshGitHub posts and retries through ApiError", async () => {
+    const fetchMock = mockFetchOnce({
+      accepted: true,
+      enqueued: 2,
+      lastSyncedAt: null,
+    })
+
+    const result = await api.refreshGitHub("pr-1")
+
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/projects/pr-1/github/refresh")
+    expect(options.method).toBe("POST")
+    expect(result).toEqual({
+      accepted: true,
+      enqueued: 2,
+      lastSyncedAt: null,
+    })
+  })
+
+  test("refreshGitHub sends the automatic flag only for the view-opening path", async () => {
+    const fetchMock = mockFetchOnce({
+      accepted: true,
+      enqueued: 1,
+      lastSyncedAt: null,
+    })
+
+    await api.refreshGitHub("pr-1", { automatic: true })
+
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(JSON.parse(String(options.body))).toEqual({ automatic: true })
+  })
+
+  test("listGitHubIssues sends the filters and parses the envelope", async () => {
+    const issueRow = {
+      id: "issue-row-5",
+      repositoryId: "repo-1",
+      number: 5,
+      title: "Login redirect loops",
+      state: "open",
+      authorLogin: "hubot",
+      authorAvatarUrl: null,
+      url: "https://github.com/acme/web/issues/5",
+      labels: [{ name: "bug", color: "d73a4a" }],
+      assignees: [{ login: "octocat", avatarUrl: null }],
+      commentCount: 3,
+      bodyExcerpt: "Steps to reproduce.",
+      githubCreatedAt: "2026-10-01T09:00:00.000Z",
+      githubUpdatedAt: "2026-10-03T09:00:00.000Z",
+      closedAt: null,
+      syncedAt: "2026-10-10T12:00:00.000Z",
+      repository: "acme/web",
+      linkedIssues: [],
+    }
+    const fetchMock = mockFetchOnce({
+      items: [issueRow],
+      nextCursor: "cursor-2",
+      lastSyncedAt: "2026-10-10T12:00:00.000Z",
+      connection: { status: "active", login: "octocat" },
+      repositories: [
+        {
+          id: "repo-1",
+          fullName: "acme/web",
+          issuesEnabled: true,
+          unavailable: false,
+          lastSyncedAt: "2026-10-10T12:00:00.000Z",
+        },
+      ],
+      filters: {
+        authors: ["hubot", "octocat"],
+        labels: [{ name: "bug", color: "d73a4a" }],
+      },
+    })
+
+    const result = await api.listGitHubIssues("pr-1", {
+      state: "closed",
+      author: "hubot",
+      label: "bug",
+      q: "login",
+      cursor: "cursor-1",
+      limit: 10,
+    })
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/projects/pr-1/github/issues?")
+    expect(url).toContain("state=closed")
+    expect(url).toContain("author=hubot")
+    expect(url).toContain("label=bug")
+    expect(url).toContain("q=login")
+    expect(url).toContain("cursor=cursor-1")
+    expect(url).toContain("limit=10")
+    expect(result.items[0]).toMatchObject({
+      number: 5,
+      labels: [{ name: "bug", color: "d73a4a" }],
+      assignees: [{ login: "octocat", avatarUrl: null }],
+      repository: "acme/web",
+    })
+    expect(result.filters.labels).toEqual([{ name: "bug", color: "d73a4a" }])
+  })
+})
+
+describe("github item api client", () => {
+  const link = {
+    id: "link-1",
+    issueId: "issue-1",
+    provider: "github",
+    kind: "pr",
+    url: "https://github.com/acme/web/pull/12",
+    title: "Add the GitHub View",
+    state: "open",
+  }
+  const linkedIssue = {
+    linkId: "link-1",
+    issueId: "issue-1",
+    identifier: "WEB-2",
+    title: "Invite your teammates to this workspace",
+  }
+
+  test("linkGitHubItem posts the item and target identifier, then parses the chips", async () => {
+    const fetchMock = mockFetchOnce({
+      link,
+      issue: {
+        id: "issue-1",
+        identifier: "WEB-2",
+        title: "Invite your teammates to this workspace",
+      },
+      linkedIssues: [linkedIssue],
+    })
+
+    const result = await api.linkGitHubItem("pr-1", {
+      kind: "pr",
+      repositoryId: "repo-1",
+      number: 12,
+      issue: "WEB-2",
+    })
+
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/projects/pr-1/github/items/link")
+    expect(options.method).toBe("POST")
+    expect(JSON.parse(options.body as string)).toEqual({
+      kind: "pr",
+      repositoryId: "repo-1",
+      number: 12,
+      issue: "WEB-2",
+    })
+    expect(result.link).toMatchObject({ id: "link-1", kind: "pr" })
+    expect(result.linkedIssues).toEqual([linkedIssue])
+  })
+
+  test("createIssueFromGitHubItem posts the item and parses the created Issue", async () => {
+    const fetchMock = mockFetchOnce({
+      id: "issue-7",
+      projectId: "pr-1",
+      number: 7,
+      keyPrefix: "WEB",
+      identifier: "WEB-7",
+      title: "Add the GitHub View",
+      description: "https://github.com/acme/web/pull/12",
+      statusId: "status-todo",
+      priority: "Medium",
+      assigneeId: null,
+      dueDate: null,
+      archived: false,
+      labels: [],
+      createdBy: "user-1",
+      createdAt: "2026-10-10T12:00:00.000Z",
+      updatedAt: "2026-10-10T12:00:00.000Z",
+    })
+
+    const result = await api.createIssueFromGitHubItem("pr-1", {
+      kind: "pr",
+      repositoryId: "repo-1",
+      number: 12,
+      title: "Ship the GitHub View",
+      description: "Tracking the review in GitHub.",
+    })
+
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/projects/pr-1/github/items/create-issue")
+    expect(options.method).toBe("POST")
+    expect(JSON.parse(options.body as string)).toEqual({
+      kind: "pr",
+      repositoryId: "repo-1",
+      number: 12,
+      title: "Ship the GitHub View",
+      description: "Tracking the review in GitHub.",
+    })
+    expect(result).toMatchObject({
+      identifier: "WEB-7",
+      title: "Add the GitHub View",
+      statusId: "status-todo",
+      createdBy: "user-1",
+    })
+  })
+
+  test("deleteExternalLink sends DELETE and resolves without a body", async () => {
+    const fetchMock = mockFetchOnce({ deleted: true })
+
+    await expect(
+      api.deleteExternalLink("WEB-1", "link-1")
+    ).resolves.toBeUndefined()
+
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/issues/WEB-1/external-links/link-1")
+    expect(options.method).toBe("DELETE")
+  })
+})

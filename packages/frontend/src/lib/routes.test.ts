@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest"
 import {
+  buildGitHubPath,
   buildInboxPath,
   buildInvitePath,
   buildIssuePath,
@@ -43,12 +44,26 @@ describe("routes", () => {
   test("builds project, settings, my-issues, inbox, and new-project paths", () => {
     expect(buildProjectPath("Acme Corp", "WEB")).toBe("/acme-corp/WEB")
     expect(buildProjectPath("Acme", "web")).toBe("/acme/WEB")
+    expect(buildGitHubPath("Acme Corp", "WEB")).toBe("/acme-corp/WEB/github")
+    expect(buildGitHubPath("Acme", "web")).toBe("/acme/WEB/github")
+    expect(buildGitHubPath("Acme", "WEB", "pull-requests")).toBe(
+      "/acme/WEB/github"
+    )
+    expect(buildGitHubPath("Acme", "WEB", "issues")).toBe(
+      "/acme/WEB/github/issues"
+    )
     expect(buildSettingsPath("Acme")).toBe("/acme/settings")
     expect(buildSettingsPath("Acme", "general")).toBe("/acme/settings/general")
     expect(buildSettingsPath("Acme", "workflow")).toBe(
       "/acme/settings/workflow"
     )
     expect(buildSettingsPath("Acme", "labels")).toBe("/acme/settings/labels")
+    expect(buildSettingsPath("Acme", "connections")).toBe(
+      "/acme/settings/connections"
+    )
+    expect(buildSettingsPath("Acme", "repositories")).toBe(
+      "/acme/settings/repositories"
+    )
     expect(buildMyIssuesPath("Acme")).toBe("/acme/my-issues")
     expect(buildMyIssuesPath("Acme", "watched")).toBe("/acme/my-issues/watched")
     expect(buildInboxPath("Acme")).toBe("/acme/inbox")
@@ -91,11 +106,39 @@ describe("routes", () => {
       workspaceSlug: "acme",
       section: "project",
       projectKey: "WEB",
+      projectView: "issues",
+      githubTab: "pull-requests",
     })
     expect(parseAppPath("/acme/web")).toMatchObject({
       workspaceSlug: "acme",
       section: "project",
       projectKey: "WEB",
+      projectView: "issues",
+    })
+    expect(parseAppPath("/acme/WEB/github")).toMatchObject({
+      workspaceSlug: "acme",
+      section: "project",
+      projectKey: "WEB",
+      projectView: "github",
+      githubTab: "pull-requests",
+    })
+    // The view literal is case-insensitive; a title slug after `github` is
+    // ignored, and `issues` selects the second GitHub View tab.
+    expect(parseAppPath("/Acme/Web/GITHUB")).toMatchObject({
+      workspaceSlug: "acme",
+      projectKey: "WEB",
+      projectView: "github",
+      githubTab: "pull-requests",
+    })
+    expect(parseAppPath("/acme/WEB/github/ISSUES")).toMatchObject({
+      workspaceSlug: "acme",
+      projectKey: "WEB",
+      projectView: "github",
+      githubTab: "issues",
+    })
+    expect(parseAppPath("/acme/WEB/github/issues/extra")).toMatchObject({
+      projectView: "github",
+      githubTab: "issues",
     })
     expect(parseAppPath("/acme/settings")).toMatchObject({
       workspaceSlug: "acme",
@@ -121,6 +164,16 @@ describe("routes", () => {
       workspaceSlug: "acme",
       section: "settings",
       settingsTab: "labels",
+    })
+    expect(parseAppPath("/acme/settings/connections")).toMatchObject({
+      workspaceSlug: "acme",
+      section: "settings",
+      settingsTab: "connections",
+    })
+    expect(parseAppPath("/acme/settings/repositories")).toMatchObject({
+      workspaceSlug: "acme",
+      section: "settings",
+      settingsTab: "repositories",
     })
     expect(parseAppPath("/acme/my-issues")).toMatchObject({
       workspaceSlug: "acme",
@@ -151,6 +204,8 @@ describe("routes", () => {
   test("parses tab aliases and defaults", () => {
     expect(parseSettingsTab(null)).toBe("index")
     expect(parseSettingsTab("general")).toBe("general")
+    expect(parseSettingsTab("connections")).toBe("connections")
+    expect(parseSettingsTab("Repositories")).toBe("repositories")
     expect(parseSettingsTab("workflows")).toBe("workflow")
     expect(parseSettingsTab("statuses")).toBe("workflow")
     expect(parseSettingsTab("nope")).toBe("index")

@@ -1,23 +1,49 @@
 import { describe, expect, test } from "bun:test"
-import { createMemoryGitHubStore } from "./store.js"
+import { createMemoryGitHubStore, type RemoteRepository } from "./store.js"
 
-describe("github installs", () => {
-  test("creates and lists installs scoped to a workspace", async () => {
-    const store = createMemoryGitHubStore()
-    const install = await store.createInstall("ws-1", ["acme/web"])
-    expect(install.workspaceId).toBe("ws-1")
-    expect(install.repos).toEqual(["acme/web"])
-    expect(await store.listInstalls("ws-1")).toHaveLength(1)
-    expect(await store.listInstalls("ws-other")).toHaveLength(0)
-  })
+const at = "2026-10-01T10:00:00.000Z"
 
-  test("finds the install covering a webhook repo", async () => {
+function remoteRepository(
+  fullName: string,
+  githubId = "101"
+): RemoteRepository {
+  const [owner = "", name = ""] = fullName.split("/")
+  return {
+    githubId,
+    fullName,
+    owner,
+    name,
+    private: false,
+    archived: false,
+    issuesEnabled: true,
+    defaultBranch: "main",
+    pushedAt: null,
+  }
+}
+
+describe("repository resolution", () => {
+  test("resolves an allowlisted repository to its connection, case-insensitively", async () => {
     const store = createMemoryGitHubStore()
-    await store.createInstall("ws-1", ["acme/web"])
-    expect((await store.findInstallByRepo("acme/web"))?.workspaceId).toBe(
-      "ws-1"
+    const connection = await store.upsertConnection({
+      workspaceId: "ws-1",
+      connectorUserId: "user-1",
+      connectorAccountId: "account-1",
+      login: "octocat",
+      scopes: ["repo"],
+      encryptedAccessToken: "v1.test",
+      at,
+    })
+    await store.replaceAllowlist(
+      connection.id,
+      [remoteRepository("Acme/Web")],
+      at
     )
-    expect(await store.findInstallByRepo("acme/other")).toBeNull()
+
+    const found = await store.findRepositoryByRemoteFullName("acme/web")
+    expect(found?.connection.workspaceId).toBe("ws-1")
+    expect(found?.repository.fullName).toBe("Acme/Web")
+    expect(found?.connection).not.toHaveProperty("encryptedAccessToken")
+    expect(await store.findRepositoryByRemoteFullName("acme/other")).toBeNull()
   })
 })
 
@@ -56,6 +82,26 @@ describe("external links", () => {
       title: "Fix login",
     })
     expect(updated.state).toBe("merged")
+  })
+
+  test("finds links by URL, reads one, and deletes it idempotently", async () => {
+    const store = createMemoryGitHubStore()
+    const link = await store.createExternalLink("issue-1", {
+      provider: "github",
+      kind: "issue",
+      url: "https://github.com/acme/web/issues/42",
+      title: "Parser crash",
+      state: "open",
+    })
+
+    expect(await store.findExternalLinksByUrl(link.url)).toEqual([link])
+    expect(await store.findExternalLinksByUrl(`${link.url}/nope`)).toEqual([])
+    expect(await store.getExternalLink(link.id)).toEqual(link)
+    expect(await store.getExternalLink("missing")).toBeNull()
+
+    expect(await store.deleteExternalLink(link.id)).toBe(true)
+    expect(await store.getExternalLink(link.id)).toBeNull()
+    expect(await store.deleteExternalLink(link.id)).toBe(false)
   })
 
   test("delivery ids are processed once (webhook redelivery)", async () => {

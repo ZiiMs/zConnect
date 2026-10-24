@@ -25,6 +25,17 @@ export async function readableProject(
   return null
 }
 
+/**
+ * Boolean form of `readableProject` for callers that resolve many references
+ * at once. Callers cache one answer per project.
+ */
+export function projectReadGate(
+  store: WorkspaceStore
+): (projectId: string, userId: string) => Promise<boolean> {
+  return async (projectId, userId) =>
+    (await readableProject(store, projectId, userId)) !== null
+}
+
 /** Owner/Admin/Member of the project's workspace. Viewer grants excluded. */
 export async function writableProject(
   store: WorkspaceStore,

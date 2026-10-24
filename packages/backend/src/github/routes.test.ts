@@ -9,11 +9,16 @@ import {
 import { handlePullRequestEvent } from "./handler.js"
 import type { GitHubWebhookPayload } from "./job.js"
 import { createGitHubApp } from "./routes.js"
-import { createMemoryGitHubStore } from "./store.js"
+import {
+  createMemoryGitHubStore,
+  type GitHubStore,
+  type RemoteRepository,
+} from "./store.js"
 
 const owner = { id: "user-owner", email: "owner@example.com" }
 const member = { id: "user-member", email: "member@example.com" }
 const outsider = { id: "user-outsider", email: "outsider@example.com" }
+const connectedAt = "2026-10-01T10:00:00.000Z"
 
 const users: Record<string, Session["user"]> = {
   [owner.id]: owner,
@@ -78,7 +83,7 @@ async function seed(app: Hono, workspaces: WorkspaceStore) {
   return { workspaceId: workspace.id, issue }
 }
 
-function pullRequestPayload() {
+function pullRequestPayload(repo = "acme/web") {
   return {
     action: "opened",
     number: 7,
@@ -86,11 +91,11 @@ function pullRequestPayload() {
       number: 7,
       title: "Fix login",
       body: "Fixes WEB-1",
-      html_url: "https://github.com/acme/web/pull/7",
+      html_url: `https://github.com/${repo}/pull/7`,
       head: { ref: "WEB-1-fix-login" },
       merged: false,
     },
-    repository: { full_name: "acme/web" },
+    repository: { full_name: repo },
   }
 }
 
@@ -103,60 +108,57 @@ function webhookHeaders(extra?: Record<string, string>) {
   }
 }
 
-describe("github installs", () => {
-  test("owner installs on selected repos; member is forbidden", async () => {
-    const { app, workspaces } = setup()
-    const { workspaceId } = await seed(app, workspaces)
-    const created = await app.request(
-      `/api/workspaces/${workspaceId}/github-installs`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json", ...auth(owner.id) },
-        body: JSON.stringify({ repos: ["acme/web"] }),
-      }
-    )
-    expect(created.status).toBe(201)
-    expect(await created.json()).toMatchObject({
-      workspaceId,
-      repos: ["acme/web"],
-    })
+function remoteRepository(
+  fullName: string,
+  githubId = "101"
+): RemoteRepository {
+  const [repoOwner = "", name = ""] = fullName.split("/")
+  return {
+    githubId,
+    fullName,
+    owner: repoOwner,
+    name,
+    private: false,
+    archived: false,
+    issuesEnabled: true,
+    defaultBranch: "main",
+    pushedAt: null,
+  }
+}
 
-    const listed = await app.request(
-      `/api/workspaces/${workspaceId}/github-installs`,
-      { headers: auth(member.id) }
-    )
-    expect(listed.status).toBe(200)
-    expect(await listed.json()).toHaveLength(1)
-
-    const denied = await app.request(
-      `/api/workspaces/${workspaceId}/github-installs`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json", ...auth(member.id) },
-        body: JSON.stringify({ repos: ["acme/other"] }),
-      }
-    )
-    expect(denied.status).toBe(403)
-    expect(
-      (await app.request(`/api/workspaces/${workspaceId}/github-installs`))
-        .status
-    ).toBe(401)
+/** The Connection allowlist is the webhook's only repository allowlist. */
+async function selectRepository(
+  github: GitHubStore,
+  workspaceId: string,
+  fullName = "acme/web"
+) {
+  const connection = await github.upsertConnection({
+    workspaceId,
+    connectorUserId: owner.id,
+    connectorAccountId: "ba-account-1",
+    login: "octocat",
+    scopes: ["repo"],
+    encryptedAccessToken: "v1.test",
+    at: connectedAt,
   })
+  await github.replaceAllowlist(
+    connection.id,
+    [remoteRepository(fullName)],
+    connectedAt
+  )
+  return connection
+}
 
-  test("empty or malformed repos return 400", async () => {
-    const { app, workspaces } = setup()
-    const { workspaceId } = await seed(app, workspaces)
-    const res = await app.request(
-      `/api/workspaces/${workspaceId}/github-installs`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json", ...auth(owner.id) },
-        body: JSON.stringify({ repos: [] }),
-      }
-    )
-    expect(res.status).toBe(400)
-  })
-})
+async function drainEnqueued(
+  workspaces: WorkspaceStore,
+  github: GitHubStore,
+  enqueued: GitHubWebhookPayload[]
+) {
+  const [job] = enqueued
+  if (job?.kind !== "pull_request")
+    throw new Error("expected a pull request job")
+  return handlePullRequestEvent({ workspaces, github }, job)
+}
 
 describe("manual external links", () => {
   test("pasting a PR URL creates a link plus an Activity Event", async () => {
@@ -227,6 +229,45 @@ describe("webhook intake", () => {
       repoFullName: "acme/web",
       url: "https://github.com/acme/web/pull/7",
     })
+  })
+
+  test("a selected repository's delivery enqueues and links the PR", async () => {
+    const { app, workspaces, github, enqueued } = setup()
+    const { workspaceId, issue } = await seed(app, workspaces)
+    await selectRepository(github, workspaceId)
+
+    const res = await app.request("/api/webhooks/github", {
+      method: "POST",
+      headers: webhookHeaders(),
+      body: JSON.stringify(pullRequestPayload()),
+    })
+    expect(res.status).toBe(202)
+    expect(enqueued).toHaveLength(1)
+
+    const result = await drainEnqueued(workspaces, github, enqueued)
+    expect(result).toEqual({ skipped: false, linked: ["WEB-1"] })
+    expect(await github.listExternalLinks(issue.id)).toMatchObject([
+      { kind: "pr", state: "open" },
+    ])
+  })
+
+  test("an unselected repository's delivery is ignored by the handler", async () => {
+    const { app, workspaces, github, enqueued } = setup()
+    const { workspaceId, issue } = await seed(app, workspaces)
+    await selectRepository(github, workspaceId)
+
+    const res = await app.request("/api/webhooks/github", {
+      method: "POST",
+      headers: webhookHeaders({ "x-github-delivery": "delivery-unselected" }),
+      body: JSON.stringify(pullRequestPayload("acme/other")),
+    })
+    // Intake stays repository-agnostic; the handler owns allowlist resolution.
+    expect(res.status).toBe(202)
+    expect(enqueued).toHaveLength(1)
+
+    const result = await drainEnqueued(workspaces, github, enqueued)
+    expect(result).toEqual({ skipped: false, linked: [] })
+    expect(await github.listExternalLinks(issue.id)).toHaveLength(0)
   })
 
   test("unsupported events are acknowledged without enqueueing", async () => {
@@ -311,7 +352,7 @@ describe("link reads", () => {
   test("issue shows the merged badge after the job runs", async () => {
     const { app, workspaces, github } = setup()
     const { workspaceId, issue } = await seed(app, workspaces)
-    await github.createInstall(workspaceId, ["acme/web"])
+    await selectRepository(github, workspaceId)
     await handlePullRequestEvent(
       { workspaces, github },
       {

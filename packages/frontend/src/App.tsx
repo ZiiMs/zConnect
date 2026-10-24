@@ -10,6 +10,7 @@ import { useEffect, useMemo, useState } from "react"
 import { AuthForm } from "@/components/auth-form"
 import { CreateProjectForm } from "@/components/create-project-form"
 import { CreateWorkspaceForm } from "@/components/create-workspace-form"
+import { GitHubView } from "@/components/github-view"
 import { Inbox } from "@/components/inbox"
 import { InvitePage } from "@/components/invite-page"
 import { MyIssues } from "@/components/my-issues"
@@ -32,6 +33,7 @@ import { signOut, useSession } from "@/lib/auth-client"
 import { ProjectIcon } from "@/lib/project-icons"
 import { realtimeEnabled } from "@/lib/realtime"
 import {
+  buildGitHubPath,
   buildInboxPath,
   buildInvitePath,
   buildIssuePath,
@@ -441,7 +443,13 @@ function WorkspaceShell({
         projects.find((p) => p.id === selectedProjectId) ??
         projects[0]
       path = target
-        ? buildProjectPath(selected.name, target.key)
+        ? parsed.projectView === "github"
+          ? buildGitHubPath(
+              selected.name,
+              target.key,
+              parsed.githubTab === "issues" ? "issues" : undefined
+            )
+          : buildProjectPath(selected.name, target.key)
         : `/${selectedSlug}`
     } else {
       path = `/${selectedSlug}`
@@ -458,6 +466,8 @@ function WorkspaceShell({
     parsed.myIssuesTab,
     parsed.inboxFilter,
     parsed.projectKey,
+    parsed.projectView,
+    parsed.githubTab,
     selectedSlug,
     selectedProject,
     selectedProjectId,
@@ -500,9 +510,18 @@ function WorkspaceShell({
       if (!match) {
         const target = selectedProject ?? projects[0]
         if (!target) return
-        navigate(buildProjectPath(selected.name, target.key), {
-          replace: true,
-        })
+        navigate(
+          parsed.projectView === "github"
+            ? buildGitHubPath(
+                selected.name,
+                target.key,
+                parsed.githubTab === "issues" ? "issues" : undefined
+              )
+            : buildProjectPath(selected.name, target.key),
+          {
+            replace: true,
+          }
+        )
       }
       return
     }
@@ -520,12 +539,16 @@ function WorkspaceShell({
     parsed.identifier,
     parsed.workspaceSlug,
     parsed.projectKey,
+    parsed.projectView,
+    parsed.githubTab,
     selectedSlug,
     selectedProject,
   ])
 
   // Settings workflow needs a project: repair the URL to members when the
-  // workspace has none (the tab itself stays disabled with its hint).
+  // workspace has none (the tab stays disabled with its hint). The
+  // Repositories tab shows the same in-panel hint instead, so a deep link
+  // survives the initial project load.
   useEffect(() => {
     if (
       parsed.section === "settings" &&
@@ -724,8 +747,9 @@ function WorkspaceShell({
                       {category.label}
                     </p>
                     {category.items.map((item) => {
-                      const disabled =
-                        item.id === "workflow" && !selectedProject
+                      const projectScoped =
+                        item.id === "workflow" || item.id === "repositories"
+                      const disabled = projectScoped && !selectedProject
                       const active = parsed.settingsTab === item.id
                       return (
                         <button
@@ -735,7 +759,11 @@ function WorkspaceShell({
                           disabled={disabled}
                           title={
                             disabled
-                              ? "Select a project to manage its workflow"
+                              ? `Select a project to manage its ${
+                                  item.id === "repositories"
+                                    ? "repositories"
+                                    : "workflow"
+                                }`
                               : undefined
                           }
                           onClick={() => goSettings(item.id)}
@@ -1045,19 +1073,31 @@ function WorkspaceShell({
           ) : (
             <section className="flex min-h-0 flex-1 flex-col gap-4">
               {selectedProject ? (
-                <ProjectPage
-                  key={selectedProject.id}
-                  project={selectedProject}
-                  canManage={canManageMembers}
-                  canWriteIssues={canWriteIssues}
-                  userId={userId}
-                  activeIssueIdentifier={
-                    urlWorkspaceMatches ? activeIdentifier : null
-                  }
-                  deepIssue={deepIssue}
-                  onOpenIssue={handleOpenIssue}
-                  onCloseIssue={handleCloseIssue}
-                />
+                parsed.projectView === "github" ? (
+                  <GitHubView
+                    key={`${selectedProject.id}:${parsed.githubTab}`}
+                    workspace={selected}
+                    project={selectedProject}
+                    tab={parsed.githubTab}
+                    canWrite={canWriteIssues}
+                    canAdmin={canManageMembers}
+                  />
+                ) : (
+                  <ProjectPage
+                    key={selectedProject.id}
+                    project={selectedProject}
+                    workspaceName={selected.name}
+                    canManage={canManageMembers}
+                    canWriteIssues={canWriteIssues}
+                    userId={userId}
+                    activeIssueIdentifier={
+                      urlWorkspaceMatches ? activeIdentifier : null
+                    }
+                    deepIssue={deepIssue}
+                    onOpenIssue={handleOpenIssue}
+                    onCloseIssue={handleCloseIssue}
+                  />
+                )
               ) : (
                 !projectsLoading &&
                 !projectsError &&

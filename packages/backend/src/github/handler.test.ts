@@ -8,9 +8,59 @@ import {
   handlePushEvent,
   type PullRequestEvent,
 } from "./handler.js"
-import { createMemoryGitHubStore, type GitHubStore } from "./store.js"
+import {
+  createMemoryGitHubStore,
+  type GitHubStore,
+  type RemoteRepository,
+} from "./store.js"
 
 const owner = { id: "user-owner", email: "owner@example.com" }
+const connectedAt = "2026-10-01T10:00:00.000Z"
+
+function remoteRepository(
+  fullName: string,
+  githubId = "101"
+): RemoteRepository {
+  const [repoOwner = "", name = ""] = fullName.split("/")
+  return {
+    githubId,
+    fullName,
+    owner: repoOwner,
+    name,
+    private: false,
+    archived: false,
+    issuesEnabled: true,
+    defaultBranch: "main",
+    pushedAt: null,
+  }
+}
+
+/**
+ * A webhook can only link into a workspace whose GitHub Connection has
+ * selected the repository — the handler resolves it through github_repository,
+ * not the retired install list.
+ */
+async function selectRepository(
+  github: GitHubStore,
+  workspaceId: string,
+  repositories: RemoteRepository[] = [remoteRepository("acme/web")]
+) {
+  const connection = await github.upsertConnection({
+    workspaceId,
+    connectorUserId: owner.id,
+    connectorAccountId: "ba-account-1",
+    login: "octocat",
+    scopes: ["repo"],
+    encryptedAccessToken: "v1.test",
+    at: connectedAt,
+  })
+  const { repositories: selected } = await github.replaceAllowlist(
+    connection.id,
+    repositories,
+    connectedAt
+  )
+  return { connection, repositories: selected }
+}
 
 function openedEvent(overrides?: Partial<PullRequestEvent>): PullRequestEvent {
   return {
@@ -49,7 +99,7 @@ describe("pull request webhook handler", () => {
     if (!issue) throw new Error("seeded WEB-1 issue missing")
     issueId = issue.id
     statusId = issue.statusId
-    await github.createInstall(workspaceId, ["acme/web"])
+    await selectRepository(github, workspaceId)
   })
 
   test("opened PR auto-creates one External Link plus an Activity Event", async () => {
@@ -131,7 +181,71 @@ describe("pull request webhook handler", () => {
     expect((await github.listExternalLinks(issueId))[0].state).toBe("closed")
   })
 
-  test("repos without an install and unknown identifiers link nothing", async () => {
+  test("a selected repository links pull request and push events", async () => {
+    const pullRequest = await handlePullRequestEvent(
+      { workspaces, github },
+      openedEvent()
+    )
+    expect(pullRequest).toEqual({ skipped: false, linked: ["WEB-1"] })
+
+    const push = await handlePushEvent(
+      { workspaces, github },
+      {
+        deliveryId: "push-selected",
+        repoFullName: "acme/web",
+        commits: [
+          {
+            sha: "abc123def456",
+            message: "Fix WEB-1 login redirect",
+            url: "https://github.com/acme/web/commit/abc123def456",
+          },
+        ],
+      }
+    )
+    expect(push).toEqual({ skipped: false, linked: ["WEB-1"] })
+    expect(
+      (await github.listExternalLinks(issueId)).map((link) => link.kind).sort()
+    ).toEqual(["commit", "pr"])
+  })
+
+  test("a repository outside the connection allowlist is ignored", async () => {
+    const pr = await handlePullRequestEvent(
+      { workspaces, github },
+      openedEvent({
+        deliveryId: "delivery-unselected",
+        repoFullName: "acme/other",
+      })
+    )
+    expect(pr).toEqual({ skipped: false, linked: [] })
+    const push = await handlePushEvent(
+      { workspaces, github },
+      {
+        deliveryId: "push-unselected",
+        repoFullName: "acme/other",
+        commits: [
+          {
+            sha: "abc123def456",
+            message: "Fix WEB-1 login redirect",
+            url: "https://github.com/acme/other/commit/abc123def456",
+          },
+        ],
+      }
+    )
+    expect(push).toEqual({ skipped: false, linked: [] })
+    expect(await github.listExternalLinks(issueId)).toHaveLength(0)
+
+    // The delivery is still marked processed, exactly as before retirement.
+    const redelivery = await handlePullRequestEvent(
+      { workspaces, github },
+      openedEvent({
+        deliveryId: "delivery-unselected",
+        repoFullName: "acme/other",
+      })
+    )
+    expect(redelivery.skipped).toBe(true)
+  })
+
+  test("repos outside the allowlist and unknown identifiers link nothing", async () => {
     const foreign = await handlePullRequestEvent(
       { workspaces, github },
       openedEvent({ deliveryId: "delivery-5", repoFullName: "acme/other" })

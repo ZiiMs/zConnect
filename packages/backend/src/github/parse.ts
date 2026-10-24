@@ -4,7 +4,7 @@
  * GLOSSARY.md: External Link (never Integration/Sync).
  */
 
-export type ExternalLinkKind = "pr" | "branch" | "commit"
+export type ExternalLinkKind = "pr" | "issue" | "branch" | "commit"
 
 export interface ParsedExternalUrl {
   provider: "github"
@@ -35,11 +35,38 @@ export function extractIssueRefs(text: string): string[] {
   return found
 }
 
-const GITHUB_URL_PATTERN =
-  /^https?:\/\/(?:www\.)?github\.com\/([^/]+)\/([^/]+)\/(pull|commit|tree)\/([^/]+?)(?:\/|\?|#|$)/i
+function pushRefs(text: string, found: string[], seen: Set<string>): void {
+  for (const identifier of extractIssueRefs(text)) {
+    if (seen.has(identifier)) continue
+    seen.add(identifier)
+    found.push(identifier)
+  }
+}
 
 /**
- * Classifies a pasted GitHub PR/branch/commit URL. Returns null for
+ * Issue identifiers that should link automatically: a Pull Request's source
+ * branch first, then its title; a GitHub Issue contributes its title only.
+ * Deduped, uppercase, in first-appearance order.
+ */
+export function autoLinkRefs(input: {
+  kind: "pr" | "issue"
+  sourceBranch?: string
+  title: string
+}): string[] {
+  const found: string[] = []
+  const seen = new Set<string>()
+  if (input.kind === "pr" && input.sourceBranch) {
+    pushRefs(input.sourceBranch, found, seen)
+  }
+  pushRefs(input.title, found, seen)
+  return found
+}
+
+const GITHUB_URL_PATTERN =
+  /^https?:\/\/(?:www\.)?github\.com\/([^/]+)\/([^/]+)\/(pull|issues|commit|tree)\/([^/]+?)(?:\/|\?|#|$)/i
+
+/**
+ * Classifies a pasted GitHub issue/PR/branch/commit URL. Returns null for
  * non-GitHub or unrecognized URLs.
  */
 export function parseExternalUrl(raw: string): ParsedExternalUrl | null {
@@ -49,8 +76,10 @@ export function parseExternalUrl(raw: string): ParsedExternalUrl | null {
   const kind: ExternalLinkKind =
     segment.toLowerCase() === "pull"
       ? "pr"
-      : segment.toLowerCase() === "commit"
-        ? "commit"
-        : "branch"
+      : segment.toLowerCase() === "issues"
+        ? "issue"
+        : segment.toLowerCase() === "commit"
+          ? "commit"
+          : "branch"
   return { provider: "github", kind, owner, repo, ref, url: raw.trim() }
 }

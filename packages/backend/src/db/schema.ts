@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm"
 import {
   boolean,
   foreignKey,
+  index,
   integer,
   jsonb,
   pgTable,
@@ -267,21 +268,182 @@ export const issueLabel = pgTable(
 )
 
 /**
- * GitHub App installs + External Links (T6). Vocabulary per GLOSSARY.md:
- * External Link (never Integration/Sync). An install is workspace-level and
- * scoped to chosen `owner/repo` names; links cache PR title/state from
- * webhook payloads only (no live GitHub reads); merge is badge-only.
+ * GitHub Connection (ADR-0005): one OAuth App authorization per Workspace.
+ * `encryptedAccessToken` is the versioned AES-256-GCM payload; it is never
+ * returned by the API. `login` is display/audit only.
  */
-export const githubInstall = pgTable("github_install", {
+export const githubConnection = pgTable("github_connection", {
   id: uuid("id").primaryKey().defaultRandom(),
   workspaceId: uuid("workspace_id")
     .notNull()
+    .unique()
     .references(() => workspace.id, { onDelete: "cascade" }),
-  repos: text("repos").array().notNull().default([]),
+  connectorUserId: text("connector_user_id").notNull(),
+  connectorAccountId: text("connector_account_id").notNull(),
+  login: text("login").notNull(),
+  scopes: text("scopes").array().notNull().default([]),
+  status: varchar("status", { length: 32 })
+    .notNull()
+    .default("active")
+    .$type<"active" | "reconnect_required">(),
+  encryptedAccessToken: text("encrypted_access_token").notNull(),
+  lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+  lastManualRefreshAt: timestamp("last_manual_refresh_at", {
+    withTimezone: true,
+  }),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
 })
+
+/**
+ * Workspace repository allowlist. `githubId` is GitHub's immutable database
+ * id; `fullName` is mutable and repaired on rename/transfer.
+ */
+export const githubRepository = pgTable(
+  "github_repository",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    connectionId: uuid("connection_id")
+      .notNull()
+      .references(() => githubConnection.id, { onDelete: "cascade" }),
+    githubId: text("github_id").notNull(),
+    fullName: text("full_name").notNull(),
+    owner: text("owner").notNull(),
+    name: text("name").notNull(),
+    private: boolean("private").notNull().default(false),
+    archived: boolean("archived").notNull().default(false),
+    issuesEnabled: boolean("issues_enabled").notNull().default(true),
+    defaultBranch: text("default_branch"),
+    pushedAt: timestamp("pushed_at", { withTimezone: true }),
+    selectedAt: timestamp("selected_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    syncError: text("sync_error"),
+  },
+  (table) => [
+    uniqueIndex("github_repository_connection_github_id_unique").on(
+      table.connectionId,
+      table.githubId
+    ),
+  ]
+)
+
+/** Many-to-many: which allowlisted repositories each Project presents. */
+export const projectRepository = pgTable(
+  "project_repository",
+  {
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => project.id, { onDelete: "cascade" }),
+    repositoryId: uuid("repository_id")
+      .notNull()
+      .references(() => githubRepository.id, { onDelete: "cascade" }),
+    linkedBy: text("linked_by").notNull(),
+    linkedAt: timestamp("linked_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.projectId, table.repositoryId] })]
+)
+
+/** Cached Pull Request snapshots for the read-only GitHub View. */
+export const githubPullRequest = pgTable(
+  "github_pull_request",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    repositoryId: uuid("repository_id")
+      .notNull()
+      .references(() => githubRepository.id, { onDelete: "cascade" }),
+    number: integer("number").notNull(),
+    title: text("title").notNull(),
+    state: varchar("state", { length: 16 })
+      .notNull()
+      .$type<"open" | "merged" | "closed">(),
+    draft: boolean("draft").notNull().default(false),
+    authorLogin: text("author_login").notNull(),
+    authorAvatarUrl: text("author_avatar_url"),
+    url: text("url").notNull(),
+    sourceBranch: text("source_branch").notNull(),
+    targetBranch: text("target_branch").notNull(),
+    checksState: varchar("checks_state", { length: 16 }),
+    reviewDecision: varchar("review_decision", { length: 32 }),
+    commentCount: integer("comment_count").notNull().default(0),
+    bodyExcerpt: text("body_excerpt"),
+    githubCreatedAt: timestamp("github_created_at", {
+      withTimezone: true,
+    }).notNull(),
+    githubUpdatedAt: timestamp("github_updated_at", {
+      withTimezone: true,
+    }).notNull(),
+    mergedAt: timestamp("merged_at", { withTimezone: true }),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    syncedAt: timestamp("synced_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("github_pull_request_repository_number_unique").on(
+      table.repositoryId,
+      table.number
+    ),
+    index("github_pull_request_repository_state_updated_idx").on(
+      table.repositoryId,
+      table.state,
+      table.githubUpdatedAt
+    ),
+  ]
+)
+
+/** Cached GitHub Issue snapshots. Never imported as zConnect Issues. */
+export const githubIssue = pgTable(
+  "github_issue",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    repositoryId: uuid("repository_id")
+      .notNull()
+      .references(() => githubRepository.id, { onDelete: "cascade" }),
+    number: integer("number").notNull(),
+    title: text("title").notNull(),
+    state: varchar("state", { length: 16 })
+      .notNull()
+      .$type<"open" | "closed">(),
+    authorLogin: text("author_login").notNull(),
+    authorAvatarUrl: text("author_avatar_url"),
+    url: text("url").notNull(),
+    labels: jsonb("labels")
+      .$type<Array<{ name: string; color: string }>>()
+      .notNull()
+      .default([]),
+    assignees: jsonb("assignees")
+      .$type<Array<{ login: string; avatarUrl: string | null }>>()
+      .notNull()
+      .default([]),
+    commentCount: integer("comment_count").notNull().default(0),
+    bodyExcerpt: text("body_excerpt"),
+    githubCreatedAt: timestamp("github_created_at", {
+      withTimezone: true,
+    }).notNull(),
+    githubUpdatedAt: timestamp("github_updated_at", {
+      withTimezone: true,
+    }).notNull(),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    syncedAt: timestamp("synced_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("github_issue_repository_number_unique").on(
+      table.repositoryId,
+      table.number
+    ),
+    index("github_issue_repository_state_updated_idx").on(
+      table.repositoryId,
+      table.state,
+      table.githubUpdatedAt
+    ),
+  ]
+)
 
 export const externalLink = pgTable(
   "external_link",
@@ -301,6 +463,7 @@ export const externalLink = pgTable(
   },
   (table) => [
     uniqueIndex("external_link_issue_url_unique").on(table.issueId, table.url),
+    index("external_link_url_idx").on(table.url),
   ]
 )
 

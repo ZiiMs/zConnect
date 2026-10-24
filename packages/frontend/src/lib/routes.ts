@@ -28,6 +28,8 @@ export type SettingsTab =
   | "members"
   | "workflow"
   | "labels"
+  | "connections"
+  | "repositories"
   | "notifications"
 
 /** Settings location: a detail tab, or the `index` homepage (`/settings`). */
@@ -37,12 +39,21 @@ export type MyIssuesTab = "assigned" | "created" | "watched"
 
 export type InboxFilter = "all" | "unread"
 
+/** Which project surface the URL addresses: the Issue views or the GitHub View. */
+export type ProjectView = "issues" | "github"
+
+/** GitHub View tab: Pull Requests (default) or GitHub Issues. */
+export type GitHubTab = "pull-requests" | "issues"
+
 export interface AppPath {
   workspaceSlug: string | null
   section: WorkspaceSection
   /** Uppercase project key for `/{ws}/{KEY}`, or null for the home alias. */
   projectKey: string | null
   identifier: string | null
+  /** `issues` is `/{ws}/{KEY}`; `github` is `/{ws}/{KEY}/github`. */
+  projectView: ProjectView
+  githubTab: GitHubTab
   /** `index` is the settings homepage (`/{ws}/settings`); the rest are detail pages. */
   settingsTab: SettingsView
   myIssuesTab: MyIssuesTab
@@ -54,6 +65,8 @@ export const SETTINGS_TABS: SettingsTab[] = [
   "members",
   "workflow",
   "labels",
+  "connections",
+  "repositories",
   "notifications",
 ]
 
@@ -79,6 +92,8 @@ export function parseSettingsTab(raw: string | null | undefined): SettingsView {
   )
     return "workflow"
   if (lower === "labels") return "labels"
+  if (lower === "connections" || lower === "connection") return "connections"
+  if (lower === "repositories" || lower === "repository") return "repositories"
   if (lower === "notifications") return "notifications"
   return "index"
 }
@@ -130,6 +145,19 @@ export function buildProjectPath(
   projectKey: string
 ): string {
   return `/${slugifyWorkspace(workspaceName)}/${projectKey.toUpperCase()}`
+}
+
+/**
+ * `/{workspaceSlug}/{PROJECTKEY}/github[/issues]` — the read-only GitHub View.
+ * Pull Requests is the bare URL; the Issues tab appends its segment.
+ */
+export function buildGitHubPath(
+  workspaceName: string,
+  projectKey: string,
+  tab?: GitHubTab
+): string {
+  const base = `${buildProjectPath(workspaceName, projectKey)}/github`
+  return tab === "issues" ? `${base}/issues` : base
 }
 
 /**
@@ -231,6 +259,8 @@ export function parseAppPath(pathname: string): AppPath {
     section: "project",
     projectKey: null,
     identifier: null,
+    projectView: "issues",
+    githubTab: "pull-requests",
     settingsTab: "index",
     myIssuesTab: "assigned",
     inboxFilter: "all",
@@ -297,13 +327,20 @@ export function parseAppPath(pathname: string): AppPath {
     return { ...fallback, workspaceSlug, section: "new-project" }
   }
   // Anything else is a project-key attempt (`/{ws}/{KEY}`); the shell falls
-  // back to the workspace home when no project matches.
+  // back to the workspace home when no project matches. A `github` third
+  // segment opens the GitHub View, with `issues` selecting its second tab.
   const rawKey = segments[1].trim()
+  const rawView = segments[2]?.toLowerCase() ?? ""
   return {
     ...fallback,
     workspaceSlug,
     section: "project",
     projectKey: rawKey ? rawKey.toUpperCase() : null,
+    projectView: rawView === "github" ? "github" : "issues",
+    githubTab:
+      rawView === "github" && segments[3]?.toLowerCase() === "issues"
+        ? "issues"
+        : "pull-requests",
   }
 }
 

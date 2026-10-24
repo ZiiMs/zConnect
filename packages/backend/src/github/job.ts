@@ -28,3 +28,15 @@ export interface GitHubPushJob {
 }
 
 export type GitHubWebhookPayload = GitHubWebhookJob | GitHubPushJob
+
+/**
+ * Options for one repository's sync job. Deduplication replaces a stable job
+ * id: BullMQ releases the key when the job completes or fails, while a
+ * retained completed job with the same `jobId` would swallow later refreshes
+ * until retention evicted it.
+ */
+export function githubSyncJobOptions(repositoryId: string): {
+  deduplication: { id: string }
+} {
+  return { deduplication: { id: repositoryId } }
+}

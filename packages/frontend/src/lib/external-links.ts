@@ -2,7 +2,12 @@ import { z } from "zod"
 
 const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? ""
 
-export const externalLinkKindSchema = z.enum(["pr", "branch", "commit"])
+export const externalLinkKindSchema = z.enum([
+  "pr",
+  "issue",
+  "branch",
+  "commit",
+])
 
 export const externalLinkStateSchema = z.enum(["open", "merged", "closed"])
 

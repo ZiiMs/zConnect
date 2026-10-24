@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { externalLinkSchema } from "@/lib/external-links"
 
 export const API_URL =
   (import.meta.env.VITE_API_URL as string | undefined) ?? ""
@@ -166,6 +167,239 @@ export const labelSchema = z.object({
   createdAt: z.string().optional(),
 })
 
+export const githubConnectionStatusSchema = z.enum([
+  "active",
+  "reconnect_required",
+])
+
+/** Safe Connection view: the server never serializes the token. */
+export const githubConnectionSchema = z.object({
+  id: z.string(),
+  workspaceId: z.string(),
+  connectorUserId: z.string(),
+  connectorAccountId: z.string(),
+  login: z.string(),
+  scopes: z.array(z.string()),
+  status: githubConnectionStatusSchema,
+  lastSyncedAt: z.string().nullable(),
+  lastManualRefreshAt: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  /** Display name of the connector, resolved from the workspace roster. */
+  connectorName: z.string().nullable(),
+  repositoryCount: z.number(),
+})
+
+export const githubRepositorySchema = z.object({
+  id: z.string(),
+  connectionId: z.string(),
+  githubId: z.string(),
+  fullName: z.string(),
+  owner: z.string(),
+  name: z.string(),
+  private: z.boolean(),
+  archived: z.boolean(),
+  issuesEnabled: z.boolean(),
+  defaultBranch: z.string().nullable(),
+  pushedAt: z.string().nullable(),
+  selectedAt: z.string(),
+  lastSyncedAt: z.string().nullable(),
+  syncError: z.string().nullable(),
+})
+
+export const githubRepositoryViewSchema = githubRepositorySchema.extend({
+  unavailable: z.boolean(),
+})
+
+export const githubConnectionResponseSchema = z.object({
+  connection: githubConnectionSchema.nullable(),
+  repositories: z.array(githubRepositoryViewSchema),
+})
+
+/** Remote repository option shown by the allowlist picker. */
+export const remoteRepositorySchema = z.object({
+  githubId: z.string(),
+  fullName: z.string(),
+  owner: z.string(),
+  name: z.string(),
+  private: z.boolean(),
+  archived: z.boolean(),
+  issuesEnabled: z.boolean(),
+  defaultBranch: z.string().nullable(),
+  pushedAt: z.string().nullable(),
+})
+
+export const remoteRepositoryOptionSchema = remoteRepositorySchema.extend({
+  selected: z.boolean(),
+})
+
+export const githubAllowlistResponseSchema = z.object({
+  repositories: z.array(githubRepositoryViewSchema),
+  removed: z.number(),
+})
+
+/** Project link row: repository metadata plus the link and sync state. */
+export const projectRepositoryViewSchema = githubRepositorySchema.extend({
+  unavailable: z.boolean(),
+  linkedAt: z.string(),
+  linkedBy: z.string(),
+})
+
+export const projectConnectionSchema = z.object({
+  status: githubConnectionStatusSchema,
+  login: z.string(),
+})
+
+export const projectRepositoriesResponseSchema = z.object({
+  items: z.array(projectRepositoryViewSchema),
+  connection: projectConnectionSchema.nullable(),
+})
+
+/** Chip shown on a GitHub Item row: one per External Link. */
+export const linkedIssueRefSchema = z.object({
+  linkId: z.string(),
+  issueId: z.string(),
+  identifier: z.string(),
+  title: z.string(),
+})
+
+export const pullRequestStateSchema = z.enum(["open", "merged", "closed"])
+
+/** Cached Pull Request plus its repository name and linked Issue chips. */
+export const pullRequestRowSchema = z.object({
+  id: z.string(),
+  repositoryId: z.string(),
+  number: z.number(),
+  title: z.string(),
+  state: pullRequestStateSchema,
+  draft: z.boolean(),
+  authorLogin: z.string(),
+  authorAvatarUrl: z.string().nullable(),
+  url: z.string(),
+  sourceBranch: z.string(),
+  targetBranch: z.string(),
+  checksState: z.string().nullable(),
+  reviewDecision: z.string().nullable(),
+  commentCount: z.number(),
+  bodyExcerpt: z.string().nullable(),
+  githubCreatedAt: z.string(),
+  githubUpdatedAt: z.string(),
+  mergedAt: z.string().nullable(),
+  closedAt: z.string().nullable(),
+  syncedAt: z.string(),
+  repository: z.string(),
+  linkedIssues: z.array(linkedIssueRefSchema),
+})
+
+export const githubViewRepositorySchema = z.object({
+  id: z.string(),
+  fullName: z.string(),
+  issuesEnabled: z.boolean(),
+  unavailable: z.boolean(),
+  lastSyncedAt: z.string().nullable(),
+})
+
+export const githubViewFiltersSchema = z.object({
+  authors: z.array(z.string()),
+  labels: z.array(z.object({ name: z.string(), color: z.string() })),
+})
+
+export const pullRequestListResponseSchema = z.object({
+  items: z.array(pullRequestRowSchema),
+  nextCursor: z.string().nullable(),
+  lastSyncedAt: z.string().nullable(),
+  connection: projectConnectionSchema.nullable(),
+  repositories: z.array(githubViewRepositorySchema),
+  filters: githubViewFiltersSchema,
+})
+
+export const githubRefreshResponseSchema = z.object({
+  accepted: z.boolean(),
+  enqueued: z.number(),
+  lastSyncedAt: z.string().nullable(),
+})
+
+/** Label chip on a GitHub Issue row, colored by GitHub's hex value. */
+export const githubLabelSchema = z.object({
+  name: z.string(),
+  color: z.string(),
+})
+
+export const githubAssigneeSchema = z.object({
+  login: z.string(),
+  avatarUrl: z.string().nullable(),
+})
+
+export const githubIssueStateSchema = z.enum(["open", "closed"])
+
+/** Cached GitHub Issue plus its repository name and linked Issue chips. */
+export const githubIssueRowSchema = z.object({
+  id: z.string(),
+  repositoryId: z.string(),
+  number: z.number(),
+  title: z.string(),
+  state: githubIssueStateSchema,
+  authorLogin: z.string(),
+  authorAvatarUrl: z.string().nullable(),
+  url: z.string(),
+  labels: z.array(githubLabelSchema),
+  assignees: z.array(githubAssigneeSchema),
+  commentCount: z.number(),
+  bodyExcerpt: z.string().nullable(),
+  githubCreatedAt: z.string(),
+  githubUpdatedAt: z.string(),
+  closedAt: z.string().nullable(),
+  syncedAt: z.string(),
+  repository: z.string(),
+  linkedIssues: z.array(linkedIssueRefSchema),
+})
+
+export const githubIssueListResponseSchema = z.object({
+  items: z.array(githubIssueRowSchema),
+  nextCursor: z.string().nullable(),
+  lastSyncedAt: z.string().nullable(),
+  connection: projectConnectionSchema.nullable(),
+  repositories: z.array(githubViewRepositorySchema),
+  filters: githubViewFiltersSchema,
+})
+
+/** The GitHub View list envelope minus items/filters, for the status banner. */
+export const githubStatusResponseSchema = z.object({
+  connection: projectConnectionSchema.nullable(),
+  repositories: z.array(githubViewRepositorySchema),
+  lastSyncedAt: z.string().nullable(),
+})
+
+export const githubItemKindSchema = z.enum(["pr", "issue"])
+
+/** Links one GitHub Item to an Issue; the identifier is the target key. */
+export const linkGitHubItemInputSchema = z.object({
+  kind: githubItemKindSchema,
+  repositoryId: z.string(),
+  number: z.number().int().positive(),
+  issue: z.string(),
+})
+
+export const githubItemLinkResponseSchema = z.object({
+  link: externalLinkSchema,
+  issue: z.object({
+    id: z.string(),
+    identifier: z.string(),
+    title: z.string(),
+  }),
+  linkedIssues: z.array(linkedIssueRefSchema),
+})
+
+/** Creates an Issue from one cached GitHub Item (#53). */
+export const createIssueFromGitHubItemInputSchema = z.object({
+  kind: githubItemKindSchema,
+  repositoryId: z.string(),
+  number: z.number().int().positive(),
+  /** Dialog edits; omitted fields fall back to the snapshot values. */
+  title: z.string().optional(),
+  description: z.string().optional(),
+})
+
 export const commentSchema = z.object({
   id: z.string(),
   issueId: z.string(),
@@ -305,6 +539,72 @@ export type NotificationSettings = z.infer<typeof notificationSettingsSchema>
 export type InvitationDetails = z.infer<typeof invitationDetailsSchema>
 export type InvitationInbox = z.infer<typeof invitationInboxSchema>
 export type MyIssue = z.infer<typeof myIssueSchema>
+export type GitHubConnectionStatus = z.infer<
+  typeof githubConnectionStatusSchema
+>
+export type GitHubConnection = z.infer<typeof githubConnectionSchema>
+export type GitHubRepository = z.infer<typeof githubRepositorySchema>
+export type GitHubRepositoryView = z.infer<typeof githubRepositoryViewSchema>
+export type GitHubConnectionResponse = z.infer<
+  typeof githubConnectionResponseSchema
+>
+export type RemoteRepository = z.infer<typeof remoteRepositorySchema>
+export type RemoteRepositoryOption = z.infer<
+  typeof remoteRepositoryOptionSchema
+>
+export type GitHubAllowlistResponse = z.infer<
+  typeof githubAllowlistResponseSchema
+>
+export type ProjectRepositoryView = z.infer<typeof projectRepositoryViewSchema>
+export type ProjectConnection = z.infer<typeof projectConnectionSchema>
+export type ProjectRepositoriesResponse = z.infer<
+  typeof projectRepositoriesResponseSchema
+>
+export type LinkedIssueRef = z.infer<typeof linkedIssueRefSchema>
+export type PullRequestState = z.infer<typeof pullRequestStateSchema>
+export type PullRequestRow = z.infer<typeof pullRequestRowSchema>
+export type GitHubViewRepository = z.infer<typeof githubViewRepositorySchema>
+export type GitHubViewFilters = z.infer<typeof githubViewFiltersSchema>
+export type PullRequestListResponse = z.infer<
+  typeof pullRequestListResponseSchema
+>
+export type GitHubRefreshResponse = z.infer<typeof githubRefreshResponseSchema>
+export type GitHubLabel = z.infer<typeof githubLabelSchema>
+export type GitHubAssignee = z.infer<typeof githubAssigneeSchema>
+export type GitHubIssueState = z.infer<typeof githubIssueStateSchema>
+export type GitHubIssueRow = z.infer<typeof githubIssueRowSchema>
+export type GitHubIssueListResponse = z.infer<
+  typeof githubIssueListResponseSchema
+>
+export type GitHubStatusResponse = z.infer<typeof githubStatusResponseSchema>
+export type GitHubItemKind = z.infer<typeof githubItemKindSchema>
+export type LinkGitHubItemInput = z.infer<typeof linkGitHubItemInputSchema>
+export type CreateIssueFromGitHubItemInput = z.infer<
+  typeof createIssueFromGitHubItemInputSchema
+>
+export type GitHubItemLinkResponse = z.infer<
+  typeof githubItemLinkResponseSchema
+>
+
+/** Query accepted by the Pull Request list; empty values are skipped. */
+export interface ListPullRequestsFilters {
+  state?: string
+  author?: string
+  label?: string
+  q?: string
+  cursor?: string | null
+  limit?: number
+}
+
+/** Query accepted by the GitHub Issue list; empty values are skipped. */
+export interface ListGitHubIssuesFilters {
+  state?: string
+  author?: string
+  label?: string
+  q?: string
+  cursor?: string | null
+  limit?: number
+}
 
 /**
  * The subset of a Member that assignee surfaces read. Views accept this
@@ -386,10 +686,13 @@ export interface UpdateLabelInput {
 
 export class ApiError extends Error {
   readonly status: number
+  /** Seconds until a throttled request may be retried (429 responses). */
+  readonly retryAfter?: number
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, retryAfter?: number) {
     super(message)
     this.status = status
+    this.retryAfter = retryAfter
   }
 }
 
@@ -410,7 +713,14 @@ async function request<T>(
       typeof json === "object" && json !== null && "error" in json
         ? String((json as { error: unknown }).error)
         : res.statusText
-    throw new ApiError(res.status, message)
+    const retryAfter =
+      typeof json === "object" &&
+      json !== null &&
+      "retryAfter" in json &&
+      typeof (json as { retryAfter: unknown }).retryAfter === "number"
+        ? (json as { retryAfter: number }).retryAfter
+        : undefined
+    throw new ApiError(res.status, message, retryAfter)
   }
   if (res.status === 204) return schema.parse(undefined)
   return schema.parse(json)
@@ -772,6 +1082,162 @@ export const api = {
       `/api/workspaces/${workspaceId}/labels/${labelId}`,
       z.void(),
       { method: "DELETE" }
+    )
+  },
+
+  getGitHubConnection(workspaceId: string): Promise<GitHubConnectionResponse> {
+    return request(
+      `/api/workspaces/${workspaceId}/github-connection`,
+      githubConnectionResponseSchema
+    )
+  },
+
+  connectGitHubConnection(
+    workspaceId: string
+  ): Promise<GitHubConnectionResponse> {
+    return request(
+      `/api/workspaces/${workspaceId}/github-connection`,
+      githubConnectionResponseSchema,
+      { method: "POST", body: {} }
+    )
+  },
+
+  async disconnectGitHubConnection(workspaceId: string): Promise<void> {
+    await request(
+      `/api/workspaces/${workspaceId}/github-connection`,
+      z.object({ disconnected: z.boolean() }),
+      { method: "DELETE" }
+    )
+  },
+
+  searchGitHubRepositories(
+    workspaceId: string,
+    query: string
+  ): Promise<{ items: RemoteRepositoryOption[] }> {
+    const params = new URLSearchParams()
+    if (query.trim() !== "") params.append("query", query.trim())
+    const suffix = params.toString() ? `?${params.toString()}` : ""
+    return request(
+      `/api/workspaces/${workspaceId}/github-connection/repositories${suffix}`,
+      z.object({ items: z.array(remoteRepositoryOptionSchema) })
+    )
+  },
+
+  setGitHubAllowlist(
+    workspaceId: string,
+    githubIds: string[]
+  ): Promise<GitHubAllowlistResponse> {
+    return request(
+      `/api/workspaces/${workspaceId}/github-connection/repositories`,
+      githubAllowlistResponseSchema,
+      { method: "PUT", body: { githubIds } }
+    )
+  },
+
+  getProjectRepositories(
+    projectId: string
+  ): Promise<ProjectRepositoriesResponse> {
+    return request(
+      `/api/projects/${projectId}/repositories`,
+      projectRepositoriesResponseSchema
+    )
+  },
+
+  setProjectRepositories(
+    projectId: string,
+    repositoryIds: string[]
+  ): Promise<ProjectRepositoriesResponse> {
+    return request(
+      `/api/projects/${projectId}/repositories`,
+      projectRepositoriesResponseSchema,
+      { method: "PUT", body: { repositoryIds } }
+    )
+  },
+
+  listPullRequests(
+    projectId: string,
+    filters: ListPullRequestsFilters = {}
+  ): Promise<PullRequestListResponse> {
+    const params = new URLSearchParams()
+    if (filters.state?.trim()) params.set("state", filters.state.trim())
+    if (filters.author?.trim()) params.set("author", filters.author.trim())
+    if (filters.label?.trim()) params.set("label", filters.label.trim())
+    if (filters.q?.trim()) params.set("q", filters.q.trim())
+    if (filters.cursor) params.set("cursor", filters.cursor)
+    if (filters.limit !== undefined) params.set("limit", String(filters.limit))
+    const suffix = params.toString() ? `?${params.toString()}` : ""
+    return request(
+      `/api/projects/${projectId}/github/pull-requests${suffix}`,
+      pullRequestListResponseSchema
+    )
+  },
+
+  refreshGitHub(
+    projectId: string,
+    options: { automatic?: boolean } = {}
+  ): Promise<GitHubRefreshResponse> {
+    return request(
+      `/api/projects/${projectId}/github/refresh`,
+      githubRefreshResponseSchema,
+      {
+        method: "POST",
+        body: options.automatic ? { automatic: true } : {},
+      }
+    )
+  },
+
+  listGitHubIssues(
+    projectId: string,
+    filters: ListGitHubIssuesFilters = {}
+  ): Promise<GitHubIssueListResponse> {
+    const params = new URLSearchParams()
+    if (filters.state?.trim()) params.set("state", filters.state.trim())
+    if (filters.author?.trim()) params.set("author", filters.author.trim())
+    if (filters.label?.trim()) params.set("label", filters.label.trim())
+    if (filters.q?.trim()) params.set("q", filters.q.trim())
+    if (filters.cursor) params.set("cursor", filters.cursor)
+    if (filters.limit !== undefined) params.set("limit", String(filters.limit))
+    const suffix = params.toString() ? `?${params.toString()}` : ""
+    return request(
+      `/api/projects/${projectId}/github/issues${suffix}`,
+      githubIssueListResponseSchema
+    )
+  },
+
+  linkGitHubItem(
+    projectId: string,
+    input: LinkGitHubItemInput
+  ): Promise<GitHubItemLinkResponse> {
+    return request(
+      `/api/projects/${projectId}/github/items/link`,
+      githubItemLinkResponseSchema,
+      { method: "POST", body: input }
+    )
+  },
+
+  createIssueFromGitHubItem(
+    projectId: string,
+    input: CreateIssueFromGitHubItemInput
+  ): Promise<Issue> {
+    return request(
+      `/api/projects/${projectId}/github/items/create-issue`,
+      issueSchema,
+      { method: "POST", body: input }
+    )
+  },
+
+  async deleteExternalLink(issueKey: string, linkId: string): Promise<void> {
+    await request(
+      `/api/issues/${encodeURIComponent(issueKey)}/external-links/${encodeURIComponent(linkId)}`,
+      z.object({ deleted: z.boolean() }),
+      { method: "DELETE" }
+    )
+  },
+
+  getGitHubStatus(projectId: string): Promise<GitHubStatusResponse> {
+    return request(
+      `/api/projects/${projectId}/github/status`,
+      githubStatusResponseSchema
     )
   },
 }

@@ -2,9 +2,17 @@ import "./lib/env.js"
 import { Hono } from "hono"
 import { cors } from "hono/cors"
 import { getDb } from "./db/index.js"
+import { createGitHubConnectionApp } from "./github/connection-routes.js"
 import { createDrizzleGitHubStore } from "./github/drizzle-store.js"
+import { createGitHubProvider } from "./github/github-provider.js"
+import { createGitHubItemApp } from "./github/item-routes.js"
 import type { GitHubWebhookPayload } from "./github/job.js"
+import { githubSyncJobOptions } from "./github/job.js"
+import { createGitHubProjectApp } from "./github/project-routes.js"
 import { createGitHubApp } from "./github/routes.js"
+import { createBetterAuthGitHubAccountSource } from "./github/token-source.js"
+import { createGitHubViewApp } from "./github/view-routes.js"
+import { createIntegrationCipher } from "./lib/cipher.js"
 import { createMailerFromEnv } from "./lib/mailer.js"
 import { allowedOrigins } from "./lib/origins.js"
 import { createDrizzleTokenStore } from "./mcp/drizzle-tokens.js"
@@ -21,6 +29,16 @@ const getSession = async (req: Request) => {
   if (!session) return null
   return { user: { id: session.user.id, email: session.user.email } }
 }
+
+// Unset key leaves the GitHub Connection feature unavailable (POST answers
+// 503); a set-but-invalid key fails loudly at startup.
+const integrationCipher = process.env.INTEGRATION_ENCRYPTION_KEY
+  ? createIntegrationCipher(process.env.INTEGRATION_ENCRYPTION_KEY)
+  : null
+
+// One adapter satisfies both seams: the Connection routes' remote listing and
+// the sync/view apps' GitProvider.
+const githubProvider = createGitHubProvider()
 
 app.use(
   "/api/*",
@@ -76,6 +94,62 @@ app.route(
         jobId: job.deliveryId,
       })
     },
+  })
+)
+
+app.route(
+  "/",
+  createGitHubConnectionApp({
+    workspaces: createDrizzleWorkspaceStore(() => getDb()),
+    github: createDrizzleGitHubStore(() => getDb()),
+    getSession,
+    cipher: integrationCipher,
+    accounts: createBetterAuthGitHubAccountSource(
+      async () => (await import("./lib/auth.js")).auth
+    ),
+    remote: githubProvider,
+  })
+)
+
+// Project-scoped repository links (#48): read for every member/Viewer, manage
+// for Owner/Admin. Mounted additively beside the Connection routes.
+app.route(
+  "/",
+  createGitHubProjectApp({
+    workspaces: createDrizzleWorkspaceStore(() => getDb()),
+    github: createDrizzleGitHubStore(() => getDb()),
+    getSession,
+  })
+)
+
+// GitHub View (#49): project read for the Pull Request tab and the manual
+// refresh. The queue import stays dynamic so the app object is import-safe
+// without REDIS_URL.
+app.route(
+  "/",
+  createGitHubViewApp({
+    workspaces: createDrizzleWorkspaceStore(() => getDb()),
+    github: createDrizzleGitHubStore(() => getDb()),
+    getSession,
+    enqueueSync: async (repositoryId: string) => {
+      const { queues, QUEUES } = await import("./lib/queue.js")
+      await queues[QUEUES.githubSync].add(
+        "github-sync",
+        { repositoryId },
+        githubSyncJobOptions(repositoryId)
+      )
+    },
+  })
+)
+
+// GitHub Item links (#52): link/unlink an item to an Issue. Mounted
+// additively beside the view routes.
+app.route(
+  "/",
+  createGitHubItemApp({
+    workspaces: createDrizzleWorkspaceStore(() => getDb()),
+    github: createDrizzleGitHubStore(() => getDb()),
+    getSession,
   })
 )
 

@@ -12,18 +12,6 @@ import type {
 import { parseExternalUrl } from "./parse.js"
 import type { GitHubStore } from "./store.js"
 
-const installBody = z.object({
-  repos: z
-    .array(
-      z
-        .string()
-        .trim()
-        .regex(/^[^/\s]+\/[^/\s]+$/)
-    )
-    .min(1)
-    .max(100),
-})
-
 const manualLinkBody = z.object({ url: z.string().trim().min(1) })
 
 export interface GitHubDeps {
@@ -66,9 +54,9 @@ async function signatureValid(
 }
 
 /**
- * GitHub App HTTP boundary (T6 – External Links). Tested at the Hono
- * app-object seam via `app.request(...)`: status codes and response shapes,
- * never SQL or store internals. Mounted additively alongside the
+ * GitHub HTTP boundary (T6 – External Links and webhook intake). Tested at
+ * the Hono app-object seam via `app.request(...)`: status codes and response
+ * shapes, never SQL or store internals. Mounted additively alongside the
  * workspaces app; T1–T3 routes are untouched.
  */
 export function createGitHubApp({
@@ -79,12 +67,6 @@ export function createGitHubApp({
   webhookSecret,
 }: GitHubDeps) {
   const app = new Hono()
-
-  async function adminWorkspace(workspaceId: string, userId: string) {
-    const membership = await workspaces.getMembership(workspaceId, userId)
-    if (!membership || membership.role === "Member") return null
-    return membership
-  }
 
   async function issueProject(
     issueRef: string,
@@ -101,32 +83,6 @@ export function createGitHubApp({
     return { issue, project }
   }
 
-  app.post("/api/workspaces/:id/github-installs", async (c) => {
-    const session = await getSession(c.req.raw)
-    if (!session) return c.json({ error: "Unauthorized" }, 401)
-    if (!(await adminWorkspace(c.req.param("id"), session.user.id))) {
-      return c.json({ error: "Forbidden" }, 403)
-    }
-    const parsed = installBody.safeParse(await c.req.json())
-    if (!parsed.success) return c.json({ error: "Invalid repos" }, 400)
-    const install = await github.createInstall(
-      c.req.param("id"),
-      parsed.data.repos
-    )
-    return c.json(install, 201)
-  })
-
-  app.get("/api/workspaces/:id/github-installs", async (c) => {
-    const session = await getSession(c.req.raw)
-    if (!session) return c.json({ error: "Unauthorized" }, 401)
-    const membership = await workspaces.getMembership(
-      c.req.param("id"),
-      session.user.id
-    )
-    if (!membership) return c.json({ error: "Forbidden" }, 403)
-    return c.json(await github.listInstalls(c.req.param("id")))
-  })
-
   app.post("/api/issues/:key/external-links", async (c) => {
     const session = await getSession(c.req.raw)
     if (!session) return c.json({ error: "Unauthorized" }, 401)
@@ -142,7 +98,10 @@ export function createGitHubApp({
     if (!parsed.success) return c.json({ error: "Invalid URL" }, 400)
     const classified = parseExternalUrl(parsed.data.url)
     if (!classified)
-      return c.json({ error: "Not a GitHub PR, branch, or commit URL" }, 400)
+      return c.json(
+        { error: "Not a GitHub issue, PR, branch, or commit URL" },
+        400
+      )
     const existing = (await github.listExternalLinks(found.issue.id)).find(
       (link) => link.url === classified.url
     )
