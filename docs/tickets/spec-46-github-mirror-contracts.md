@@ -294,7 +294,11 @@ deleteExpiredGitHubIssues(olderThan: string): Promise<number>
 findExternalLinksByUrl(url: string): Promise<ExternalLink[]>
 getExternalLink(id: string): Promise<ExternalLink | null>
 deleteExternalLink(id: string): Promise<boolean>
-listLinkedIssueRefs(urls: string[]): Promise<Record<string, LinkedIssueRef[]>>
+listLinkedIssueRefs(
+  urls: string[],
+  readerId: string,
+  canReadProject: ProjectReadGate
+): Promise<Record<string, LinkedIssueRef[]>
 /** Removes cached items for a repository (allowlist removal / disconnect cascade). */
 deleteRepository(repositoryId: string): Promise<void>
 ```
@@ -305,13 +309,19 @@ classification. #49/#50 must also purge their snapshot maps inside the memory st
 `removeRepository`, and extend `deleteConnection`/`replaceAllowlist` cascades through it.
 
 ```ts
-/** Chip shown on a GitHub Item row. One entry per External Link. */
+/** Chip shown on a GitHub Item row. One entry per readable External Link. */
 export interface LinkedIssueRef {
   linkId: string
   issueId: string
   identifier: string
   title: string
 }
+
+/** Boolean form of `readableProject`, applied per linked Issue's project. */
+export type ProjectReadGate = (
+  projectId: string,
+  readerId: string
+) => Promise<boolean>
 
 export interface GitHubItemFilters {
   state: "open" | "merged" | "closed" | "all"
@@ -328,7 +338,11 @@ Cursor encoding is the existing collaboration one: base64url of
 max 100. Order: `github_updated_at DESC, id DESC`. Text query matches title
 case-insensitively (`ILIKE %q%` in Drizzle, `includes` lowercased in memory).
 
-`listLinkedIssueRefs` returns only `kind = "pr" | "issue"` links, newest link first.
+`listLinkedIssueRefs` returns only `kind = "pr" | "issue"` links, newest link first,
+and only when the link's target Issue passes `readableProject` for the requesting reader
+(`projectReadGate`); one gate answer is cached per project. The list routes and the item
+link response therefore pass the session user's id, and a chip for an Issue in a project
+or workspace the reader cannot read is omitted.
 
 ## 3. Cipher (`packages/backend/src/lib/cipher.ts`) — #47
 
