@@ -203,7 +203,13 @@ async function setup(
       (await workspaces.getProject(projectId))?.workspaceId ?? null,
     getIssue: async (issueId) => {
       const issue = await workspaces.getIssue(issueId)
-      return issue ? { identifier: issue.identifier, title: issue.title } : null
+      return issue
+        ? {
+            identifier: issue.identifier,
+            title: issue.title,
+            projectId: issue.projectId,
+          }
+        : null
     },
   })
   const issuesEnabled = options.issuesEnabled ?? true

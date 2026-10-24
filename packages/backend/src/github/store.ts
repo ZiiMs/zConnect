@@ -141,13 +141,23 @@ export interface GitHubIssueSnapshot {
   syncedAt: string
 }
 
-/** Chip shown on a GitHub Item row. One entry per External Link. */
+/** Chip shown on a GitHub Item row. One entry per readable External Link. */
 export interface LinkedIssueRef {
   linkId: string
   issueId: string
   identifier: string
   title: string
 }
+
+/**
+ * Read gate for a linked Issue's project. The caller supplies the reader's
+ * identity and the workspace permission check; the store never returns a chip
+ * whose target project fails it.
+ */
+export type ProjectReadGate = (
+  projectId: string,
+  readerId: string
+) => Promise<boolean>
 
 export interface GitHubItemFilters {
   state: "open" | "merged" | "closed" | "all"
@@ -365,8 +375,12 @@ export interface GitHubStore {
     },
     at: string
   ): Promise<void>
-  /** #49 — External Link chips for a page of GitHub Items, newest link first. */
-  listLinkedIssueRefs(urls: string[]): Promise<Record<string, LinkedIssueRef[]>>
+  /** #49 — readable External Link chips for a page of GitHub Items, newest first. */
+  listLinkedIssueRefs(
+    urls: string[],
+    readerId: string,
+    canReadProject: ProjectReadGate
+  ): Promise<Record<string, LinkedIssueRef[]>>
 
   /** #50 — GitHub Issue snapshots. */
   upsertGitHubIssues(
@@ -420,9 +434,11 @@ export interface MemoryGitHubStoreOptions {
    * Resolves an Issue for External Link chips. The Drizzle store joins the
    * Issue row; fixtures pass the workspace store here.
    */
-  getIssue?: (
-    issueId: string
-  ) => Promise<{ identifier: string; title: string } | null>
+  getIssue?: (issueId: string) => Promise<{
+    identifier: string
+    title: string
+    projectId: string
+  } | null>
 }
 
 /**
@@ -895,10 +911,11 @@ export function createMemoryGitHubStore(
       snapshot.syncedAt = at
     },
 
-    async listLinkedIssueRefs(urls) {
+    async listLinkedIssueRefs(urls, readerId, canReadProject) {
       const wanted = new Set(urls)
       const byUrl: Record<string, LinkedIssueRef[]> = {}
       for (const url of wanted) byUrl[url] = []
+      const accessByProject = new Map<string, boolean>()
       // Newest first: the memory map preserves insertion order, so walk it
       // backwards (the Drizzle store orders by createdAt DESC).
       const ordered = [...links.values()].reverse()
@@ -909,6 +926,12 @@ export function createMemoryGitHubStore(
           ? await options.getIssue(link.issueId)
           : null
         if (!issue) continue
+        let readable = accessByProject.get(issue.projectId)
+        if (readable === undefined) {
+          readable = await canReadProject(issue.projectId, readerId)
+          accessByProject.set(issue.projectId, readable)
+        }
+        if (!readable) continue
         byUrl[link.url]?.push({
           linkId: link.id,
           issueId: link.issueId,

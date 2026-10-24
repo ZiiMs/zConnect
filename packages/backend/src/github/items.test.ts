@@ -118,7 +118,13 @@ async function setup() {
       (await workspaces.getProject(projectId))?.workspaceId ?? null,
     getIssue: async (issueId) => {
       const issue = await workspaces.getIssue(issueId)
-      return issue ? { identifier: issue.identifier, title: issue.title } : null
+      return issue
+        ? {
+            identifier: issue.identifier,
+            title: issue.title,
+            projectId: issue.projectId,
+          }
+        : null
     },
   })
 
@@ -930,7 +936,11 @@ describe("github automatic linking over HTTP", () => {
       getIssue: async (issueId) => {
         const issue = await workspaces.getIssue(issueId)
         return issue
-          ? { identifier: issue.identifier, title: issue.title }
+          ? {
+              identifier: issue.identifier,
+              title: issue.title,
+              projectId: issue.projectId,
+            }
           : null
       },
     })

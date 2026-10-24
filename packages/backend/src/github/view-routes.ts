@@ -5,7 +5,7 @@
  */
 import { type Context, Hono } from "hono"
 import { z } from "zod"
-import { readableProject } from "../workspaces/permissions.js"
+import { projectReadGate, readableProject } from "../workspaces/permissions.js"
 import type { GetSession } from "../workspaces/session.js"
 import type { Project, WorkspaceStore } from "../workspaces/store.js"
 import {
@@ -224,6 +224,12 @@ async function collectIssueFacets(
   }
 }
 
+/** An authorized read: the project plus the identity whose access was checked. */
+interface ProjectRead {
+  project: Project
+  readerId: string
+}
+
 export function createGitHubViewApp({
   workspaces,
   github,
@@ -232,11 +238,12 @@ export function createGitHubViewApp({
   now = () => new Date(),
 }: GitHubViewDeps) {
   const app = new Hono()
+  const canReadProject = projectReadGate(workspaces)
 
   async function projectForRead(
     c: Context,
     projectId: string
-  ): Promise<Project | Response> {
+  ): Promise<ProjectRead | Response> {
     const session = await getSession(c.req.raw)
     if (!session) return c.json({ error: "Unauthorized" }, 401)
     const project = await readableProject(
@@ -244,7 +251,7 @@ export function createGitHubViewApp({
       projectId,
       session.user.id
     )
-    if (project) return project
+    if (project) return { project, readerId: session.user.id }
     const exists = await workspaces.getProject(projectId)
     return c.json(
       { error: exists ? "Forbidden" : "Not found" },
@@ -252,7 +259,7 @@ export function createGitHubViewApp({
     )
   }
 
-  function isResponse(value: Project | Response): value is Response {
+  function isResponse(value: ProjectRead | Response): value is Response {
     return value instanceof Response
   }
 
@@ -273,8 +280,9 @@ export function createGitHubViewApp({
 
   app.get("/api/projects/:id/github/pull-requests", async (c) => {
     const projectId = c.req.param("id")
-    const project = await projectForRead(c, projectId)
-    if (isResponse(project)) return project
+    const access = await projectForRead(c, projectId)
+    if (isResponse(access)) return access
+    const { project, readerId } = access
 
     const state = parseState(c.req.query("state"))
     if (!state) return c.json({ error: "Invalid state" }, 400)
@@ -301,7 +309,9 @@ export function createGitHubViewApp({
       ])
     )
     const linkedIssues = await github.listLinkedIssueRefs(
-      page.items.map((item) => item.url)
+      page.items.map((item) => item.url),
+      readerId,
+      canReadProject
     )
     const items: PullRequestRow[] = page.items.map((item) => ({
       ...item,
@@ -320,8 +330,9 @@ export function createGitHubViewApp({
 
   app.get("/api/projects/:id/github/issues", async (c) => {
     const projectId = c.req.param("id")
-    const project = await projectForRead(c, projectId)
-    if (isResponse(project)) return project
+    const access = await projectForRead(c, projectId)
+    if (isResponse(access)) return access
+    const { project, readerId } = access
 
     const state = parseIssueState(c.req.query("state"))
     if (!state) return c.json({ error: "Invalid state" }, 400)
@@ -349,7 +360,9 @@ export function createGitHubViewApp({
       ])
     )
     const linkedIssues = await github.listLinkedIssueRefs(
-      page.items.map((item) => item.url)
+      page.items.map((item) => item.url),
+      readerId,
+      canReadProject
     )
     const items: GitHubIssueRow[] = page.items.map((item) => ({
       ...item,
@@ -372,8 +385,9 @@ export function createGitHubViewApp({
   // the manual window. The cached snapshot is served untouched either way.
   app.post("/api/projects/:id/github/refresh", async (c) => {
     const projectId = c.req.param("id")
-    const project = await projectForRead(c, projectId)
-    if (isResponse(project)) return project
+    const access = await projectForRead(c, projectId)
+    if (isResponse(access)) return access
+    const { project } = access
 
     const connection = await github.getConnection(project.workspaceId)
     if (!connection) {
@@ -420,8 +434,9 @@ export function createGitHubViewApp({
 
   app.get("/api/projects/:id/github/status", async (c) => {
     const projectId = c.req.param("id")
-    const project = await projectForRead(c, projectId)
-    if (isResponse(project)) return project
+    const access = await projectForRead(c, projectId)
+    if (isResponse(access)) return access
+    const { project } = access
 
     const body: GitHubStatusResponse = await projectEnvelope(project)
     return c.json(body)

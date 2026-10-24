@@ -9,7 +9,7 @@
 import { type Context, Hono } from "hono"
 import { z } from "zod"
 import { githubActivityDraft } from "../workspaces/activity.js"
-import { writableProject } from "../workspaces/permissions.js"
+import { projectReadGate, writableProject } from "../workspaces/permissions.js"
 import type { GetSession } from "../workspaces/session.js"
 import type { Issue, Project, WorkspaceStore } from "../workspaces/store.js"
 import type {
@@ -147,6 +147,7 @@ export function createGitHubItemApp({
   getSession,
 }: GitHubItemDeps) {
   const app = new Hono()
+  const canReadProject = projectReadGate(workspaces)
 
   async function writableProjectFor(
     c: Context,
@@ -166,8 +167,15 @@ export function createGitHubItemApp({
     return value instanceof Response
   }
 
-  async function chips(url: string): Promise<LinkedIssueRef[]> {
-    const refs = await github.listLinkedIssueRefs([url])
+  async function chips(
+    url: string,
+    readerId: string
+  ): Promise<LinkedIssueRef[]> {
+    const refs = await github.listLinkedIssueRefs(
+      [url],
+      readerId,
+      canReadProject
+    )
     return refs[url] ?? []
   }
 
@@ -218,7 +226,7 @@ export function createGitHubItemApp({
     const body: GitHubItemLinkResponse = {
       link,
       issue: issueSummary(target),
-      linkedIssues: await chips(item.url),
+      linkedIssues: await chips(item.url, session.user.id),
     }
     return c.json(body, created ? 201 : 200)
   })

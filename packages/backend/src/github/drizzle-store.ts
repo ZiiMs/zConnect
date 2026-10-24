@@ -671,7 +671,7 @@ export function createDrizzleGitHubStore(resolveDb: () => Db): GitHubStore {
         )
     },
 
-    async listLinkedIssueRefs(urls) {
+    async listLinkedIssueRefs(urls, readerId, canReadProject) {
       const byUrl: Record<string, LinkedIssueRef[]> = {}
       if (urls.length === 0) return byUrl
       for (const url of new Set(urls)) byUrl[url] = []
@@ -687,7 +687,15 @@ export function createDrizzleGitHubStore(resolveDb: () => Db): GitHubStore {
           )
         )
         .orderBy(desc(externalLink.createdAt))
+      const accessByProject = new Map<string, boolean>()
       for (const row of rows) {
+        const projectId = row.issue.projectId
+        let readable = accessByProject.get(projectId)
+        if (readable === undefined) {
+          readable = await canReadProject(projectId, readerId)
+          accessByProject.set(projectId, readable)
+        }
+        if (!readable) continue
         byUrl[row.link.url]?.push({
           linkId: row.link.id,
           issueId: row.link.issueId,
