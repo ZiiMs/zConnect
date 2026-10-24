@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import { createMemoryWorkspaceStore } from "../workspaces/store.js"
 import { createFakeProvider } from "./fake-provider.js"
-import { type GitHubSweepDeps, runSweepJob } from "./jobs.js"
+import {
+  type GitHubSweepDeps,
+  runSweepJob,
+  sweepRetryJobId,
+} from "./jobs.js"
 import { GitProviderError } from "./provider.js"
 import { createMemoryGitHubStore, type RemoteRepository } from "./store.js"
 
@@ -82,6 +86,15 @@ async function setup() {
 }
 
 describe("github sweep job", () => {
+  test("the retry job id is stable and colon-free", () => {
+    const retryAt = "2026-10-10T12:15:00.000Z"
+    const jobId = sweepRetryJobId(retryAt)
+
+    expect(jobId).toBe("github-sync-sweep-retry-1791634500000")
+    expect(jobId).not.toContain(":")
+    expect(sweepRetryJobId(retryAt)).toBe(jobId)
+  })
+
   test("a rate-limited repository stops the sweep and schedules one delayed retry", async () => {
     const { github, provider, deps, scheduled } = await setup()
     provider.failNext.set(
@@ -106,7 +119,7 @@ describe("github sweep job", () => {
     expect(scheduled).toEqual([
       {
         delayMs: 15 * 60 * 1000,
-        jobId: "github-sync-sweep-retry:2026-10-10T12:15:00.000Z",
+        jobId: "github-sync-sweep-retry-1791634500000",
       },
     ])
     // The rate limit never touches freshness, so both stay due.
@@ -148,7 +161,7 @@ describe("github sweep job", () => {
     expect(scheduled).toEqual([
       {
         delayMs: 0,
-        jobId: "github-sync-sweep-retry:2026-10-10T12:15:00.000Z",
+        jobId: "github-sync-sweep-retry-1791634500000",
       },
     ])
   })

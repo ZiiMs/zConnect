@@ -26,9 +26,13 @@ export type SweepJobResult =
   | { status: "ok"; repositories: number }
   | { status: "rate_limited"; retryAt: string; repositories: number }
 
-/** Stable id for the one deferred sweep covering a GitHub reset instant. */
+/**
+ * Stable, colon-free id for the one deferred sweep covering a GitHub reset
+ * instant. BullMQ rejects colons in custom job ids, so the instant is encoded
+ * as epoch milliseconds behind an allowed hyphen.
+ */
 export function sweepRetryJobId(retryAt: string): string {
-  return `github-sync-sweep-retry:${retryAt}`
+  return `github-sync-sweep-retry-${Date.parse(retryAt)}`
 }
 
 /**
