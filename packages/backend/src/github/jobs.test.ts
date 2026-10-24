@@ -1,11 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { createMemoryWorkspaceStore } from "../workspaces/store.js"
 import { createFakeProvider } from "./fake-provider.js"
-import {
-  type GitHubSweepDeps,
-  runSweepJob,
-  sweepRetryJobId,
-} from "./jobs.js"
+import { type GitHubSweepDeps, runSweepJob, sweepRetryJobId } from "./jobs.js"
 import { GitProviderError } from "./provider.js"
 import { createMemoryGitHubStore, type RemoteRepository } from "./store.js"
 
