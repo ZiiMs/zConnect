@@ -682,7 +682,8 @@ current filter); `filters.labels` is the same for issue labels, sorted by name.
   status.
 - Rate limits are deferred, not retried across every repository: the sweep stops at the
   first `rate_limited` outcome and schedules one delayed `github-sync-sweep` job with
-  `delay = max(0, retryAt - now)` under a stable job id (no duplicate when one is already
+  `delay = max(0, retryAt - now)` under a stable, colon-free job id (the reset instant as
+  epoch milliseconds, because BullMQ rejects colons; no duplicate when one is already
   scheduled). The manual per-repository `github-sync` job may complete; the delayed sweep
   is the retry. `lastSyncedAt` is untouched by the limit.
 
